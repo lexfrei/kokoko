@@ -171,7 +171,7 @@ Arrive as frames without a request id; payload byte 0 is the event kind:
 | kind | event | payload after kind |
 | ---- | ----- | ------------------ |
 | 3    | METADATA_UPDATED | `[node_id:u16 json:z]` |
-| 8    | FILE_ADDED / 9 = FILE_UPDATED | `[node_id:u16 xx xx:2 file_size:u32 name:z]` (size at bytes 4..7) |
+| 8    | FILE_ADDED / 9 = FILE_UPDATED | `[node_id:u16 xx xx:2 file_size:u32 name:z]` (size at bytes 5..8, name at 9) |
 | 10   | FILE_DELETED | `[node_id:u16]` |
 | 13   | FILE_MOVED | `[old_node:u16 parent:u16 new_node:u16]` |
 
