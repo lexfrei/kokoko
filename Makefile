@@ -1,6 +1,10 @@
 # Kokoko build shortcuts. Checks and smoke runs need only Command Line Tools;
 # .app/.ipa builds need Xcode (xcodebuild).
 
+# xcode-select still points at Command Line Tools; force Xcode here.
+DEVELOPER_DIR := /Applications/Xcode.app/Contents/Developer
+export DEVELOPER_DIR
+
 .PHONY: check e2e probe vep run-mac generate app ios
 
 check:
@@ -34,4 +38,4 @@ app: generate
 	xcodebuild -project kokoko.xcodeproj -scheme kokoko -destination 'platform=macOS' -configuration Debug build
 
 ios: generate
-	xcodebuild -project kokoko.xcodeproj -scheme kokoko -destination 'generic/platform=iOS' -configuration Debug build
+	xcodebuild -project kokoko.xcodeproj -scheme kokoko -destination 'generic/platform=iOS' -configuration Debug CODE_SIGNING_ALLOWED=NO build

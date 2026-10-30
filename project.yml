@@ -27,6 +27,7 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
         SWIFT_VERSION: "6.0"
     dependencies:
       - package: Kokoko
