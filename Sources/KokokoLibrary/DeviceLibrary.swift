@@ -18,14 +18,18 @@ public struct DeviceBackup: Sendable {
     public var sounds: [SoundBackup]
     /// Node metadata keyed by node id, for every non-sound node (projects tree).
     public var projectMetadata: [UInt16: [String: JSONValue]]
+    /// Project archives by project name ("01".."09"), when the scope includes them.
+    public var projectArchives: [String: [UInt8]]
 
     public init(deviceSKU: String, osVersion: String, createdAt: Date,
-                sounds: [SoundBackup], projectMetadata: [UInt16: [String: JSONValue]]) {
+                sounds: [SoundBackup], projectMetadata: [UInt16: [String: JSONValue]],
+                projectArchives: [String: [UInt8]] = [:]) {
         self.deviceSKU = deviceSKU
         self.osVersion = osVersion
         self.createdAt = createdAt
         self.sounds = sounds
         self.projectMetadata = projectMetadata
+        self.projectArchives = projectArchives
     }
 }
 
@@ -37,24 +41,42 @@ public actor DeviceLibrary {
         self.files = files
     }
 
-    /// Walk /sounds and /projects, download everything with metadata.
-    public func backup(deviceSKU: String, osVersion: String,
+    public enum Scope: Sendable {
+        case sounds
+        case projects
+        case everything
+    }
+
+    /// Backup by scope. Sounds carry pcm + metadata; projects carry their .tar
+    /// archive plus the metadata of the whole projects subtree.
+    public func backup(deviceSKU: String, osVersion: String, scope: Scope = .everything,
                        progress: (@Sendable (String) -> Void)? = nil) async throws -> DeviceBackup {
-        let soundsRoot = try await resolve("/sounds")
         var backups: [SoundBackup] = []
-        for node in try await files.list(nodeID: soundsRoot) where node.isFile {
-            progress?(node.name)
-            let data = try await files.get(fileID: node.id)
-            let meta = (try? await files.getMetadata(fileID: node.id)) ?? [:]
-            backups.append(SoundBackup(nodeID: node.id, pcm: data.data, metadata: meta))
+        if scope != .projects {
+            let soundsRoot = try await resolve("/sounds")
+            for node in try await files.list(nodeID: soundsRoot) where node.isFile {
+                progress?(node.name)
+                let data = try await files.get(fileID: node.id)
+                let meta = (try? await files.getMetadata(fileID: node.id)) ?? [:]
+                backups.append(SoundBackup(nodeID: node.id, pcm: data.data, metadata: meta))
+            }
         }
 
         var projectMetadata: [UInt16: [String: JSONValue]] = [:]
-        let projectsRoot = try await resolve("/projects")
-        try await collectMetadata(nodeID: projectsRoot, into: &projectMetadata)
+        var archives: [String: [UInt8]] = [:]
+        if scope != .sounds {
+            let projectsRoot = try await resolve("/projects")
+            try await collectMetadata(nodeID: projectsRoot, into: &projectMetadata)
+            for project in try await files.list(nodeID: projectsRoot) {
+                progress?("P\(project.name)")
+                let archive = try await files.get(fileID: project.id)
+                archives[project.name] = archive.data
+            }
+        }
 
         return DeviceBackup(deviceSKU: deviceSKU, osVersion: osVersion, createdAt: Date(),
-                            sounds: backups, projectMetadata: projectMetadata)
+                            sounds: backups, projectMetadata: projectMetadata,
+                            projectArchives: archives)
     }
 
     private func collectMetadata(nodeID: UInt16,
@@ -67,19 +89,36 @@ public actor DeviceLibrary {
         }
     }
 
-    /// Recreate sounds with their original node ids and metadata.
+    /// Recreate sounds with original node ids; upload project archives back
+    /// into their slots; reapply project metadata (active selections).
     public func restore(_ backup: DeviceBackup,
                         progress: (@Sendable (String) -> Void)? = nil) async throws {
-        let soundsRoot = try await resolve("/sounds")
-        let existing = Set(try await files.list(nodeID: soundsRoot).map(\.id))
-        for sound in backup.sounds {
-            progress?(sound.metadata["name"]?.stringValue ?? "node \(sound.nodeID)")
-            let targetID = existing.contains(sound.nodeID) ? 0 : sound.nodeID
-            let newID = try await files.put(parentID: soundsRoot,
-                                            name: sound.metadata["name"]?.stringValue
-                                                ?? "sound \(sound.nodeID)",
-                                            data: sound.pcm, fileID: UInt16(targetID))
-            try await files.setMetadata(fileID: newID, sound.metadata)
+        if !backup.sounds.isEmpty {
+            let soundsRoot = try await resolve("/sounds")
+            let existing = Set(try await files.list(nodeID: soundsRoot).map(\.id))
+            for sound in backup.sounds {
+                progress?(sound.metadata["name"]?.stringValue ?? "node \(sound.nodeID)")
+                let targetID = existing.contains(sound.nodeID) ? 0 : sound.nodeID
+                let newID = try await files.put(parentID: soundsRoot,
+                                                name: sound.metadata["name"]?.stringValue
+                                                    ?? "sound \(sound.nodeID)",
+                                                data: sound.pcm, fileID: UInt16(targetID))
+                try await files.setMetadata(fileID: newID, sound.metadata)
+            }
+        }
+        if !backup.projectArchives.isEmpty {
+            let projectsRoot = try await resolve("/projects")
+            let slots = try await files.list(nodeID: projectsRoot)
+            for (name, archive) in backup.projectArchives {
+                guard let slot = slots.first(where: { $0.name == name }) else { continue }
+                progress?("P\(name)")
+                _ = try await files.put(parentID: projectsRoot, name: name, data: archive,
+                                        fileID: slot.id, capabilities: [FileCapability.read],
+                                        timeout: .seconds(60))
+            }
+            for (nodeID, meta) in backup.projectMetadata {
+                try? await files.setMetadata(fileID: nodeID, meta)
+            }
         }
     }
 
@@ -138,9 +177,20 @@ public enum BackupStore {
         ]
         manifest["projectMetadata"] = Dictionary(uniqueKeysWithValues:
             backup.projectMetadata.map { (String($0.key), $0.value.mapValues(\.anyValue)) })
+        if !backup.projectArchives.isEmpty {
+            manifest["projectArchives"] = backup.projectArchives.keys.sorted()
+        }
         let manifestData = try JSONSerialization.data(withJSONObject: manifest,
                                                       options: [.prettyPrinted, .sortedKeys])
         try manifestData.write(to: dir.appendingPathComponent("manifest.json"))
+
+        if !backup.projectArchives.isEmpty {
+            let projectsDir = dir.appendingPathComponent("projects")
+            try fm.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+            for (name, archive) in backup.projectArchives {
+                try Data(archive).write(to: projectsDir.appendingPathComponent("P\(name).tar"))
+            }
+        }
 
         for sound in backup.sounds {
             let base = String(format: "%03d", sound.nodeID)
@@ -181,10 +231,21 @@ public enum BackupStore {
                 }
             }
         }
+        var archives: [String: [UInt8]] = [:]
+        let projectsDir = dir.appendingPathComponent("projects")
+        if let names = try? fm.contentsOfDirectory(atPath: projectsDir.path) {
+            for name in names where name.hasSuffix(".tar") {
+                let slot = String(name.dropFirst().dropLast(4))
+                if let data = try? Data(contentsOf: projectsDir.appendingPathComponent(name)) {
+                    archives[slot] = Array(data)
+                }
+            }
+        }
         let createdAt = ISO8601DateFormatter().date(from: manifest["createdAt"] as? String ?? "") ?? Date()
         return DeviceBackup(deviceSKU: manifest["deviceSKU"] as? String ?? "",
                             osVersion: manifest["osVersion"] as? String ?? "",
                             createdAt: createdAt,
-                            sounds: sounds, projectMetadata: projectMetadata)
+                            sounds: sounds, projectMetadata: projectMetadata,
+                            projectArchives: archives)
     }
 }

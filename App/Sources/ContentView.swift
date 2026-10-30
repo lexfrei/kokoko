@@ -32,8 +32,8 @@ struct ContentView: View {
                     await state.upload(urls: urls)
                 case .downloadFolder(let ids):
                     await state.downloadManyToFolder(ids, folder: urls[0])
-                case .backupFolder:
-                    await state.backupToFolder(urls[0])
+                case .backupFolder(let scope):
+                    await state.backupToFolder(urls[0], scope: scope)
                 case .restoreFolder:
                     await state.restoreFromFolder(urls[0])
                 }
@@ -107,10 +107,7 @@ struct ContentView: View {
             case .connecting(let name):
                 Text("[ conn \(name) ]").lineLimit(1)
             case .connected(let name, let serial, let os):
-                Text("[ \(name) \(serial) os \(os) ]").lineLimit(1)
-                if let note = state.firmwareNote {
-                    Text(note).foregroundStyle(.secondary)
-                }
+                Text("[ \(name) \(serial) os \(os)\(state.firmwareSuffix) ]").lineLimit(1)
             case .failed(let why):
                 Text("[ !! \(why) ]")
             }
@@ -202,7 +199,7 @@ struct ContentView: View {
                 Text("err: \(error)").foregroundStyle(.red).lineLimit(1)
             }
             Spacer()
-            if case .connected = state.connection {
+            if case .connected = state.connection, state.view == .sounds {
                 if !state.selection.isEmpty {
                     Text("sel \(state.selection.count)")
                     TextField("to #", text: $state.bulkMoveStart)
@@ -220,14 +217,30 @@ struct ContentView: View {
                     Button("[ x ]") { Task { await state.deleteMany(state.selection) } }
                         .buttonStyle(.plain)
                 }
-                Button("[ + add sounds ]") { state.showImporter = true }
-                    .buttonStyle(.plain)
-                Button("[ backup ]") { state.picker = .backupFolder }
-                    .buttonStyle(.plain)
-                Button("[ restore ]") { state.picker = .restoreFolder }
-                    .buttonStyle(.plain)
-                Button("[ refresh ]") { Task { await state.reload() } }
-                    .buttonStyle(.plain)
+                if state.view == .sounds {
+                    Button("[ + add sounds ]") { state.showImporter = true }
+                        .buttonStyle(.plain)
+                    Button("[ backup sounds ]") { state.picker = .backupFolder(.sounds) }
+                        .buttonStyle(.plain)
+                    Button("[ restore sounds ]") { state.picker = .restoreFolder }
+                        .buttonStyle(.plain)
+                } else if state.view == .projects {
+                    Button("[ backup projects ]") { state.picker = .backupFolder(.projects) }
+                        .buttonStyle(.plain)
+                    Button("[ restore ]") { state.picker = .restoreFolder }
+                        .buttonStyle(.plain)
+                } else {
+                    Button("[ backup all ]") { state.picker = .backupFolder(.everything) }
+                        .buttonStyle(.plain)
+                    Button("[ restore all ]") { state.picker = .restoreFolder }
+                        .buttonStyle(.plain)
+                }
+                Button("[ refresh ]") {
+                    Task {
+                        if state.view == .projects { await state.loadProjects() } else { await state.reload() }
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding()
@@ -239,8 +252,6 @@ struct ContentView: View {
                 HStack {
                     Text("P\(project.name)")
                     Spacer()
-                    Text(formatSize(project.size))
-                        .foregroundStyle(.secondary)
                     Button("[v tar]") {
                         Task {
                             if let result = await state.downloadProject(project) {

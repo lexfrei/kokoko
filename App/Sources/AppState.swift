@@ -36,7 +36,7 @@ struct SoundItem: Identifiable, Equatable {
 enum PendingPicker: Equatable {
     case none
     case downloadFolder([UInt16])
-    case backupFolder
+    case backupFolder(DeviceLibrary.Scope)
     case restoreFolder
 }
 
@@ -54,6 +54,17 @@ final class AppState: ObservableObject {
     @Published var picker: PendingPicker = .none
     @Published var renumberItem: SoundItem?
     @Published var firmwareNote: String?
+
+    /// Short suffix for the header: " ✓" when current, " → x.y.z" when behind.
+    var firmwareSuffix: String {
+        guard let note = firmwareNote else { return "" }
+        if let arrow = note.range(of: " → ") {
+            return " " + note[arrow.lowerBound...].trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: "→ ", with: "→ ")
+                .description
+        }
+        return " ✓"
+    }
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsUnsupported = false
@@ -241,19 +252,21 @@ final class AppState: ObservableObject {
 
     // MARK: - backup / restore
 
-    func backupToFolder(_ folder: URL) async {
+    func backupToFolder(_ folder: URL, scope: DeviceLibrary.Scope = .everything) async {
         guard let library else { return }
         do {
             let accessing = folder.startAccessingSecurityScopedResource()
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             progressText = "backup..."
             let backup = try await library.backup(deviceSKU: deviceMeta.sku,
-                                                  osVersion: deviceMeta.osVersion) { [weak self] name in
+                                                  osVersion: deviceMeta.osVersion,
+                                                  scope: scope) { [weak self] name in
                 Task { @MainActor in self?.progressText = "backup \(name)" }
             }
             let stamp = ISO8601DateFormatter().string(from: backup.createdAt)
                 .replacingOccurrences(of: ":", with: "-")
-            let target = folder.appendingPathComponent("kokoko-backup-\(stamp)")
+            let label = scope == .sounds ? "sounds" : scope == .projects ? "projects" : "all"
+            let target = folder.appendingPathComponent("kokoko-backup-\(label)-\(stamp)")
             try BackupStore.write(backup, to: target)
             progressText = nil
         } catch {

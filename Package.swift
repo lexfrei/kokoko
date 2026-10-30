@@ -23,7 +23,7 @@ let package = Package(
         .executableTarget(name: "KokokoCoreChecks", dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio"]),
         // macOS smoke-run of the real UI without Xcode: swift run kokoko-mac
         .executableTarget(name: "kokoko-mac",
-                          dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio"],
+                          dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio", "KokokoLibrary"],
                           path: "App/Sources"),
     ]
 )
