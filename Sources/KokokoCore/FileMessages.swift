@@ -41,31 +41,31 @@ public func maxChunkPayloadLength(chunkSize: Int) -> Int {
     return p - p / 8
 }
 
-func appendZString(_ s: String, to bytes: inout [UInt8]) {
+public func appendZString(_ s: String, to bytes: inout [UInt8]) {
     bytes.append(contentsOf: s.utf8)
     bytes.append(0)
 }
 
-func readZString(_ bytes: [UInt8], from offset: Int) -> String {
+public func readZString(_ bytes: [UInt8], from offset: Int) -> String {
     var end = offset
     while end < bytes.count && bytes[end] != 0 { end += 1 }
     return String(decoding: bytes[offset..<end], as: UTF8.self)
 }
 
-func readU16(_ bytes: [UInt8], _ offset: Int) -> UInt16 {
+public func readU16(_ bytes: [UInt8], _ offset: Int) -> UInt16 {
     UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
 }
 
-func readU32(_ bytes: [UInt8], _ offset: Int) -> UInt32 {
+public func readU32(_ bytes: [UInt8], _ offset: Int) -> UInt32 {
     UInt32(bytes[offset]) << 24 | UInt32(bytes[offset + 1]) << 16
         | UInt32(bytes[offset + 2]) << 8 | UInt32(bytes[offset + 3])
 }
 
-func appendU16(_ v: UInt16, to bytes: inout [UInt8]) {
+public func appendU16(_ v: UInt16, to bytes: inout [UInt8]) {
     bytes.append(UInt8(v >> 8)); bytes.append(UInt8(v & 0xFF))
 }
 
-func appendU32(_ v: UInt32, to bytes: inout [UInt8]) {
+public func appendU32(_ v: UInt32, to bytes: inout [UInt8]) {
     bytes.append(UInt8((v >> 24) & 0xFF)); bytes.append(UInt8((v >> 16) & 0xFF))
     bytes.append(UInt8((v >> 8) & 0xFF)); bytes.append(UInt8(v & 0xFF))
 }

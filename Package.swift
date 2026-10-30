@@ -13,6 +13,10 @@ let package = Package(
         .target(name: "KokokoCore"),
         .target(name: "KokokoMIDI", dependencies: ["KokokoCore"]),
         .target(name: "KokokoAudio", dependencies: ["KokokoCore"]),
+        .target(name: "VirtualEP", dependencies: ["KokokoCore", "KokokoMIDI"]),
+        .executableTarget(name: "vep", dependencies: ["VirtualEP"]),
+                .executableTarget(name: "kokoko-e2e",
+                          dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio", "VirtualEP"]),
         .executableTarget(name: "KokokoCoreChecks", dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio"]),
         // macOS smoke-run of the real UI without Xcode: swift run kokoko-mac
         .executableTarget(name: "kokoko-mac",

@@ -52,7 +52,7 @@ public actor SysExSession {
                     try await wire.send(frame.bytes)
                 } catch {
                     timeoutTask.cancel()
-                    await self.failPending(id: id, with: error)
+                    self.failPending(id: id, with: error)
                 }
             }
             // Store cancellation handle indirectly: failPending resumes exactly once.
