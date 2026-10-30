@@ -49,6 +49,12 @@ struct Probe {
                     for node in nodes {
                         print("  sound \(node.id): \(node.name) \(node.size)b flags=\(node.flags)")
                     }
+                    if CommandLine.arguments.contains("--download-smallest"),
+                       let smallest = nodes.filter({ $0.isFile }).min(by: { $0.size < $1.size }) {
+                        let got = try await files.get(fileID: smallest.id)
+                        let expected = Int(smallest.size)
+                        print("  download \(got.name): \(got.data.count)b (expected \(expected)) \(got.data.count == expected ? "MATCH" : "MISMATCH")")
+                    }
                 }
             } catch {
                 print("  error: \(error)")
