@@ -243,6 +243,8 @@ Latest firmware per SKU: `https://teenage.engineering/_software/releases.json` (
 - get all: `[02 <page:u16>]` → text fragment from byte 2 until a 0 byte; page until empty
 - set: `[03 <id:u16> <json...> 00]`
 
+NOT AVAILABLE on EP-133 os 2.5.1: the device answers command-not-found. The API exists in the updater bundle for other TE products. Device settings are not exposed over MIDI on this hardware.
+
 ## Open items to verify on the wire
 
 - GET init extra args: `[01 start:u16 length:u16]` used for preview reads; exact semantics unverified. HAZARD: an attempt with this guessed layout preceded a firmware crash (siren screen, code 69) on EP-133 os 2.5.1. Do not send extra args until the layout is verified against captured traffic.

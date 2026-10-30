@@ -91,6 +91,17 @@ struct Probe {
                             print("  write-test: dir create failed: \(error)")
                         }
                     }
+                    if CommandLine.arguments.contains("--settings-dump") {
+                        let settings = SettingsService(session: session)
+                        try await settings.initialize()
+                        let all = try await settings.getAll()
+                        let data = try JSONSerialization.data(
+                            withJSONObject: all.mapValues(\.anyValue),
+                            options: [.prettyPrinted, .sortedKeys])
+                        let out = "/tmp/kokoko-settings-dump.json"
+                        try data.write(to: URL(fileURLWithPath: out))
+                        print("  settings dumped to \(out) (\(data.count) bytes)")
+                    }
                     if CommandLine.arguments.contains("--download-smallest"),
                        let smallest = nodes.filter({ $0.isFile }).min(by: { $0.size < $1.size }) {
                         let got = try await files.get(fileID: smallest.id)

@@ -56,6 +56,7 @@ final class AppState: ObservableObject {
     @Published var firmwareNote: String?
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
+    @Published var settingsUnsupported = false
     @Published var view: AppView = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var bulkMoveStart = ""
@@ -428,6 +429,9 @@ final class AppState: ObservableObject {
             let all = try await settings.getAll()
             settingsTree = Self.parseSettingsTree(all)
             progressText = nil
+        } catch SessionError.deviceError(.commandNotFound, _) {
+            progressText = nil
+            settingsUnsupported = true
         } catch {
             progressText = nil
             lastError = "settings: \(error.localizedDescription)"

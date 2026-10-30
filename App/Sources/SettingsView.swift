@@ -23,7 +23,10 @@ struct SettingsView: View {
 
     var body: some View {
         List {
-            if state.settingsTree.isEmpty {
+            if state.settingsUnsupported {
+                Text("not exposed over midi on this firmware")
+                    .foregroundStyle(.secondary)
+            } else if state.settingsTree.isEmpty {
                 Text(state.progressText ?? "loading...")
             }
             ForEach(state.settingsTree) { group in
