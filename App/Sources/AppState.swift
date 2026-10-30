@@ -53,6 +53,8 @@ final class AppState: ObservableObject {
     @Published var exportName = "sound.wav"
     @Published var picker: PendingPicker = .none
     @Published var renumberItem: SoundItem?
+    @Published var renameItem: SoundItem?
+    @Published var renameText = ""
     @Published var firmwareNote: String?
 
     /// Short suffix for the header: " ✓" when current, " → x.y.z" when behind.
@@ -290,6 +292,21 @@ final class AppState: ObservableObject {
         } catch {
             progressText = nil
             lastError = "restore: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - rename
+
+    /// Display name lives in metadata; the wire filename stays NNN.pcm.
+    func rename(_ item: SoundItem, to name: String) async {
+        guard let files else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try await files.setMetadata(fileID: item.node.id, ["name": .string(trimmed)])
+            await reload()
+        } catch {
+            lastError = "rename: \(error.localizedDescription)"
         }
     }
 

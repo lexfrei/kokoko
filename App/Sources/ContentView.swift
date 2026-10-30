@@ -50,6 +50,16 @@ struct ContentView: View {
                 await state.scan()
             }
         }
+        .alert("rename", isPresented: renameBinding) {
+            TextField("name", text: $state.renameText)
+                .frame(minWidth: 160)
+            Button("ok") {
+                if let item = state.renameItem {
+                    Task { await state.rename(item, to: state.renameText) }
+                }
+            }
+            Button("cancel", role: .cancel) {}
+        }
         .alert("renumber", isPresented: renumberBinding) {
             TextField("slot number", text: $renumberText)
                 .frame(minWidth: 120)
@@ -60,6 +70,13 @@ struct ContentView: View {
             }
             Button("cancel", role: .cancel) {}
         }
+    }
+
+    private var renameBinding: Binding<Bool> {
+        Binding(
+            get: { state.renameItem != nil },
+            set: { if !$0 { state.renameItem = nil } }
+        )
     }
 
     private var renumberBinding: Binding<Bool> {
@@ -144,6 +161,8 @@ struct ContentView: View {
         List(selection: $state.selection) {
             ForEach(state.sounds) { item in
                 HStack {
+                    Text(String(format: "%03d", item.node.id))
+                        .foregroundStyle(.secondary)
                     Text(item.displayName)
                     Spacer()
                     Text(formatSize(item.node.size))
@@ -161,6 +180,9 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .help("download as wav")
+                    Button("[r]") { state.renameText = item.displayName; state.renameItem = item }
+                        .buttonStyle(.plain)
+                        .help("rename")
                     Button("[#]") { state.renumberItem = item }
                         .buttonStyle(.plain)
                         .help("change slot number")
