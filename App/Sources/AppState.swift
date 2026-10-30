@@ -1,3 +1,4 @@
+import CoreMIDI
 import Foundation
 import SwiftUI
 import KokokoCore
@@ -34,7 +35,13 @@ final class AppState: ObservableObject {
 
     func scan() async {
         connection = .scanning
-        let pairs = enumerateMIDIPairs()
+        // Offline entries are cached ghosts of unplugged devices; they can
+        // never answer and each would burn the full identity timeout.
+        let pairs = enumerateMIDIPairs().filter {
+            var offline: Int32 = 0
+            MIDIObjectGetIntegerProperty($0.destination, kMIDIPropertyOffline, &offline)
+            return offline == 0
+        }
         for pair in pairs {
             do {
                 connection = .connecting(pair.name)

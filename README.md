@@ -18,8 +18,11 @@ Protocol, transport, and audio layers are implemented and covered by runnable ch
 ## Run
 
 ```bash
-swift run KokokoCoreChecks   # checks
-swift run kokoko-mac         # macOS UI smoke run (no Xcode needed)
+swift run KokokoCoreChecks   # unit-level checks
+swift run kokoko-e2e         # full protocol loop against a virtual device
+swift run kokoko-probe       # read-only probe of a connected device
+swift run vep                # virtual EP device (standalone simulator)
+swift run kokoko-mac         # macOS UI (connects to vep or a real device)
 ```
 
 ## App builds (requires Xcode)
