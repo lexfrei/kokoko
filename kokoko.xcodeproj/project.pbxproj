@@ -1,0 +1,363 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0E2A9F1BD0D2BBABD872BB78 /* KokokoMIDI in Frameworks */ = {isa = PBXBuildFile; productRef = 07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */; };
+		0E9994F30A2E687C200FE2CE /* KokokoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 89C9A501F569AFA0A05B79F4 /* KokokoCore */; };
+		17CCD6726062B0BDAA867022 /* KokokoAudio in Frameworks */ = {isa = PBXBuildFile; productRef = C579E177800EB81009DB221C /* KokokoAudio */; };
+		5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */; };
+		73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB5DC19A96DC8E08EC48477 /* AppState.swift */; };
+		7A848765AA2B0CF1B1A3D754 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB95217652E72FB05A4DFE2 /* ContentView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		3BB95217652E72FB05A4DFE2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		638425A4245089BE1DF3479C /* kokoko.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = kokoko.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8BB5DC19A96DC8E08EC48477 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokokoApp.swift; sourceTree = "<group>"; };
+		D2D88E399460FE396DD44C53 /* kokoko */ = {isa = PBXFileReference; lastKnownFileType = folder; name = kokoko; path = .; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		98B1D48ADB7063FFD285D048 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0E9994F30A2E687C200FE2CE /* KokokoCore in Frameworks */,
+				0E2A9F1BD0D2BBABD872BB78 /* KokokoMIDI in Frameworks */,
+				17CCD6726062B0BDAA867022 /* KokokoAudio in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1E728FC3199C5139ECD031F1 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				638425A4245089BE1DF3479C /* kokoko.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6CF81C2B2C10B6DE391ACE68 = {
+			isa = PBXGroup;
+			children = (
+				DFA1801008005572285E33F8 /* Packages */,
+				84B613FFAB9F85FC7A711779 /* Sources */,
+				1E728FC3199C5139ECD031F1 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		84B613FFAB9F85FC7A711779 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				8BB5DC19A96DC8E08EC48477 /* AppState.swift */,
+				3BB95217652E72FB05A4DFE2 /* ContentView.swift */,
+				ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */,
+			);
+			name = Sources;
+			path = App/Sources;
+			sourceTree = "<group>";
+		};
+		DFA1801008005572285E33F8 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				D2D88E399460FE396DD44C53 /* kokoko */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C2421F7FD358FFEE4D60F2E6 /* kokoko */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6C3576E3B46E4796E4BC5D91 /* Build configuration list for PBXNativeTarget "kokoko" */;
+			buildPhases = (
+				1241677E410520FA05128321 /* Sources */,
+				98B1D48ADB7063FFD285D048 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = kokoko;
+			packageProductDependencies = (
+				89C9A501F569AFA0A05B79F4 /* KokokoCore */,
+				07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */,
+				C579E177800EB81009DB221C /* KokokoAudio */,
+			);
+			productName = kokoko;
+			productReference = 638425A4245089BE1DF3479C /* kokoko.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		709F76922F7763EA9AE3C250 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					C2421F7FD358FFEE4D60F2E6 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = D37466AFAF61256F2852D6B5 /* Build configuration list for PBXProject "kokoko" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 6CF81C2B2C10B6DE391ACE68;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				13559107F81F1A65BB102500 /* XCLocalSwiftPackageReference "." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1E728FC3199C5139ECD031F1 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C2421F7FD358FFEE4D60F2E6 /* kokoko */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1241677E410520FA05128321 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */,
+				7A848765AA2B0CF1B1A3D754 /* ContentView.swift in Sources */,
+				5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		362B1BC3AFF5717D463C3A34 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = la.lex.kokoko;
+				PRODUCT_NAME = kokoko;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		446C73A54095C39CD74AB3B1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C449304D1247BD064B53F6DD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		DB9ABED53C944B2064D5ABD1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = la.lex.kokoko;
+				PRODUCT_NAME = kokoko;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6C3576E3B46E4796E4BC5D91 /* Build configuration list for PBXNativeTarget "kokoko" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				362B1BC3AFF5717D463C3A34 /* Debug */,
+				DB9ABED53C944B2064D5ABD1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D37466AFAF61256F2852D6B5 /* Build configuration list for PBXProject "kokoko" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C449304D1247BD064B53F6DD /* Debug */,
+				446C73A54095C39CD74AB3B1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		13559107F81F1A65BB102500 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KokokoMIDI;
+		};
+		89C9A501F569AFA0A05B79F4 /* KokokoCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KokokoCore;
+		};
+		C579E177800EB81009DB221C /* KokokoAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KokokoAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 709F76922F7763EA9AE3C250 /* Project object */;
+}

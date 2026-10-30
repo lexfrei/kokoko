@@ -1,0 +1,37 @@
+name: kokoko
+options:
+  bundleIdPrefix: la.lex
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+
+packages:
+  Kokoko:
+    path: .
+
+targets:
+  kokoko:
+    type: application
+    platform: iOS
+    sources:
+      - App/Sources
+    settings:
+      base:
+        SDKROOT: auto
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator macosx
+        TARGETED_DEVICE_FAMILY: "1,2"
+        PRODUCT_BUNDLE_IDENTIFIER: la.lex.kokoko
+        PRODUCT_NAME: kokoko
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "6.0"
+    dependencies:
+      - package: Kokoko
+        product: KokokoCore
+      - package: Kokoko
+        product: KokokoMIDI
+      - package: Kokoko
+        product: KokokoAudio

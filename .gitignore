@@ -1,3 +1,4 @@
 .build/
 .swiftpm/
 *.xcodeproj/xcuserdata/
+.claude/skills/reverse-engineer-anything
