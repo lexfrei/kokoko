@@ -35,6 +35,10 @@ open kokoko.xcodeproj
 
 One target, both platforms: pick `kokoko > My Mac` for macOS or an iPad destination for iOS. For a physical iPad set your development team under Signing & Capabilities.
 
+## License
+
+BSD 3-Clause. The wire protocol was documented from observed behavior of published tools; no third-party code or assets are included.
+
 ## Notes
 
 - No affiliation with teenage engineering. No assets, names, or code from the original tool; the protocol was documented from its published web bundle.
