@@ -4,3 +4,4 @@
 *.xcodeproj/xcuserdata/
 .claude/skills/reverse-engineer-anything
 dist/
+private/
