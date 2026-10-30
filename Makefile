@@ -21,6 +21,15 @@ run-mac:
 generate:
 	xcodegen generate
 
+# macOS .app without Xcode: SPM release binary + Info.plist + ad-hoc sign.
+bundle:
+	swift build -c release --target kokoko-mac
+	mkdir -p dist/kokoko.app/Contents/MacOS
+	cp .build/release/kokoko-mac dist/kokoko.app/Contents/MacOS/kokoko
+	cp Resources/Info.plist dist/kokoko.app/Contents/Info.plist
+	codesign --force --sign - dist/kokoko.app
+	@echo "dist/kokoko.app"
+
 app: generate
 	xcodebuild -project kokoko.xcodeproj -scheme kokoko -destination 'platform=macOS' -configuration Debug build
 
