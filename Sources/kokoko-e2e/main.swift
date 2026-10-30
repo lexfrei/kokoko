@@ -51,13 +51,8 @@ struct E2E {
             var seen: [FileEvent] = []
             for await event in await session.fileEvents() {
                 seen.append(event)
-                if seen.count >= 2 { break }
             }
             return seen
-        }
-        let eventsTimeout = Task {
-            try? await Task.sleep(for: .seconds(60))
-            eventsTask.cancel()
         }
 
         func resolve(_ path: String) async throws -> UInt16 {
@@ -152,8 +147,8 @@ struct E2E {
             check(false, "settings groups missing")
         }
 
+        eventsTask.cancel()
         let seen = await eventsTask.value
-        eventsTimeout.cancel()
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },
               "added event seen")
         check(seen.contains { if case .deleted = $0 { true } else { false } },
