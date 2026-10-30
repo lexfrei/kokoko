@@ -275,6 +275,26 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Drag reorder: move to the target slot; swap with the occupant if taken.
+    func moveOrSwap(id: UInt16, toSlot target: UInt16) async {
+        guard let files, let root = soundsRootID, id != target else { return }
+        do {
+            let nodes = try await files.list(nodeID: root)
+            if let occupant = nodes.first(where: { $0.id == target }) {
+                var temp: UInt16 = 65000
+                while nodes.contains(where: { $0.id == temp }) { temp &-= 1 }
+                try await files.move(fileID: id, toParent: root, newFileID: temp)
+                try await files.move(fileID: occupant.id, toParent: root, newFileID: id)
+                try await files.move(fileID: temp, toParent: root, newFileID: target)
+            } else {
+                try await files.move(fileID: id, toParent: root, newFileID: target)
+            }
+            await reload()
+        } catch {
+            lastError = "move: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - misc
 
     func audition(_ item: SoundItem) async {
@@ -306,6 +326,12 @@ final class AppState: ObservableObject {
             return progress
         }
         provider.suggestedName = item.displayName + ".wav"
+        // In-app reorder payload alongside the exported file representation.
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+                                            visibility: .all) { completion in
+            completion("node:\(item.id)".data(using: .utf8), nil)
+            return nil
+        }
         return provider
     }
 }

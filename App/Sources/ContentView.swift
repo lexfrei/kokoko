@@ -150,6 +150,7 @@ struct ContentView: View {
                 }
                 .tag(item.id)
                 .onDrag { state.dragProvider(for: item) }
+                .onDrop(of: [.text], delegate: SoundRowDrop(target: item, state: state))
             }
         }
         .onDrop(of: [.audio], isTargeted: nil) { providers in
@@ -206,5 +207,30 @@ struct ContentView: View {
             return String(format: "%.1fmb", Double(size) / 1048576.0)
         }
         return "\(size / 1024)kb"
+    }
+}
+
+/// Drop target on a sound row: reorders the dragged node into this slot,
+/// swapping when occupied.
+struct SoundRowDrop: DropDelegate {
+    let target: SoundItem
+    let state: AppState
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
+            guard let data,
+                  let text = String(data: data, encoding: .utf8),
+                  text.hasPrefix("node:"),
+                  let id = UInt16(text.dropFirst(5)) else { return }
+            Task { @MainActor in
+                await state.moveOrSwap(id: id, toSlot: target.id)
+            }
+        }
+        return true
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.text])
     }
 }
