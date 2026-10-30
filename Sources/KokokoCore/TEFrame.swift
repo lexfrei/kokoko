@@ -21,7 +21,7 @@ public enum TECommand {
     public static let productSpecific: UInt8 = 127
 }
 
-public enum TEStatus: Equatable {
+public enum TEStatus: Equatable, Sendable {
     case ok
     case error
     case commandNotFound
@@ -44,8 +44,8 @@ public enum TEStatus: Equatable {
     public var isTerminalSuccess: Bool { self == .ok }
 }
 
-public struct TEFrame: Equatable {
-    public enum Kind: Equatable {
+public struct TEFrame: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
         case request
         case response
         case deviceLog
@@ -133,7 +133,7 @@ public struct TEFrame: Equatable {
 public enum Identity {
     public static let requestBytes: [UInt8] = [0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7]
 
-    public struct Reply: Equatable {
+    public struct Reply: Equatable, Sendable {
         public var deviceID: UInt8
         public var sku: String
     }
@@ -152,7 +152,7 @@ public enum Identity {
     }
 }
 
-public struct GreetMetadata: Equatable {
+public struct GreetMetadata: Equatable, Sendable {
     public var chipID = ""
     public var mode = ""
     public var osVersion = ""

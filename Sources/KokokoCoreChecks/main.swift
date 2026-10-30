@@ -22,11 +22,12 @@ struct KokokoCoreChecks {
         check(a == b, "\(name) — got \(a), want \(b)")
     }
 
-    static func main() {
+    static func main() async {
         sevenBitCoding()
         frames()
         fileMessages()
         namesAndCRC()
+        await sessionChecks()
 
         if failures > 0 {
             print("\(failures) check(s) FAILED")

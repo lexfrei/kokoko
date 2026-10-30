@@ -453,7 +453,7 @@ public struct MoveResponse {
     }
 }
 
-public enum FileEvent: Equatable {
+public enum FileEvent: Equatable, Sendable {
     case metadataUpdated(nodeID: UInt16, json: String)
     case addedUpdated(nodeID: UInt16, fileSize: UInt32, name: String)
     case deleted(nodeID: UInt16)
