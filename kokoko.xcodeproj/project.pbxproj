@@ -13,10 +13,12 @@
 		5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */; };
 		73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB5DC19A96DC8E08EC48477 /* AppState.swift */; };
 		7A848765AA2B0CF1B1A3D754 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB95217652E72FB05A4DFE2 /* ContentView.swift */; };
+		C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CBF57372D137143311E4AE /* DataDocument.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		3BB95217652E72FB05A4DFE2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		48CBF57372D137143311E4AE /* DataDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataDocument.swift; sourceTree = "<group>"; };
 		638425A4245089BE1DF3479C /* kokoko.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = kokoko.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8BB5DC19A96DC8E08EC48477 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokokoApp.swift; sourceTree = "<group>"; };
@@ -59,6 +61,7 @@
 			children = (
 				8BB5DC19A96DC8E08EC48477 /* AppState.swift */,
 				3BB95217652E72FB05A4DFE2 /* ContentView.swift */,
+				48CBF57372D137143311E4AE /* DataDocument.swift */,
 				ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */,
 			);
 			name = Sources;
@@ -140,6 +143,7 @@
 			files = (
 				73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */,
 				7A848765AA2B0CF1B1A3D754 /* ContentView.swift in Sources */,
+				C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */,
 				5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -151,7 +155,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -295,7 +299,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;

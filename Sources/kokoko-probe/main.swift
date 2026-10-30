@@ -1,6 +1,7 @@
 import Foundation
 import KokokoCore
 import CoreMIDI
+import KokokoAudio
 import KokokoMIDI
 
 // Read-only probe against real hardware: identify, greet, file init, list.
@@ -48,6 +49,39 @@ struct Probe {
                     let nodes = try await files.list(nodeID: sounds.id)
                     for node in nodes {
                         print("  sound \(node.id): \(node.name) \(node.size)b flags=\(node.flags)")
+                    }
+                    if CommandLine.arguments.contains("--write-test") {
+                        // Upload a tiny in-format sound, read it back, delete it.
+                        var pcm: [UInt8] = []
+                        for i in 0..<4000 {
+                            let v = Int16(sin(Double(i) / 8.0) * 8000)
+                            pcm.append(UInt8(UInt16(bitPattern: v) & 0xFF))
+                            pcm.append(UInt8(UInt16(bitPattern: v) >> 8))
+                        }
+                        let wav = makeWAV(pcm: pcm, channels: 1, sampleRate: 46875)
+                        let prepared = try prepareForUpload(fileData: Data(wav), fileName: "kokoko-test.wav")
+                        let newID = try await files.put(parentID: sounds.id, name: "kokoko-test", data: prepared.pcm)
+                        print("  write-test: uploaded id=\(newID)")
+                        let afterUp = try await files.list(nodeID: sounds.id)
+                        let listed = afterUp.first(where: { $0.id == newID })
+                        print("  write-test: listed as name=\(listed?.name ?? "?") size=\(listed?.size ?? 0)")
+                        let back = try await files.get(fileID: newID)
+                        print("  write-test: readback \(back.data == prepared.pcm ? "MATCH" : "MISMATCH") (\(back.data.count)b)")
+                        try await files.delete(fileID: newID)
+                        let afterDel = try await files.list(nodeID: sounds.id)
+                        print("  write-test: deleted \(afterDel.contains(where: { $0.id == newID }) ? "STILL PRESENT" : "gone")")
+
+                        // Can /sounds hold folders?
+                        do {
+                            let dirID = try await files.put(parentID: sounds.id, name: "kokoko-dir", data: [],
+                                                            capabilities: [FileCapability.read, FileCapability.write, FileCapability.delete],
+                                                            isDirectory: true)
+                            print("  write-test: dir create gave id=\(dirID)")
+                            try await files.delete(fileID: dirID)
+                            print("  write-test: dir deleted")
+                        } catch {
+                            print("  write-test: dir create failed: \(error)")
+                        }
                     }
                     if CommandLine.arguments.contains("--download-smallest"),
                        let smallest = nodes.filter({ $0.isFile }).min(by: { $0.size < $1.size }) {

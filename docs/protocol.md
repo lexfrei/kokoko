@@ -238,3 +238,5 @@ Read-only probe over USB-C, 2026-10-30:
 - `/sounds` metadata answers the open free-space question: `{"max_capacity": 127801344, "free_space_in_bytes": ..., "formats": [...]}`.
 - Advertised format: pcm `s16`, channels 1-2, `samplerate.native` 46875, `samplerate.range` 1..65535 — the documented defaults hold.
 - File init, list and paged metadata get work over UMP event lists at the negotiated chunk size.
+- Full write path verified: PUT upload lands with a device-assigned slot name (`032.pcm` for a file sent as `kokoko-test`), GET readback is byte-identical, DELETE removes it. Display names live in metadata `name`; the wire filename is rewritten to `NNN.pcm`.
+- Directories under `/sounds` are rejected by firmware: `can only create files`. Sample organization is a flat pool plus pad assignment via `{"sym": node_id}` metadata.

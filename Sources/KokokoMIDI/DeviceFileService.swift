@@ -85,10 +85,11 @@ public actor DeviceFileService {
     public func put(parentID: UInt16, name: String, data: [UInt8], fileID: UInt16 = 0,
                     capabilities: [UInt8] = [FileCapability.read],
                     metadata: [String: JSONValue]? = nil,
+                    isDirectory: Bool = false,
                     progress: (@Sendable (Int, Int) -> Void)? = nil,
                     timeout: Duration = .seconds(20)) async throws -> UInt16 {
         var flags = capabilities.reduce(0) { $0 | $1 }
-        flags |= FileTypeFlag.file
+        flags |= isDirectory ? FileTypeFlag.directory : FileTypeFlag.file
         let metadataJSON: String? = metadata.flatMap {
             (try? JSONSerialization.data(withJSONObject: $0.mapValues(\.anyValue))).flatMap { String(data: $0, encoding: .utf8) }
         }
