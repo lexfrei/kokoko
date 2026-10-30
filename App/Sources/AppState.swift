@@ -1,9 +1,11 @@
 import CoreMIDI
 import Foundation
 import SwiftUI
-import KokokoCore
-import KokokoMIDI
+import UniformTypeIdentifiers
 import KokokoAudio
+import KokokoCore
+import KokokoLibrary
+import KokokoMIDI
 
 enum ConnectionState: Equatable {
     case idle
@@ -15,7 +17,15 @@ enum ConnectionState: Equatable {
 
 struct SoundItem: Identifiable, Equatable {
     let node: FSNode
+    let displayName: String
     var id: UInt16 { node.id }
+}
+
+enum PendingPicker: Equatable {
+    case none
+    case downloadFolder([UInt16])
+    case backupFolder
+    case restoreFolder
 }
 
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
@@ -23,15 +33,20 @@ struct SoundItem: Identifiable, Equatable {
 final class AppState: ObservableObject {
     @Published var connection: ConnectionState = .idle
     @Published var sounds: [SoundItem] = []
+    @Published var selection = Set<UInt16>()
     @Published var progressText: String?
     @Published var lastError: String?
     @Published var showImporter = false
     @Published var exportDocument: DataDocument?
     @Published var exportName = "sound.wav"
+    @Published var picker: PendingPicker = .none
+    @Published var renumberItem: SoundItem?
 
     private var session: SysExSession?
     private var files: DeviceFileService?
+    private var library: DeviceLibrary?
     private var soundsRootID: UInt16?
+    private var deviceMeta = GreetMetadata()
 
     func scan() async {
         connection = .scanning
@@ -55,6 +70,8 @@ final class AppState: ObservableObject {
                 try await service.initialize()
                 self.session = session
                 self.files = service
+                self.library = DeviceLibrary(files: service)
+                deviceMeta = meta
                 connection = .connected(deviceName: pair.name,
                                         serial: meta.serial,
                                         osVersion: meta.osVersion)
@@ -73,7 +90,13 @@ final class AppState: ObservableObject {
             let root = try await resolvePath("/sounds")
             soundsRootID = root
             let nodes = try await files.list(nodeID: root)
-            sounds = nodes.filter { $0.isFile }.map(SoundItem.init)
+            var items: [SoundItem] = []
+            for node in nodes where node.isFile {
+                let meta = try? await files.getMetadata(fileID: node.id)
+                let display = meta?["name"]?.stringValue ?? node.name
+                items.append(SoundItem(node: node, displayName: display))
+            }
+            sounds = items
             lastError = nil
         } catch {
             lastError = "list failed: \(error.localizedDescription)"
@@ -93,6 +116,8 @@ final class AppState: ObservableObject {
         }
         return current
     }
+
+    // MARK: - upload
 
     func upload(urls: [URL]) async {
         guard let files, let root = soundsRootID else { return }
@@ -122,20 +147,22 @@ final class AppState: ObservableObject {
         await reload()
     }
 
+    // MARK: - download (single + batch)
+
     func download(_ item: SoundItem) async -> (name: String, wav: [UInt8])? {
         guard let files else { return nil }
         do {
-            progressText = "recv \(item.node.name)"
+            progressText = "recv \(item.displayName)"
             let meta = (try? await files.getMetadata(fileID: item.node.id)) ?? [:]
             let channels = meta["channels"]?.intValue ?? 1
             let rate = meta["samplerate"]?.intValue ?? deviceSampleRate
             let result = try await files.get(fileID: item.node.id) { done, total in
                 Task { @MainActor in
-                    self.progressText = "recv \(item.node.name) \(done * 100 / max(total, 1))%"
+                    self.progressText = "recv \(item.displayName) \(done * 100 / max(total, 1))%"
                 }
             }
             progressText = nil
-            return (item.node.name + ".wav",
+            return (item.displayName + ".wav",
                     makeWAV(pcm: result.data, channels: channels, sampleRate: rate))
         } catch {
             progressText = nil
@@ -143,6 +170,26 @@ final class AppState: ObservableObject {
             return nil
         }
     }
+
+    func downloadManyToFolder(_ ids: [UInt16], folder: URL) async {
+        guard let library else { return }
+        do {
+            let accessing = folder.startAccessingSecurityScopedResource()
+            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+            let wavs = try await library.downloadMany(ids) { [weak self] done, total in
+                Task { @MainActor in self?.progressText = "recv \(done)/\(total)" }
+            }
+            for wav in wavs {
+                try Data(wav.wav).write(to: folder.appendingPathComponent(wav.name))
+            }
+            progressText = nil
+        } catch {
+            progressText = nil
+            lastError = "batch download: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - delete
 
     func delete(_ item: SoundItem) async {
         guard let files else { return }
@@ -154,8 +201,111 @@ final class AppState: ObservableObject {
         }
     }
 
+    func deleteMany(_ ids: Set<UInt16>) async {
+        guard let library else { return }
+        do {
+            try await library.deleteMany(Array(ids)) { [weak self] done, total in
+                Task { @MainActor in self?.progressText = "del \(done)/\(total)" }
+            }
+            selection = []
+            progressText = nil
+            await reload()
+        } catch {
+            progressText = nil
+            lastError = "batch delete: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - backup / restore
+
+    func backupToFolder(_ folder: URL) async {
+        guard let library else { return }
+        do {
+            let accessing = folder.startAccessingSecurityScopedResource()
+            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+            progressText = "backup..."
+            let backup = try await library.backup(deviceSKU: deviceMeta.sku,
+                                                  osVersion: deviceMeta.osVersion) { [weak self] name in
+                Task { @MainActor in self?.progressText = "backup \(name)" }
+            }
+            let stamp = ISO8601DateFormatter().string(from: backup.createdAt)
+                .replacingOccurrences(of: ":", with: "-")
+            let target = folder.appendingPathComponent("kokoko-backup-\(stamp)")
+            try BackupStore.write(backup, to: target)
+            progressText = nil
+        } catch {
+            progressText = nil
+            lastError = "backup: \(error.localizedDescription)"
+        }
+    }
+
+    func restoreFromFolder(_ folder: URL) async {
+        guard let library else { return }
+        do {
+            let accessing = folder.startAccessingSecurityScopedResource()
+            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+            let backup = try BackupStore.read(from: folder)
+            progressText = "restore..."
+            try await library.restore(backup) { [weak self] name in
+                Task { @MainActor in self?.progressText = "restore \(name)" }
+            }
+            progressText = nil
+            await reload()
+        } catch {
+            progressText = nil
+            lastError = "restore: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - renumber
+
+    /// Move a sound to a different slot number (node id). Fails if occupied.
+    func renumber(_ item: SoundItem, to target: UInt16) async {
+        guard let files, let root = soundsRootID else { return }
+        do {
+            let nodes = try await files.list(nodeID: root)
+            if nodes.contains(where: { $0.id == target }) {
+                lastError = "slot \(target) is occupied"
+                return
+            }
+            try await files.move(fileID: item.node.id, toParent: root, newFileID: target)
+            await reload()
+        } catch {
+            lastError = "renumber: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - misc
+
     func audition(_ item: SoundItem) async {
         guard let files else { return }
         try? await files.startPlayback(fileID: item.node.id, offset: 0, length: 1000)
+    }
+
+    /// Drag-out provider: downloads the sound on demand and hands over a WAV file.
+    func dragProvider(for item: SoundItem) -> NSItemProvider {
+        let provider = NSItemProvider()
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.wav.identifier,
+                                            visibility: .all) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            Task { @MainActor in
+                if let result = await self.download(item) {
+                    let temp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(result.name)
+                    do {
+                        try Data(result.wav).write(to: temp)
+                        progress.completedUnitCount = 1
+                        completion(temp, true, nil)
+                    } catch {
+                        completion(nil, false, error)
+                    }
+                } else {
+                    completion(nil, false, self.lastError.map { NSError(domain: "kokoko", code: 1, userInfo: [NSLocalizedDescriptionKey: $0]) })
+                }
+            }
+            return progress
+        }
+        provider.suggestedName = item.displayName + ".wav"
+        return provider
     }
 }

@@ -36,3 +36,5 @@ targets:
         product: KokokoMIDI
       - package: Kokoko
         product: KokokoAudio
+      - package: Kokoko
+        product: KokokoLibrary

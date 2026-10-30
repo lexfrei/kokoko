@@ -1,13 +1,14 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import KokokoAudio
 import KokokoCore
 import KokokoMIDI
-import KokokoAudio
 
 struct ContentView: View {
     // Classic property wrapper on purpose: macro-based @State/@EnvironmentObject
     // need Xcode's SwiftUIMacros plugin; this stays typecheckable with CLT.
     @ObservedObject var state: AppState
+    @State private var renumberText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -19,11 +20,23 @@ struct ContentView: View {
         }
         .font(.system(.body, design: .monospaced))
         .frame(minWidth: 420, minHeight: 480)
-        .fileImporter(isPresented: importerBinding,
-                      allowedContentTypes: [.audio],
-                      allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result {
-                Task { await state.upload(urls: urls) }
+        .fileImporter(isPresented: anyPickerBinding,
+                      allowedContentTypes: state.picker == .none ? [.audio] : [.folder],
+                      allowsMultipleSelection: state.picker == .none) { result in
+            guard case .success(let urls) = result, !urls.isEmpty else { return }
+            let action = state.picker
+            state.picker = .none
+            Task {
+                switch action {
+                case .none:
+                    await state.upload(urls: urls)
+                case .downloadFolder(let ids):
+                    await state.downloadManyToFolder(ids, folder: urls[0])
+                case .backupFolder:
+                    await state.backupToFolder(urls[0])
+                case .restoreFolder:
+                    await state.restoreFromFolder(urls[0])
+                }
             }
         }
         .fileExporter(isPresented: exporterBinding,
@@ -37,10 +50,30 @@ struct ContentView: View {
                 await state.scan()
             }
         }
+        .alert("renumber", isPresented: renumberBinding) {
+            TextField("slot number", text: $renumberText)
+                .frame(minWidth: 120)
+            Button("ok") {
+                if let item = state.renumberItem, let target = UInt16(renumberText) {
+                    Task { await state.renumber(item, to: target) }
+                }
+            }
+            Button("cancel", role: .cancel) {}
+        }
     }
 
-    private var importerBinding: Binding<Bool> {
-        Binding(get: { state.showImporter }, set: { state.showImporter = $0 })
+    private var renumberBinding: Binding<Bool> {
+        Binding(
+            get: { state.renumberItem != nil },
+            set: { if !$0 { state.renumberItem = nil } }
+        )
+    }
+
+    private var anyPickerBinding: Binding<Bool> {
+        Binding(
+            get: { state.showImporter || state.picker != .none },
+            set: { if !$0 { state.showImporter = false; state.picker = .none } }
+        )
     }
 
     private var exporterBinding: Binding<Bool> {
@@ -88,10 +121,10 @@ struct ContentView: View {
     }
 
     private var soundList: some View {
-        List {
+        List(selection: $state.selection) {
             ForEach(state.sounds) { item in
                 HStack {
-                    Text(item.node.name)
+                    Text(item.displayName)
                     Spacer()
                     Text(formatSize(item.node.size))
                         .foregroundStyle(.secondary)
@@ -108,11 +141,31 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .help("download as wav")
+                    Button("[#]") { state.renumberItem = item }
+                        .buttonStyle(.plain)
+                        .help("change slot number")
                     Button("[x]") { Task { await state.delete(item) } }
                         .buttonStyle(.plain)
                         .help("delete from device")
                 }
+                .tag(item.id)
+                .onDrag { state.dragProvider(for: item) }
             }
+        }
+        .onDrop(of: [.audio], isTargeted: nil) { providers in
+            var urls: [URL] = []
+            let group = DispatchGroup()
+            for provider in providers {
+                group.enter()
+                _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, _ in
+                    if let url { urls.append(url) }
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                Task { await state.upload(urls: urls) }
+            }
+            return true
         }
     }
 
@@ -126,7 +179,20 @@ struct ContentView: View {
             }
             Spacer()
             if case .connected = state.connection {
+                if !state.selection.isEmpty {
+                    Text("sel \(state.selection.count)")
+                    Button("[ v to folder ]") {
+                        state.picker = .downloadFolder(Array(state.selection))
+                    }
+                    .buttonStyle(.plain)
+                    Button("[ x ]") { Task { await state.deleteMany(state.selection) } }
+                        .buttonStyle(.plain)
+                }
                 Button("[ + add sounds ]") { state.showImporter = true }
+                    .buttonStyle(.plain)
+                Button("[ backup ]") { state.picker = .backupFolder }
+                    .buttonStyle(.plain)
+                Button("[ restore ]") { state.picker = .restoreFolder }
                     .buttonStyle(.plain)
                 Button("[ refresh ]") { Task { await state.reload() } }
                     .buttonStyle(.plain)

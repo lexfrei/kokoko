@@ -153,6 +153,7 @@ public enum Identity {
 }
 
 public struct GreetMetadata: Equatable, Sendable {
+    public init() {}
     public var chipID = ""
     public var mode = ""
     public var osVersion = ""

@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "KokokoCore", targets: ["KokokoCore"]),
         .library(name: "KokokoMIDI", targets: ["KokokoMIDI"]),
         .library(name: "KokokoAudio", targets: ["KokokoAudio"]),
+        .library(name: "KokokoLibrary", targets: ["KokokoLibrary"]),
     ],
     targets: [
         .target(name: "KokokoCore"),

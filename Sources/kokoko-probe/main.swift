@@ -65,11 +65,19 @@ struct Probe {
                         let afterUp = try await files.list(nodeID: sounds.id)
                         let listed = afterUp.first(where: { $0.id == newID })
                         print("  write-test: listed as name=\(listed?.name ?? "?") size=\(listed?.size ?? 0)")
-                        let back = try await files.get(fileID: newID)
+                        // renumber: MOVE to a fresh slot, verify, move back
+                        let nodesNow = try await files.list(nodeID: sounds.id)
+                        var free: UInt16 = 900
+                        while nodesNow.contains(where: { $0.id == free }) { free += 1 }
+                        try await files.move(fileID: newID, toParent: sounds.id, newFileID: free)
+                        let afterMove = try await files.list(nodeID: sounds.id)
+                        let moved = afterMove.first(where: { $0.id == free })
+                        print("  write-test: renumbered to \(free), listed as \(moved?.name ?? "?")")
+                        let back = try await files.get(fileID: free)
                         print("  write-test: readback \(back.data == prepared.pcm ? "MATCH" : "MISMATCH") (\(back.data.count)b)")
-                        try await files.delete(fileID: newID)
+                        try await files.delete(fileID: free)
                         let afterDel = try await files.list(nodeID: sounds.id)
-                        print("  write-test: deleted \(afterDel.contains(where: { $0.id == newID }) ? "STILL PRESENT" : "gone")")
+                        print("  write-test: deleted \(afterDel.contains(where: { $0.id == free }) ? "STILL PRESENT" : "gone")")
 
                         // Can /sounds hold folders?
                         do {

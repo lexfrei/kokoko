@@ -13,6 +13,7 @@
 		5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */; };
 		73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB5DC19A96DC8E08EC48477 /* AppState.swift */; };
 		7A848765AA2B0CF1B1A3D754 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB95217652E72FB05A4DFE2 /* ContentView.swift */; };
+		9CE8EB30A0EBB8CC82B3B115 /* KokokoLibrary in Frameworks */ = {isa = PBXBuildFile; productRef = 4EB44EC50E31825BF6D2011A /* KokokoLibrary */; };
 		C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CBF57372D137143311E4AE /* DataDocument.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,6 +34,7 @@
 				0E9994F30A2E687C200FE2CE /* KokokoCore in Frameworks */,
 				0E2A9F1BD0D2BBABD872BB78 /* KokokoMIDI in Frameworks */,
 				17CCD6726062B0BDAA867022 /* KokokoAudio in Frameworks */,
+				9CE8EB30A0EBB8CC82B3B115 /* KokokoLibrary in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -95,6 +97,7 @@
 				89C9A501F569AFA0A05B79F4 /* KokokoCore */,
 				07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */,
 				C579E177800EB81009DB221C /* KokokoAudio */,
+				4EB44EC50E31825BF6D2011A /* KokokoLibrary */,
 			);
 			productName = kokoko;
 			productReference = 638425A4245089BE1DF3479C /* kokoko.app */;
@@ -352,6 +355,10 @@
 		07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KokokoMIDI;
+		};
+		4EB44EC50E31825BF6D2011A /* KokokoLibrary */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KokokoLibrary;
 		};
 		89C9A501F569AFA0A05B79F4 /* KokokoCore */ = {
 			isa = XCSwiftPackageProductDependency;
