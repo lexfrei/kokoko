@@ -84,6 +84,17 @@ struct ContentView: View {
         HStack {
             Text("kokoko")
                 .font(.system(.title2, design: .monospaced))
+            if case .connected = state.connection {
+                Button("[ sounds ]") { state.view = .sounds }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(state.view == .sounds ? .primary : .secondary)
+                Button("[ projects ]") {
+                    state.view = .projects
+                    Task { await state.loadProjects() }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(state.view == .projects ? .primary : .secondary)
+            }
             Spacer()
             switch state.connection {
             case .idle:
@@ -105,7 +116,11 @@ struct ContentView: View {
         Group {
             switch state.connection {
             case .connected:
-                soundList
+                if state.view == .projects {
+                    projectList
+                } else {
+                    soundList
+                }
             case .failed:
                 VStack(spacing: 12) {
                     Text("connect the device over usb-c")
@@ -182,6 +197,14 @@ struct ContentView: View {
             if case .connected = state.connection {
                 if !state.selection.isEmpty {
                     Text("sel \(state.selection.count)")
+                    TextField("to #", text: $state.bulkMoveStart)
+                        .frame(width: 56)
+                    Button("[ move ]") {
+                        if let start = UInt16(state.bulkMoveStart) {
+                            Task { await state.moveSelection(startingAt: start) }
+                        }
+                    }
+                    .buttonStyle(.plain)
                     Button("[ v to folder ]") {
                         state.picker = .downloadFolder(Array(state.selection))
                     }
@@ -200,6 +223,40 @@ struct ContentView: View {
             }
         }
         .padding()
+    }
+
+    private var projectList: some View {
+        List {
+            ForEach(state.projects) { project in
+                HStack {
+                    Text("P\(project.name)")
+                    Spacer()
+                    Text(formatSize(project.size))
+                        .foregroundStyle(.secondary)
+                    Button("[v tar]") {
+                        Task {
+                            if let result = await state.downloadProject(project) {
+                                state.exportName = result.name
+                                state.exportDocument = DataDocument(data: Data(result.tar),
+                                                                    contentType: UTType(filenameExtension: "tar") ?? .data)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("download project archive")
+                }
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            for provider in providers {
+                _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { url, _, _ in
+                    if let url {
+                        Task { await state.uploadProject(url: url) }
+                    }
+                }
+            }
+            return true
+        }
     }
 
     private func formatSize(_ size: UInt32) -> String {

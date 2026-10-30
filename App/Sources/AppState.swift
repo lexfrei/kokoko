@@ -15,6 +15,17 @@ enum ConnectionState: Equatable {
     case failed(String)
 }
 
+enum AppView {
+    case sounds
+    case projects
+}
+
+struct ProjectItem: Identifiable, Equatable {
+    let id: UInt16
+    let name: String
+    let size: UInt32
+}
+
 struct SoundItem: Identifiable, Equatable {
     let node: FSNode
     let displayName: String
@@ -41,6 +52,9 @@ final class AppState: ObservableObject {
     @Published var exportName = "sound.wav"
     @Published var picker: PendingPicker = .none
     @Published var renumberItem: SoundItem?
+    @Published var view: AppView = .sounds
+    @Published var projects: [ProjectItem] = []
+    @Published var bulkMoveStart = ""
 
     private var session: SysExSession?
     private var files: DeviceFileService?
@@ -275,6 +289,42 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Bulk move: selected sounds land on consecutive slots starting at `start`.
+    /// Everything moves out to temporary ids first, then into place — order is
+    /// preserved and occupied targets never collide.
+    func moveSelection(startingAt start: UInt16) async {
+        guard let files, let root = soundsRootID, !selection.isEmpty else { return }
+        do {
+            let ids = selection.sorted()
+            let nodes = try await files.list(nodeID: root)
+            let occupied = Set(nodes.map(\.id))
+            var temp: UInt16 = 65000
+            var tempMap: [(from: UInt16, temp: UInt16)] = []
+            progressText = "move out..."
+            for id in ids {
+                while occupied.contains(temp) { temp &-= 1 }
+                try await files.move(fileID: id, toParent: root, newFileID: temp)
+                tempMap.append((id, temp))
+                temp &-= 1
+            }
+            var target = start
+            for (index, pair) in tempMap.enumerated() {
+                progressText = "move \(index + 1)/\(tempMap.count)"
+                // Skip slots still held by members of the selection in flight.
+                while occupied.contains(target) && !ids.contains(target) { target &+= 1 }
+                if pair.from == target { continue }
+                try await files.move(fileID: pair.temp, toParent: root, newFileID: target)
+                target &+= 1
+            }
+            selection = []
+            progressText = nil
+            await reload()
+        } catch {
+            progressText = nil
+            lastError = "bulk move: \(error.localizedDescription)"
+        }
+    }
+
     /// Drag reorder: move to the target slot; swap with the occupant if taken.
     func moveOrSwap(id: UInt16, toSlot target: UInt16) async {
         guard let files, let root = soundsRootID, id != target else { return }
@@ -292,6 +342,71 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             lastError = "move: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - projects
+
+    func loadProjects() async {
+        guard let files else { return }
+        do {
+            let root = try await resolvePath("/projects")
+            let nodes = try await files.list(nodeID: root)
+            projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
+            lastError = nil
+        } catch {
+            lastError = "projects: \(error.localizedDescription)"
+        }
+    }
+
+    /// Download a project as its .tar archive (same shape the original tool uses).
+    func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
+        guard let files else { return nil }
+        do {
+            progressText = "recv P\(project.name)"
+            let result = try await files.get(fileID: project.id)
+            progressText = nil
+            return ("P\(project.name).tar", result.data)
+        } catch {
+            progressText = nil
+            lastError = "project download: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    /// Upload a .tar project archive; the name carries the target slot (P01..P09).
+    func uploadProject(url: URL) async {
+        guard let files else { return }
+        do {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            guard let match = url.lastPathComponent.range(of: #"P(\d{2})\.tar$"#,
+                                                          options: .regularExpression) else {
+                lastError = "project archive must be named like P01.tar"
+                return
+            }
+            let slot = String(url.lastPathComponent[match].dropFirst().dropLast(4))
+            let data = Array(try Data(contentsOf: url))
+            let projectsRoot = try await resolvePath("/projects")
+            guard let parent = try await files.list(nodeID: projectsRoot)
+                .first(where: { $0.name == slot }) else {
+                lastError = "no project slot P\(slot) on device"
+                return
+            }
+            progressText = "send P\(slot)"
+            _ = try await files.put(parentID: projectsRoot, name: slot, data: data,
+                                    fileID: parent.id, capabilities: [FileCapability.read],
+                                    progress: { [weak self] done, total in
+                                        Task { @MainActor in
+                                            self?.progressText = "send P\(slot) \(done * 100 / max(total, 1))%"
+                                        }
+                                    },
+                                    timeout: .seconds(60))
+            progressText = nil
+            await loadProjects()
+        } catch {
+            progressText = nil
+            lastError = "project upload: \(error.localizedDescription)"
         }
     }
 
