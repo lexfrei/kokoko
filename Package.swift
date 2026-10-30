@@ -10,6 +10,7 @@ let package = Package(
     targets: [
         .target(name: "KokokoCore"),
         .target(name: "KokokoMIDI", dependencies: ["KokokoCore"]),
-        .executableTarget(name: "KokokoCoreChecks", dependencies: ["KokokoCore", "KokokoMIDI"]),
+        .target(name: "KokokoAudio", dependencies: ["KokokoCore"]),
+        .executableTarget(name: "KokokoCoreChecks", dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio"]),
     ]
 )

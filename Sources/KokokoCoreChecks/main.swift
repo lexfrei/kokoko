@@ -28,6 +28,11 @@ struct KokokoCoreChecks {
         fileMessages()
         namesAndCRC()
         await sessionChecks()
+        do {
+            try audioChecks()
+        } catch {
+            check(false, "audio checks threw \(error)")
+        }
 
         if failures > 0 {
             print("\(failures) check(s) FAILED")

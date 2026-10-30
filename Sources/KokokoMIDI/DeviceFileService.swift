@@ -84,13 +84,13 @@ public actor DeviceFileService {
     /// Upload data as a file under parentID. Empty final data message terminates.
     public func put(parentID: UInt16, name: String, data: [UInt8], fileID: UInt16 = 0,
                     capabilities: [UInt8] = [FileCapability.read],
-                    metadata: [String: Any]? = nil,
+                    metadata: [String: JSONValue]? = nil,
                     progress: (@Sendable (Int, Int) -> Void)? = nil,
                     timeout: Duration = .seconds(20)) async throws -> UInt16 {
         var flags = capabilities.reduce(0) { $0 | $1 }
         flags |= FileTypeFlag.file
         let metadataJSON: String? = metadata.flatMap {
-            (try? JSONSerialization.data(withJSONObject: $0)).flatMap { String(data: $0, encoding: .utf8) }
+            (try? JSONSerialization.data(withJSONObject: $0.mapValues(\.anyValue))).flatMap { String(data: $0, encoding: .utf8) }
         }
         let initReply = try await call(
             PutInitRequest(fileID: fileID, parentID: parentID, flags: flags,
@@ -164,7 +164,7 @@ public actor DeviceFileService {
     }
 
     /// Read full metadata JSON for a node (paged).
-    public func getMetadata(fileID: UInt16, key: String? = nil) async throws -> [String: Any] {
+    public func getMetadata(fileID: UInt16, key: String? = nil) async throws -> [String: JSONValue] {
         var json = ""
         var page: UInt16 = 0
         while true {
@@ -185,12 +185,12 @@ public actor DeviceFileService {
               let dict = object as? [String: Any] else {
             throw FileServiceError.metadataParse(json)
         }
-        return dict
+        return dict.compactMapValues { JSONValue(any: $0) }
     }
 
     /// Set metadata; switches to the paged variant when the JSON is large.
-    public func setMetadata(fileID: UInt16, _ metadata: [String: Any]) async throws {
-        let data = try JSONSerialization.data(withJSONObject: metadata)
+    public func setMetadata(fileID: UInt16, _ metadata: [String: JSONValue]) async throws {
+        let data = try JSONSerialization.data(withJSONObject: metadata.mapValues(\.anyValue))
         guard let json = String(data: data, encoding: .utf8) else { return }
         if json.utf8.count <= chunkSize - 8 {
             _ = try await call(SetMetadataRequest(fileID: fileID, json: json).bytes)
