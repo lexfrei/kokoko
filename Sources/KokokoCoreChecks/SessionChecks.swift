@@ -120,6 +120,30 @@ extension KokokoCoreChecks {
             check(false, "session timeout wrong error \(error)")
         }
 
+        // settings get-all over fake wire
+        let settingsWire = FakeWire()
+        let settingsSession = SysExSession(wire: settingsWire, identityCode: 0x10)
+        async let initTask = settingsSession.call(command: 6, payload: [1, 2, 0])
+        try? await Task.sleep(for: .milliseconds(50))
+        if let sent = settingsWire.sent.last {
+            settingsWire.emulateIncoming(deviceResponse(to: sent, status: 0, payload: []))
+        }
+        _ = try? await initTask
+
+        let bigJSON = String(repeating: #"{"a":1,"#.utf8.count > 0 ? "x" : "x", count: 1200)
+        async let getTask = settingsSession.call(command: 6, payload: [2, 0, 0])
+        try? await Task.sleep(for: .milliseconds(50))
+        if let sent = settingsWire.sent.last {
+            settingsWire.emulateIncoming(deviceResponse(to: sent, status: 0,
+                                                        payload: [0, 0] + Array(bigJSON.utf8) + [0]))
+        }
+        do {
+            let reply = try await getTask
+            check(reply.payload.count == 1203, "settings big response — got \(reply.payload.count)")
+        } catch {
+            check(false, "settings big response threw \(error)")
+        }
+
         // identity over fake wire
         let idWire = FakeWire()
         async let idTask = identifyDevice(on: idWire)

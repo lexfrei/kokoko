@@ -94,6 +94,9 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(state.view == .projects ? .primary : .secondary)
+                Button("[ settings ]") { state.view = .settings }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(state.view == .settings ? .primary : .secondary)
             }
             Spacer()
             switch state.connection {
@@ -121,6 +124,8 @@ struct ContentView: View {
             case .connected:
                 if state.view == .projects {
                     projectList
+                } else if state.view == .settings {
+                    SettingsView(state: state)
                 } else {
                     soundList
                 }

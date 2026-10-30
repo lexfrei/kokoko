@@ -96,6 +96,8 @@ public final class VirtualEPDevice: @unchecked Sendable {
             respond(to: frame, status: 0, payload: frame.payload)
         case TECommand.file:
             handleFile(frame)
+        case 6:
+            handleSettings(frame)
         default:
             respond(to: frame, status: 2, payload: [])
         }
@@ -252,6 +254,44 @@ public final class VirtualEPDevice: @unchecked Sendable {
 
     private var lastGetFileID: UInt16 = 0
 
+    // Plausible settings schema for exercising the read path.
+    private let settingsJSON = """
+        {"settings":[{"title":"audio","settings":[
+            {"id":1,"title":"speaker volume","type":"int","min":0,"max":100,"value":70},
+            {"id":2,"title":"headphone volume","type":"int","min":0,"max":100,"value":60}]},
+        {"title":"midi","settings":[
+            {"id":16,"title":"usb midi in","type":"bool","value":true},
+            {"id":17,"title":"usb midi out","type":"bool","value":true}]}]}
+        """
+    private var settingsPageSize: Int = 512
+
+    private func handleSettings(_ frame: TEFrame) {
+        let p = frame.payload
+        guard let sub = p.first else {
+            respond(to: frame, status: 3, payload: [])
+            return
+        }
+        switch sub {
+        case 1: // init
+            settingsPageSize = p.count >= 3 ? Int(readU16(p, 1)) : 512
+            respond(to: frame, status: 0, payload: [])
+        case 2: // get all
+            let page = Int(readU16(p, 1))
+            let bytes = Array(settingsJSON.utf8)
+            let start = page * settingsPageSize
+            let chunk: [UInt8] = start < bytes.count
+                ? Array(bytes[start..<min(start + settingsPageSize, bytes.count)])
+                : []
+            // Text from byte 2, zero-terminated; empty chunk ends paging.
+            respond(to: frame, status: 0,
+                    payload: [UInt8(page >> 8), UInt8(page & 0xFF)] + chunk + [0])
+        case 3: // set
+            respond(to: frame, status: 0, payload: [])
+        default:
+            respond(to: frame, status: 2, payload: [])
+        }
+    }
+
     private func handleMetadata(_ frame: TEFrame, _ p: [UInt8]) {
         guard p.count >= 2 else {
             respond(to: frame, status: 3, payload: [])
@@ -340,20 +380,42 @@ public final class VirtualEPDevice: @unchecked Sendable {
 
     private func sendRaw(_ bytes: [UInt8]) {
         let words = UMPCodec.encodeSysEx(bytes)
+        if words.count <= 64 {
+            sendGroup(words)
+            return
+        }
+        // Split into 64-word lists, one per runloop turn: back-to-back
+        // MIDIReceivedEventList in one turn drops all but the first, and
+        // single packets over 64 words arrive truncated.
+        var groups: [[UInt32]] = []
         var offset = 0
         while offset < words.count {
-            let group = Array(words[offset..<min(offset + 64, words.count)])
-            let listSize = 16 + MemoryLayout<MIDIEventPacket>.size + group.count * 4
-            let raw = UnsafeMutableRawPointer.allocate(byteCount: listSize,
-                                                       alignment: MemoryLayout<MIDIEventList>.alignment)
-            defer { raw.deallocate() }
-            let eventList = raw.assumingMemoryBound(to: MIDIEventList.self)
-            let packet = MIDIEventListInit(eventList, ._1_0)
-            group.withUnsafeBufferPointer { buffer in
-                _ = MIDIEventListAdd(eventList, listSize, packet, 0, group.count, buffer.baseAddress!)
-            }
-            MIDIReceivedEventList(source, eventList)
+            groups.append(Array(words[offset..<min(offset + 64, words.count)]))
             offset += 64
+        }
+        sendGroups(groups)
+    }
+
+    private func sendGroup(_ group: [UInt32]) {
+        let listSize = 16 + MemoryLayout<MIDIEventPacket>.size + group.count * 4
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: listSize,
+                                                   alignment: MemoryLayout<MIDIEventList>.alignment)
+        let eventList = raw.assumingMemoryBound(to: MIDIEventList.self)
+        let packet = MIDIEventListInit(eventList, ._1_0)
+        group.withUnsafeBufferPointer { buffer in
+            _ = MIDIEventListAdd(eventList, listSize, packet, 0, group.count, buffer.baseAddress!)
+        }
+        MIDIReceivedEventList(source, eventList)
+        raw.deallocate()
+    }
+
+    private func sendGroups(_ groups: [[UInt32]]) {
+        guard let first = groups.first else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.sendGroup(first)
+            if groups.count > 1 {
+                self?.sendGroups(Array(groups.dropFirst()))
+            }
         }
     }
 }

@@ -18,6 +18,7 @@ enum ConnectionState: Equatable {
 enum AppView {
     case sounds
     case projects
+    case settings
 }
 
 struct ProjectItem: Identifiable, Equatable {
@@ -53,6 +54,8 @@ final class AppState: ObservableObject {
     @Published var picker: PendingPicker = .none
     @Published var renumberItem: SoundItem?
     @Published var firmwareNote: String?
+    @Published var settingsTree: [SettingsGroupModel] = []
+    @Published var settingsHelp: [String: String] = [:]
     @Published var view: AppView = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var bulkMoveStart = ""
@@ -60,6 +63,7 @@ final class AppState: ObservableObject {
     private var session: SysExSession?
     private var files: DeviceFileService?
     private var library: DeviceLibrary?
+    private var settings: SettingsService?
     private var soundsRootID: UInt16?
     private var deviceMeta = GreetMetadata()
 
@@ -86,6 +90,7 @@ final class AppState: ObservableObject {
                 self.session = session
                 self.files = service
                 self.library = DeviceLibrary(files: service)
+                self.settings = SettingsService(session: session)
                 deviceMeta = meta
                 connection = .connected(deviceName: pair.name,
                                         serial: meta.serial,
@@ -410,6 +415,43 @@ final class AppState: ObservableObject {
         } catch {
             progressText = nil
             lastError = "project upload: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - settings
+
+    func loadSettings() async {
+        guard let settings else { return }
+        do {
+            progressText = "settings..."
+            try await settings.initialize()
+            let all = try await settings.getAll()
+            settingsTree = Self.parseSettingsTree(all)
+            progressText = nil
+        } catch {
+            progressText = nil
+            lastError = "settings: \(error.localizedDescription)"
+        }
+    }
+
+    /// Walk {settings: [{title, settings:[...] | id, value, ...}]} tolerantly.
+    static func parseSettingsTree(_ json: [String: JSONValue]) -> [SettingsGroupModel] {
+        func entries(_ value: JSONValue) -> [SettingsEntryModel] {
+            guard case .array(let items) = value else { return [] }
+            return items.compactMap { item in
+                guard case .object(let dict) = item,
+                      let id = dict["id"]?.intValue else { return nil }
+                let title = dict["title"]?.stringValue ?? dict["name"]?.stringValue ?? "setting \(id)"
+                let value = dict["value"] ?? dict["current"] ?? .null
+                return SettingsEntryModel(id: id, title: title, value: value, range: nil)
+            }
+        }
+        guard case .array(let groups)? = json["settings"] else { return [] }
+        return groups.compactMap { group in
+            guard case .object(let dict) = group else { return nil }
+            let title = dict["title"]?.stringValue ?? dict["name"]?.stringValue ?? "group"
+            let children = dict["settings"].map { entries($0) } ?? []
+            return SettingsGroupModel(title: title, entries: children)
         }
     }
 

@@ -142,6 +142,16 @@ struct E2E {
         check(restored.count == 2, "restored 2 sounds")
         check(Set(restored.map(\.id)) == Set(backup.sounds.map(\.nodeID)), "restored original node ids")
 
+        // --- settings over command 6 ---
+        let settings = SettingsService(session: session)
+        try await settings.initialize()
+        let all = try await settings.getAll()
+        if case .array(let groups)? = all["settings"] {
+            check(groups.count == 2, "settings groups — got \(groups.count)")
+        } else {
+            check(false, "settings groups missing")
+        }
+
         let seen = await eventsTask.value
         eventsTimeout.cancel()
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },
