@@ -223,7 +223,18 @@ Project backups are TAR files named `*P01.tar`-style; upload goes to `/projects`
 
 ## Open items to verify on the wire
 
-- Free-space reporting: seen as a `FREE_SPACE_CHANGED` app event fed by a numeric metadata key; exact key name not captured.
 - GET init extra args: `[01 start:u16 length:u16]` used for preview reads; exact semantics unverified.
 - Whether PUT init metadata is honored (the current bundle sends an empty object there and sets metadata afterwards).
 - EP-1320/EP-40 deviations (the tool has per-SKU UI but a shared protocol).
+
+## Verified on real hardware (EP-133, os 2.5.1)
+
+Read-only probe over USB-C, 2026-10-30:
+
+- Identity reply decodes to `TE032AS002` (not AS001) with `base_sku: TE032AS001` — match devices by base_sku.
+- GREET metadata contains `mode`, `os_version`, `serial`, `sku`, `base_sku` as documented.
+- Real node ids are sparse: `/sounds` = 1000, `/projects` = 2000, sounds numbered from 1. Resolve by walking names, never assume ids.
+- Factory sounds live in `/sounds` as `NNN.pcm`; observed flags `0x1D` (file | read | write | delete — no move, no playback).
+- `/sounds` metadata answers the open free-space question: `{"max_capacity": 127801344, "free_space_in_bytes": ..., "formats": [...]}`.
+- Advertised format: pcm `s16`, channels 1-2, `samplerate.native` 46875, `samplerate.range` 1..65535 — the documented defaults hold.
+- File init, list and paged metadata get work over UMP event lists at the negotiated chunk size.
