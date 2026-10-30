@@ -40,7 +40,8 @@ public final class VirtualEPDevice: @unchecked Sendable {
     private func seed() {
         nodes[0] = VNode(id: 0, parentID: 0, name: "", flags: FileTypeFlag.directory)
         let sounds = allocNode(parentID: 0, name: "sounds", flags: FileTypeFlag.directory | 0x7C)
-        allocNode(parentID: 0, name: "projects", flags: FileTypeFlag.directory)
+        let projects = allocNode(parentID: 0, name: "projects", flags: FileTypeFlag.directory)
+        nodes[projects]?.metadata = ["active": .int(3000)]
 
         let kick = allocNode(parentID: sounds, name: "kick", flags: FileTypeFlag.file | 0x7C)
         nodes[kick]?.data = Array(repeating: 0, count: 2000)

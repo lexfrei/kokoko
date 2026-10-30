@@ -2,6 +2,7 @@ import Foundation
 import KokokoAudio
 import KokokoCore
 import KokokoMIDI
+import KokokoLibrary
 import VirtualEP
 
 // End-to-end check: a virtual EP device and the client stack in one process,
@@ -109,6 +110,37 @@ struct E2E {
         try await files.delete(fileID: newID)
         let afterDelete = try await files.list(nodeID: soundsID)
         check(!afterDelete.contains(where: { $0.id == newID }), "deleted node gone")
+
+        // --- DeviceLibrary: backup/restore/batch over the same session ---
+        let library = DeviceLibrary(files: files)
+        let backup = try await library.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0")
+        check(backup.sounds.count == 2, "backup captured 2 sounds — got \(backup.sounds.count)")
+        check(backup.projectMetadata.isEmpty == false, "backup captured project metadata")
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try BackupStore.write(backup, to: dir)
+        let reloaded = try BackupStore.read(from: dir)
+        check(reloaded.sounds.count == backup.sounds.count, "backup store round trip")
+        check(reloaded.sounds.first?.pcm == backup.sounds.first?.pcm, "backup store pcm identical")
+        check(reloaded.sounds.first?.metadata == backup.sounds.first?.metadata,
+              "backup store metadata identical")
+        try? FileManager.default.removeItem(at: dir)
+
+        let wavs = try await library.downloadMany(backup.sounds.map(\.nodeID))
+        check(wavs.count == 2 && wavs.allSatisfy { $0.name.hasSuffix(".wav") }, "downloadMany wavs")
+        if let first = wavs.first {
+            let info = try parseWAV(first.wav)
+            check(info.sampleRate == 46875 && info.channels == 1, "downloaded wav format")
+        }
+
+        // wipe + restore
+        try await library.deleteMany(backup.sounds.map(\.nodeID))
+        let wiped = try await files.list(nodeID: soundsID)
+        check(wiped.isEmpty, "wiped after deleteMany")
+        try await library.restore(backup)
+        let restored = try await files.list(nodeID: soundsID)
+        check(restored.count == 2, "restored 2 sounds")
+        check(Set(restored.map(\.id)) == Set(backup.sounds.map(\.nodeID)), "restored original node ids")
 
         let seen = await eventsTask.value
         eventsTimeout.cancel()
