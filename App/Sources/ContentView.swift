@@ -105,6 +105,9 @@ struct ContentView: View {
                 Text("[ conn \(name) ]").lineLimit(1)
             case .connected(let name, let serial, let os):
                 Text("[ \(name) \(serial) os \(os) ]").lineLimit(1)
+                if let note = state.firmwareNote {
+                    Text(note).foregroundStyle(.secondary)
+                }
             case .failed(let why):
                 Text("[ !! \(why) ]")
             }

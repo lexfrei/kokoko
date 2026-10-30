@@ -52,6 +52,7 @@ final class AppState: ObservableObject {
     @Published var exportName = "sound.wav"
     @Published var picker: PendingPicker = .none
     @Published var renumberItem: SoundItem?
+    @Published var firmwareNote: String?
     @Published var view: AppView = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var bulkMoveStart = ""
@@ -89,6 +90,8 @@ final class AppState: ObservableObject {
                 connection = .connected(deviceName: pair.name,
                                         serial: meta.serial,
                                         osVersion: meta.osVersion)
+                Task { await self.checkFirmware(baseSKU: meta.baseSKU.isEmpty ? meta.sku : meta.baseSKU,
+                                                current: meta.osVersion) }
                 await reload()
                 return
             } catch {
@@ -407,6 +410,24 @@ final class AppState: ObservableObject {
         } catch {
             progressText = nil
             lastError = "project upload: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - firmware
+
+    /// Compare device os_version against the latest published release.
+    func checkFirmware(baseSKU: String, current: String) async {
+        struct Release: Decodable { let sku: String; let version: String }
+        struct Registry: Decodable { let devices: [Release] }
+        do {
+            let url = URL(string: "https://teenage.engineering/_software/releases.json")!
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let registry = try JSONDecoder().decode(Registry.self, from: data)
+            guard let latest = registry.devices.first(where: { $0.sku == baseSKU }) else { return }
+            let latestVersion = latest.version.split(separator: "+").first.map(String.init) ?? latest.version
+            firmwareNote = current == latestVersion ? "fw \(current) ✓" : "fw \(current) → \(latestVersion)"
+        } catch {
+            firmwareNote = nil
         }
     }
 
