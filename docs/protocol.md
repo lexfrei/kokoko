@@ -223,7 +223,7 @@ Project backups are TAR files named `*P01.tar`-style; upload goes to `/projects`
 
 ## Open items to verify on the wire
 
-- GET init extra args: `[01 start:u16 length:u16]` used for preview reads; exact semantics unverified.
+- GET init extra args: `[01 start:u16 length:u16]` used for preview reads; exact semantics unverified. HAZARD: an attempt with this guessed layout preceded a firmware crash (siren screen, code 69) on EP-133 os 2.5.1. Do not send extra args until the layout is verified against captured traffic.
 - Whether PUT init metadata is honored (the current bundle sends an empty object there and sets metadata afterwards).
 - EP-1320/EP-40 deviations (the tool has per-SKU UI but a shared protocol).
 
