@@ -69,7 +69,8 @@ MIDI data bytes must be < 128. Payload bytes are packed in groups of 7: each gro
 | --- | ---- | ----- |
 | 1   | GREET | empty payload; reply payload is a `key:value;` metadata string |
 | 2   | ECHO | payload echoed |
-| 3   | DFU | sub-commands 1=enter (payload `01 01 00 C8`), 5=exit |
+| 3   | DFU | firmware update, see below |
+| 6   | SETTINGS | device settings JSON: sub 1=init, 2=get-all (paged), 3=set |
 | 127 | PRODUCT_SPECIFIC | not used by the sample tool |
 
 GREET metadata string keys: `chip_id`, `mode` (`normal`/`bootloader`), `os_version`, `product`, `serial`, `sku`, `sw_version`, `base_sku`. Example shape: `chip_id:...;mode:normal;os_version:2.1.0;...`.
@@ -220,6 +221,27 @@ Download-as-WAV embeds the metadata back into the WAV (loop points, root note, b
 ## Project archives and factory restore
 
 Project backups are TAR files named `*P01.tar`-style; upload goes to `/projects` with capability READ and a 15 s timeout. "Restore factory sounds" downloads a hosted `.pak` (e.g. `/apps/ep-sample-tool/assets/ep-133-factory-content-*.pak`) and uploads it like a project archive — not a protocol feature.
+
+## Firmware update (DFU, command 3)
+
+Documented from the teenage.engineering/apps/update bundle (index-DjKrxGFA.js).
+
+Firmware file (.tfw): magic `BA BE CA FE`, byte 4 = firmware_type (0 = regular), bytes 5-6 = checksum, bytes 7-14 = version as four u16 (`major.minor.patch` + optional `+build`), bytes 15-18 = packed sku u32, payload from offset 64. A regular firmware carries a device id at offset 68; device id 6 marks a content pack (factory sounds also ship as .tfw).
+
+Flow:
+
+1. Send `[02 <version:8> B0 <sku:4> <size:4 BE> <type>]` (DFU_BEGIN). Reply bytes 0-1 = chunk size. If the reply starts with 64 (`DFU_ENTER_RESPONSE_READY`) the update runs in-app; a bad-request status means reboot to bootloader first (`01 01 00 C8`) and resend begin.
+2. Chunks: `[03 <n % 256> <data...>]`; chunk payload = `ceil(chunkSize * 7/8) - 12` bytes.
+3. `[04]` (DFU_PERFORM) — progress replies: byte 0 = percent, optional `[label]` text.
+4. `[05]` (DFU_EXIT) — reply byte 0 × 3 = expected reboot seconds (default 60). Wait for the device to reappear, greet, compare `os_version`.
+
+Latest firmware per SKU: `https://teenage.engineering/_software/releases.json` (version, `fw_url`, release notes). Match devices by `base_sku` — a device reporting `TE032AS002` maps to the `TE032AS001` entry. Devices also accept a dropped `.tfw` file directly.
+
+## Settings (command 6)
+
+- init: `[01 <page_size:u16>]`
+- get all: `[02 <page:u16>]` → text fragment from byte 2 until a 0 byte; page until empty
+- set: `[03 <id:u16> <json...> 00]`
 
 ## Open items to verify on the wire
 
