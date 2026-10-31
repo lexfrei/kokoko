@@ -18,7 +18,7 @@ let package = Package(
         .target(name: "KokokoLibrary", dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio"]),
         .executableTarget(name: "vep", dependencies: ["VirtualEP"]),
         .executableTarget(name: "kokoko-probe", dependencies: ["KokokoMIDI", "KokokoAudio"]),
-        .executableTarget(name: "kokoko-explore", dependencies: ["KokokoCore", "KokokoMIDI"]),
+        .executableTarget(name: "kokoko-explore", dependencies: ["KokokoCore", "KokokoMIDI", "KokokoLibrary"]),
         .executableTarget(name: "kokoko-e2e",
                           dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio", "VirtualEP", "KokokoLibrary"]),
         .executableTarget(name: "KokokoCoreChecks",

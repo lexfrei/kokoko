@@ -56,15 +56,7 @@ struct E2E {
         }
 
         func resolve(_ path: String) async throws -> UInt16 {
-            var current: UInt16 = 0
-            for part in path.split(separator: "/") {
-                let children = try await files.list(nodeID: current)
-                guard let next = children.first(where: { $0.name == String(part) }) else {
-                    throw WireError.noDevice
-                }
-                current = next.id
-            }
-            return current
+            try await DeviceLibrary(files: files).resolve(path)
         }
 
         let soundsID = try await resolve("/sounds")
