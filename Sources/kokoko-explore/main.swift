@@ -1,6 +1,7 @@
 import CoreMIDI
 import Foundation
 import KokokoCore
+import KokokoLibrary
 import KokokoMIDI
 
 // Exploration of a connected EP device; asks it to play the first file in
@@ -37,15 +38,7 @@ struct Explore {
         }
 
         func resolve(_ path: String) async throws -> UInt16 {
-            var current: UInt16 = 0
-            for part in path.split(separator: "/") {
-                let children = try await files.list(nodeID: current)
-                guard let next = children.first(where: { $0.name == String(part) }) else {
-                    throw WireError.noDevice
-                }
-                current = next.id
-            }
-            return current
+            try await DeviceLibrary(files: files).resolve(path)
         }
 
         func dumpTree(_ path: String, _ depth: Int) async {
