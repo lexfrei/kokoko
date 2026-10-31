@@ -2,6 +2,14 @@ import Foundation
 import KokokoCore
 import KokokoMIDI
 
+public enum RecycleBinError: Error, Equatable {
+    case notASound(UInt16)
+    case incompleteCopy(slot: UInt16, expected: Int, got: Int)
+    /// An upload into a device-assigned slot failed; its id is unknown, so the
+    /// partial sound cannot be told apart from others and is left on the device.
+    case partialSoundMayRemain(underlying: String)
+}
+
 /// One deleted sound kept in the bin.
 public struct BinEntry: Sendable, Identifiable, Equatable {
     public let id: String
