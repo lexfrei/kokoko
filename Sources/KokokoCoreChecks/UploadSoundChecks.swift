@@ -69,13 +69,13 @@ extension KokokoCoreChecks {
             do {
                 _ = try await files.put(parentID: soundsRoot, name: "cut short", data: pcm)
                 check(false, "vep: a put refused partway fails")
-            } catch SessionError.deviceError(let status, _) {
-                eq(status, .specificError(16), "vep: a put refused partway answers status 16")
+            } catch FileServiceError.putIncomplete(let fileID, let underlying) {
+                let after = Set(try await files.list(nodeID: soundsRoot).map(\.id))
+                eq(after.subtracting(before), [fileID], "put: a transfer cut short names the node init created")
+                check(underlying.contains("16"), "put: the incomplete put keeps the device's reason — got \(underlying)")
+                try await files.delete(fileID: fileID)
             }
             vep.refusePutDataFromPage = nil
-            let after = Set(try await files.list(nodeID: soundsRoot).map(\.id))
-            eq(after.subtracting(before).count, 1, "vep: a put refused partway leaves an incomplete node listed")
-            for orphan in after.subtracting(before) { try await files.delete(fileID: orphan) }
         } catch {
             check(false, "upload checks threw \(error)")
         }

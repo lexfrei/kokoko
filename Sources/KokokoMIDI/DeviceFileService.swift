@@ -9,6 +9,7 @@ public enum FileServiceError: Error {
     case pathNotFound(String)
     case truncated(fileID: UInt16, expected: Int, got: Int)
     case unserializableMetadata
+    case putIncomplete(fileID: UInt16, underlying: String)
 }
 
 extension FileServiceError: LocalizedError {
@@ -21,6 +22,8 @@ extension FileServiceError: LocalizedError {
         case .pathNotFound(let path): "path not found on device: \(path)"
         case .truncated(let id, let expected, let got): "node \(id) read \(got) of \(expected) bytes"
         case .unserializableMetadata: "metadata has a value JSON cannot carry"
+        // The node id travels in the case; callers that name it add it themselves.
+        case .putIncomplete(_, let underlying): underlying
         }
     }
 }
@@ -160,18 +163,25 @@ public actor DeviceFileService {
         }
         progress?(0, data.count)
 
-        var offset = 0
-        var page: UInt16 = 0
-        let chunk = maxPayload
-        while offset < data.count {
-            let end = min(offset + chunk, data.count)
-            _ = try await call(PutDataRequest(page: page, data: Array(data[offset..<end])).bytes,
-                               timeout: timeout)
-            offset = end
-            page &+= 1
-            progress?(offset, data.count)
+        // Past init the node id is known; a failure from here on carries it so
+        // the caller can remove a partial node.
+        do {
+            var offset = 0
+            var page: UInt16 = 0
+            let chunk = maxPayload
+            while offset < data.count {
+                let end = min(offset + chunk, data.count)
+                _ = try await call(PutDataRequest(page: page, data: Array(data[offset..<end])).bytes,
+                                   timeout: timeout)
+                offset = end
+                page &+= 1
+                progress?(offset, data.count)
+            }
+            _ = try await call(PutDataRequest(page: page, data: []).bytes, timeout: timeout)
+        } catch {
+            throw FileServiceError.putIncomplete(fileID: initResponse.fileID,
+                                                 underlying: error.localizedDescription)
         }
-        _ = try await call(PutDataRequest(page: page, data: []).bytes, timeout: timeout)
         return initResponse.fileID
     }
 
