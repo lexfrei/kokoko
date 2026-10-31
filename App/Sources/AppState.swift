@@ -80,10 +80,11 @@ final class AppState: ObservableObject {
     @Published var view: AppView = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
-    /// True while a delete or a bin restore runs. Transfers on the wire are
-    /// not serialized, and two interleaved reads or writes corrupt each
-    /// other, so these run one at a time.
-    @Published private(set) var binBusy = false
+    /// True while a user action talks to the device. Transfers on the wire
+    /// are not serialized, and pages from two interleaved operations corrupt
+    /// each other, so every such action runs one at a time; the UI disables
+    /// its device controls while this is set.
+    @Published private(set) var deviceBusy = false
     /// The sound a delete into the bin failed on, offered for a delete without a copy.
     @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String)?
     @Published var bulkMoveStart = ""
@@ -155,7 +156,33 @@ final class AppState: ObservableObject {
     private var soundsRootID: UInt16?
     private var deviceMeta = GreetMetadata()
 
+    /// Claims the device for one user action; false while another runs.
+    /// A refusal is reported, since a drag to Finder or a drop that slipped
+    /// past the disabled controls would otherwise fail without a word.
+    private func enterDevice() -> Bool {
+        if deviceBusy {
+            lastError = "device busy: wait for the current operation"
+            return false
+        }
+        deviceBusy = true
+        return true
+    }
+
+    func refreshSounds() async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
+        await reload()
+    }
+
+    func refreshProjects() async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
+        await loadProjects()
+    }
+
     func scan() async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         connection = .scanning
         // Offline entries are cached ghosts of unplugged devices; they can
         // never answer and each would burn the full identity timeout.
@@ -225,6 +252,8 @@ final class AppState: ObservableObject {
     // MARK: - upload
 
     func upload(urls: [URL]) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files, let root = soundsRootID else { return }
@@ -263,6 +292,8 @@ final class AppState: ObservableObject {
     // MARK: - download (single + batch)
 
     func download(_ item: SoundItem) async -> (name: String, wav: [UInt8])? {
+        guard enterDevice() else { return nil }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return nil }
@@ -287,6 +318,8 @@ final class AppState: ObservableObject {
     }
 
     func downloadManyToFolder(_ ids: [UInt16], folder: URL) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
@@ -321,9 +354,8 @@ final class AppState: ObservableObject {
     /// without a bin copy: a sound the device cannot read back would
     /// otherwise be impossible to delete from the app.
     private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
-        guard let library, !binBusy else { return }
-        binBusy = true
-        defer { binBusy = false }
+        guard let library, enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         let ordered = Array(ids)
@@ -353,9 +385,8 @@ final class AppState: ObservableObject {
     }
 
     func deleteWithoutBin(_ ids: Set<UInt16>) async {
-        guard let library, !binBusy else { return }
-        binBusy = true
-        defer { binBusy = false }
+        guard let library, enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin("delete without copy")
         defer { progress.end(op) }
         do {
@@ -378,9 +409,8 @@ final class AppState: ObservableObject {
     }
 
     func restoreFromBin(_ entry: BinEntry) async {
-        guard let library, !binBusy else { return }
-        binBusy = true
-        defer { binBusy = false }
+        guard let library, enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin("restore \(entry.name)")
         defer { progress.end(op) }
         do {
@@ -405,6 +435,8 @@ final class AppState: ObservableObject {
     // MARK: - backup / restore
 
     func backupToFolder(_ folder: URL, scope: DeviceLibrary.Scope = .everything) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
@@ -430,6 +462,8 @@ final class AppState: ObservableObject {
     }
 
     func restoreFromFolder(_ folder: URL) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
@@ -454,6 +488,8 @@ final class AppState: ObservableObject {
 
     /// Display name lives in metadata; the wire filename stays NNN.pcm.
     func rename(_ item: SoundItem, to name: String) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         guard let files else { return }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
@@ -469,6 +505,8 @@ final class AppState: ObservableObject {
 
     /// Move a sound to a different slot number (node id). Fails if occupied.
     func renumber(_ item: SoundItem, to target: UInt16) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         guard let files, let root = soundsRootID else { return }
         do {
             let nodes = try await files.list(nodeID: root)
@@ -487,6 +525,8 @@ final class AppState: ObservableObject {
     /// `start`, in slot order; see planBulkMove. The selection stays on the
     /// moved sounds.
     func moveSelection(startingAt start: UInt16) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
@@ -509,6 +549,8 @@ final class AppState: ObservableObject {
 
     /// Drag reorder: move to the target slot; swap with the occupant if taken.
     func moveOrSwap(id: UInt16, toSlot target: UInt16) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         guard let files, let root = soundsRootID, id != target else { return }
         do {
             let nodes = try await files.list(nodeID: root)
@@ -543,6 +585,8 @@ final class AppState: ObservableObject {
 
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
+        guard enterDevice() else { return nil }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return nil }
@@ -560,6 +604,8 @@ final class AppState: ObservableObject {
 
     /// Upload .tar project archives; each name carries the target slot (P01..P09).
     func uploadProjects(urls: [URL]) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return }
@@ -613,6 +659,8 @@ final class AppState: ObservableObject {
     // MARK: - settings
 
     func loadSettings() async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let settings else { return }
@@ -673,6 +721,8 @@ final class AppState: ObservableObject {
     // MARK: - misc
 
     func audition(_ item: SoundItem) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
         guard let files else { return }
         try? await files.startPlayback(fileID: item.node.id, offset: 0, length: 1000)
     }

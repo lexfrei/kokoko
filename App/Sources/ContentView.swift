@@ -131,12 +131,14 @@ struct ContentView: View {
                     .foregroundStyle(state.view == .sounds ? .primary : .secondary)
                 Button("[ projects ]") {
                     state.view = .projects
-                    Task { await state.loadProjects() }
+                    Task { await state.refreshProjects() }
                 }
                 .buttonStyle(.plain)
+                .disabled(state.deviceBusy)
                 .foregroundStyle(state.view == .projects ? .primary : .secondary)
                 Button("[ settings ]") { state.view = .settings }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     .foregroundStyle(state.view == .settings ? .primary : .secondary)
                 Button("[ bin ]") {
                     state.view = .bin
@@ -180,6 +182,7 @@ struct ContentView: View {
                     Text("connect the device over usb-c")
                     Button("[ retry ]") { Task { await state.scan() } }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             default:
@@ -212,6 +215,7 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                     Button("[>]") { Task { await state.audition(item) } }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                         .help("play 1s preview on device")
                     Button("[v]") {
                         Task {
@@ -222,16 +226,19 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     .help("download as wav")
                     Button("[r]") { state.renameText = item.displayName; state.renameItem = item }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                         .help("rename")
                     Button("[#]") { state.renumberItem = item }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                         .help("change slot number")
                     Button("[x]") { Task { await state.delete(item) } }
                         .buttonStyle(.plain)
-                        .disabled(state.binBusy)
+                        .disabled(state.deviceBusy)
                         .help("delete from device")
                 }
                 .tag(item.id)
@@ -240,7 +247,8 @@ struct ContentView: View {
             }
         }
         .onDrop(of: [.audio], isTargeted: nil) { providers in
-            receiveDrop(providers, load: { provider, done in
+            guard !state.deviceBusy else { return false }
+            return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, error in
                     done(url, error)
                 }
@@ -271,38 +279,28 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     Button("[ v to folder ]") {
                         state.picker = .downloadFolder(Array(state.selection))
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     Button("[ x ]") { Task { await state.deleteMany(state.selection) } }
                         .buttonStyle(.plain)
-                        .disabled(state.binBusy)
+                        .disabled(state.deviceBusy)
                 }
-                if state.view == .sounds {
-                    Button("[ + add sounds ]") { state.showImporter = true }
-                        .buttonStyle(.plain)
-                    Button("[ backup sounds ]") { state.picker = .backupFolder(.sounds) }
-                        .buttonStyle(.plain)
-                    Button("[ restore sounds ]") { state.picker = .restoreFolder }
-                        .buttonStyle(.plain)
-                } else if state.view == .projects {
-                    Button("[ backup projects ]") { state.picker = .backupFolder(.projects) }
-                        .buttonStyle(.plain)
-                    Button("[ restore ]") { state.picker = .restoreFolder }
-                        .buttonStyle(.plain)
-                } else {
-                    Button("[ backup all ]") { state.picker = .backupFolder(.everything) }
-                        .buttonStyle(.plain)
-                    Button("[ restore all ]") { state.picker = .restoreFolder }
-                        .buttonStyle(.plain)
-                }
-                Button("[ refresh ]") {
-                    Task {
-                        if state.view == .projects { await state.loadProjects() } else { await state.reload() }
-                    }
-                }
-                .buttonStyle(.plain)
+                Button("[ + add sounds ]") { state.showImporter = true }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
+                Button("[ backup sounds ]") { state.picker = .backupFolder(.sounds) }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
+                Button("[ restore sounds ]") { state.picker = .restoreFolder }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
+                Button("[ refresh ]") { Task { await state.refreshSounds() } }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
             }
         }
         .padding()
@@ -322,11 +320,11 @@ struct ContentView: View {
                             Spacer()
                             Button("[restore]") { Task { await state.restoreFromBin(entry) } }
                                 .buttonStyle(.plain)
-                                .disabled(state.binBusy)
+                                .disabled(state.deviceBusy)
                                 .help("put back on the device")
                             Button("[x]") { binToRemove = entry }
                                 .buttonStyle(.plain)
-                                .disabled(state.binBusy)
+                                .disabled(state.deviceBusy)
                                 .help("remove from the bin for good")
                         }
                     }
@@ -351,12 +349,14 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     .help("download project archive")
                 }
             }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            receiveDrop(providers, load: { provider, done in
+            guard !state.deviceBusy else { return false }
+            return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadObject(ofClass: URL.self) { url, error in done(url, error) }
             }, then: { urls in
                 await state.uploadProjects(urls: urls)
@@ -435,6 +435,6 @@ struct SoundRowDrop: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.text])
+        !state.deviceBusy && info.hasItemsConforming(to: [.text])
     }
 }
