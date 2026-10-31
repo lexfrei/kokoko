@@ -20,14 +20,17 @@ struct E2E {
     }
 
     static func main() async throws {
-        let vep = VirtualEPDevice()
+        // CoreMIDI does not enforce unique endpoint names; a fixed name lets
+        // concurrent runs connect to each other's simulator.
+        let vepName = "kokoko-vep-\(getpid())"
+        let vep = VirtualEPDevice(name: vepName)
         try vep.start()
 
         // Give CoreMIDI a beat to publish the endpoints.
         try await Task.sleep(for: .milliseconds(300))
 
         let pairs = enumerateMIDIPairs()
-        guard let pair = pairs.first(where: { $0.name == "kokoko-vep" }) else {
+        guard let pair = pairs.first(where: { $0.name == vepName }) else {
             FileHandle.standardError.write(Data("FAIL virtual device not found among \(pairs.map(\.name))\n".utf8))
             exit(1)
         }
