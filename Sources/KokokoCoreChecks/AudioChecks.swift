@@ -34,6 +34,25 @@ extension KokokoCoreChecks {
         check(abs(gotFrames - expectedFrames) <= 8,
               "resampled length ~\(expectedFrames) frames, got \(gotFrames)")
 
+        // Stereo through the decode path is accepted as stereo.
+        let stereoFrames = 4410
+        let stereoWAV = makeWAV(pcm: [UInt8](repeating: 0, count: stereoFrames * 2 * 2), channels: 2, sampleRate: 44100)
+        let stereo = try prepareForUpload(fileData: Data(stereoWAV), fileName: "stereo.wav")
+        let expectedStereoBytes = Int(Double(stereoFrames) * Double(deviceSampleRate) / 44100) * 2 * 2
+        check(stereo.channels == 2 && abs(stereo.pcm.count - expectedStereoBytes) <= 64,
+              "stereo source accepted — \(stereo.channels) channels, \(stereo.pcm.count) bytes, want ~\(expectedStereoBytes)")
+
+        // Three channels, the first count past stereo, is refused.
+        let tripleWAV = makeWAV(pcm: [UInt8](repeating: 0, count: 4410 * 2 * 3), channels: 3, sampleRate: 44100)
+        do {
+            let triple = try prepareForUpload(fileData: Data(tripleWAV), fileName: "triple.wav")
+            check(false, "3-channel source refused — got \(triple.channels) channels")
+        } catch SoundPrepError.tooManyChannels(let count) {
+            eq(count, 3, "3-channel source refused")
+        }
+        eq(SoundPrepError.tooManyChannels(3).localizedDescription,
+           "sound has 3 channels, the device takes mono or stereo", "too-many-channels text")
+
         // Too-long rejection
         let longPCM = [UInt8](repeating: 0, count: 46875 * 2 * 41)
         let longWAV = makeWAV(pcm: longPCM, channels: 1, sampleRate: 44100)
