@@ -279,8 +279,10 @@ struct E2E {
             do {
                 _ = try await faultyLibrary.restore(entry, from: bin)
                 check(false, "failed upload into an assigned slot reports a possible partial sound")
-            } catch RecycleBinError.partialSoundMayRemain {
+            } catch RecycleBinError.partialSoundMayRemain(let underlying) {
                 check(true, "failed upload into an assigned slot reports a possible partial sound")
+                check(underlying == WireError.timeout.localizedDescription,
+                      "a possible partial sound carries the cause as user-facing text — got \(underlying)")
             } catch {
                 check(false, "failed upload into an assigned slot reports a possible partial sound — got \(error)")
             }
@@ -592,6 +594,60 @@ struct E2E {
         }
         check(landedBoth, "parallel uploads each land their own bytes — ids \(soundZ.map(String.init) ?? "failed"), \(soundW.map(String.init) ?? "failed")")
 
+
+        // --- bin restore: a stale entry for a sound that is already back ---
+        // restore drops its entry only after the sound is back; if that drop fails, the
+        // entry stays, and restoring it again must not upload a second copy.
+        let staleSlot = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        let stalePCM = try await files.get(fileID: staleSlot).data
+        let staleMeta = try await files.getMetadata(fileID: staleSlot)
+        let staleEntry = try bin.add(SoundBackup(nodeID: staleSlot, pcm: stalePCM, metadata: staleMeta))
+        let countBeforeStale = try await files.list(nodeID: soundsID).count
+        let staleBack = try await library.restore(staleEntry, from: bin)
+        let countAfterStale = try await files.list(nodeID: soundsID).count
+        let staleGone = try !bin.entries().contains { $0.id == staleEntry.id }
+        check(staleBack == staleSlot && countAfterStale == countBeforeStale && staleGone,
+              "restoring a stale bin entry adds no copy and drops the entry — \(countBeforeStale) vs \(countAfterStale), slot \(staleBack)")
+
+        // Same PCM, but the entry carries settings the slot does not have: the entry is
+        // the only copy of them, so it is restored rather than dropped.
+        var tunedMeta = staleMeta
+        tunedMeta["name"] = .string("tuned before delete")
+        let tunedEntry = try bin.add(SoundBackup(nodeID: staleSlot, pcm: stalePCM, metadata: tunedMeta))
+        let tunedBack = try await library.restore(tunedEntry, from: bin)
+        let tunedName = try await files.getMetadata(fileID: tunedBack)["name"]?.stringValue
+        check(tunedName == "tuned before delete",
+              "a bin entry whose metadata differs from the slot is restored, not dropped — got \(tunedName ?? "nil") in \(tunedBack)")
+
+        // Same size, other bytes: the occupant is a different sound.
+        let lookalikeBinPCM = stalePCM.map { $0 ^ 0xFF }
+        let lookalikeBinEntry = try bin.add(SoundBackup(nodeID: staleSlot, pcm: lookalikeBinPCM, metadata: staleMeta))
+        let lookalikeBinBack = try await library.restore(lookalikeBinEntry, from: bin)
+        let lookalikeBinData = try await files.get(fileID: lookalikeBinBack).data
+        check(lookalikeBinBack != staleSlot && lookalikeBinData == lookalikeBinPCM,
+              "a same-size occupant with other bytes does not count as the binned sound")
+
+        // An occupant that cannot be read back is not taken for the same sound.
+        let unreadableEntry = try bin.add(SoundBackup(nodeID: staleSlot, pcm: stalePCM, metadata: staleMeta))
+        faulty.failBeforeSend = { $0.payload.starts(with: [FileSub.get, 0]) && $0.payload.count > 3
+            && (UInt16($0.payload[2]) << 8 | UInt16($0.payload[3])) == staleSlot }
+        let unreadableBack = try? await faultyLibrary.restore(unreadableEntry, from: bin)
+        faulty.failBeforeSend = nil
+        let countAfterUnreadableBin = try await files.list(nodeID: soundsID).count
+        check(unreadableBack != nil && unreadableBack != staleSlot && countAfterUnreadableBin == countAfterStale + 3,
+              "an unreadable occupant falls back to a normal bin restore")
+
+        // Bytes match but the slot's metadata cannot be read: not proven the same, so restore normally.
+        let metaUnreadableEntry = try bin.add(SoundBackup(nodeID: staleSlot, pcm: stalePCM, metadata: staleMeta))
+        let countBeforeMetaUnreadable = try await files.list(nodeID: soundsID).count
+        faulty.failBeforeSend = { $0.payload.starts(with: [FileSub.metadata, 2]) && $0.payload.count > 3
+            && (UInt16($0.payload[2]) << 8 | UInt16($0.payload[3])) == staleSlot }
+        let metaUnreadableBack = try? await faultyLibrary.restore(metaUnreadableEntry, from: bin)
+        faulty.failBeforeSend = nil
+        let countAfterMetaUnreadable = try await files.list(nodeID: soundsID).count
+        check(metaUnreadableBack != nil && metaUnreadableBack != staleSlot
+                && countAfterMetaUnreadable == countBeforeMetaUnreadable + 1,
+              "unreadable occupant metadata falls back to a normal bin restore")
 
         eventsTask.cancel()
         let seen = await eventsTask.value
