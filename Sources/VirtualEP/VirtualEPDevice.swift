@@ -32,7 +32,7 @@ public final class VirtualEPDevice: @unchecked Sendable {
     private var pendingPut: (nodeID: UInt16, nextPage: UInt16)?
     private var pendingMeta: (nodeID: UInt16, buffer: [UInt8], nextPage: UInt16)?
 
-    public init(name: String = "kokoko-vep") {
+    public init(name: String = "kokoko-vep-\(getpid())") {
         self.name = name
         seed()
     }
