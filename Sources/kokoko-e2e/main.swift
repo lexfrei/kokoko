@@ -279,8 +279,10 @@ struct E2E {
             do {
                 _ = try await faultyLibrary.restore(entry, from: bin)
                 check(false, "failed upload into an assigned slot reports a possible partial sound")
-            } catch RecycleBinError.partialSoundMayRemain {
+            } catch RecycleBinError.partialSoundMayRemain(let underlying) {
                 check(true, "failed upload into an assigned slot reports a possible partial sound")
+                check(underlying == WireError.timeout.localizedDescription,
+                      "a possible partial sound carries the cause as user-facing text — got \(underlying)")
             } catch {
                 check(false, "failed upload into an assigned slot reports a possible partial sound — got \(error)")
             }

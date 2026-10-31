@@ -279,7 +279,7 @@ public actor DeviceLibrary {
                                         fileID: slot)
         } catch {
             guard slot != 0 else {
-                throw RecycleBinError.partialSoundMayRemain(underlying: String(describing: error))
+                throw RecycleBinError.partialSoundMayRemain(underlying: error.localizedDescription)
             }
             // Without this a retry finds the original slot taken by the partial copy.
             await removeIfListed(slot, in: soundsRoot)
