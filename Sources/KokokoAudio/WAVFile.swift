@@ -18,6 +18,17 @@ public enum WAVError: Error {
     case missingData
 }
 
+extension WAVError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .notRIFF: "not a RIFF file"
+        case .notWAVE: "RIFF file is not WAVE"
+        case .missingFormat: "WAV file has no usable format chunk"
+        case .missingData: "WAV file has no data chunk"
+        }
+    }
+}
+
 public func parseWAV(_ bytes: [UInt8]) throws -> WAVInfo {
     func u32(_ o: Int) -> UInt32 {
         UInt32(bytes[o]) | UInt32(bytes[o + 1]) << 8 | UInt32(bytes[o + 2]) << 16 | UInt32(bytes[o + 3]) << 24

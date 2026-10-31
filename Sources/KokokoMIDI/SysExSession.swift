@@ -7,6 +7,30 @@ public enum SessionError: Error {
     case notAGreetReply
 }
 
+extension SessionError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .timeout(let command, _):
+            return "device did not answer command \(command) in time"
+        case .deviceError(let status, let message):
+            // Named statuses carry no number: an unknown status byte arrives here as .error.
+            let name = switch status {
+            case .ok: "ok"
+            case .error: "error"
+            case .commandNotFound: "command not found"
+            case .badRequest: "bad request"
+            case .specificError(let byte): "command-specific error \(byte)"
+            case .specificSuccess(let byte): "command-specific success \(byte)"
+            }
+            let text = "device answered \(name)"
+            guard let message, !message.isEmpty else { return text }
+            return "\(text): \(message)"
+        case .notAGreetReply:
+            return "device sent an unreadable greet reply"
+        }
+    }
+}
+
 /// Request/response matching over one MIDIWire, per the TE frame protocol.
 public actor SysExSession {
     private let wire: any MIDIWire
