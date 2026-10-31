@@ -43,18 +43,42 @@ public struct FSNode: Equatable, Sendable, Identifiable {
 public actor DeviceFileService {
     private let session: SysExSession
     private var chunkSize: Int = 0
+    // The device keeps one transfer state and data pages carry only a page number,
+    // so every operation runs alone; awaits inside one would otherwise let another
+    // transfer's pages interleave with it on the actor.
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
 
     public init(session: SysExSession) {
         self.session = session
     }
 
     public func initialize(maxResponseLength: UInt32 = 4 * 1024 * 1024, subscribe: Bool = true) async throws {
+        await acquire()
+        defer { release() }
         let request = FileInitRequest(maxResponseLength: maxResponseLength, subscribe: subscribe)
         let reply = try await session.call(command: TECommand.file, payload: request.bytes)
         guard let response = FileInitResponse(payload: reply.payload) else {
             throw FileServiceError.missingResponse
         }
         chunkSize = Int(response.chunkSize)
+    }
+
+    private func acquire() async {
+        guard busy else {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    /// Hands the lock to the oldest waiter, so operations run in arrival order.
+    private func release() {
+        if waiters.isEmpty {
+            busy = false
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 
     private var maxPayload: Int {
@@ -67,6 +91,8 @@ public actor DeviceFileService {
     }
 
     public func list(nodeID: UInt16) async throws -> [FSNode] {
+        await acquire()
+        defer { release() }
         var nodes: [FSNode] = []
         var page: UInt16 = 0
         while true {
@@ -88,6 +114,8 @@ public actor DeviceFileService {
     }
 
     public func info(fileID: UInt16) async throws -> FSNode {
+        await acquire()
+        defer { release() }
         let payload = try await call(FileInfoRequest(fileID: fileID).bytes)
         guard let response = FileInfoResponse(payload: payload) else {
             throw FileServiceError.missingResponse
@@ -103,6 +131,8 @@ public actor DeviceFileService {
                     isDirectory: Bool = false,
                     progress: (@Sendable (Int, Int) -> Void)? = nil,
                     timeout: Duration = .seconds(20)) async throws -> UInt16 {
+        await acquire()
+        defer { release() }
         var flags = capabilities.reduce(0) { $0 | $1 }
         flags |= isDirectory ? FileTypeFlag.directory : FileTypeFlag.file
         let metadataJSON: String? = metadata.flatMap {
@@ -137,6 +167,8 @@ public actor DeviceFileService {
     /// Download a whole file, verifying page order.
     public func get(fileID: UInt16, offset: UInt32 = 0,
                     progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> (name: String, data: [UInt8]) {
+        await acquire()
+        defer { release() }
         let initPayload = try await call(GetInitRequest(fileID: fileID, offset: offset).bytes)
         guard let initResponse = GetInitResponse(payload: initPayload) else {
             throw FileServiceError.missingResponse
@@ -162,25 +194,35 @@ public actor DeviceFileService {
     }
 
     public func delete(fileID: UInt16) async throws {
+        await acquire()
+        defer { release() }
         _ = try await call(DeleteRequest(fileID: fileID).bytes)
     }
 
     public func move(fileID: UInt16, toParent parentID: UInt16, newFileID: UInt16 = 0) async throws {
+        await acquire()
+        defer { release() }
         _ = try await call(MoveRequest(fileID: fileID, parentID: parentID, newFileID: newFileID).bytes)
     }
 
     public func startPlayback(fileID: UInt16, offset: UInt32 = 0, length: UInt32 = 0) async throws {
+        await acquire()
+        defer { release() }
         _ = try await call(PlaybackRequest(fileID: fileID, action: .start,
                                            offset: offset, length: length).bytes)
     }
 
     public func stopPlayback(fileID: UInt16) async throws {
+        await acquire()
+        defer { release() }
         _ = try await call(PlaybackRequest(fileID: fileID, action: .stop,
                                            offset: 0, length: 0).bytes)
     }
 
     /// Read full metadata JSON for a node (paged).
     public func getMetadata(fileID: UInt16, key: String? = nil) async throws -> [String: JSONValue] {
+        await acquire()
+        defer { release() }
         var json = ""
         var page: UInt16 = 0
         while true {
@@ -206,6 +248,8 @@ public actor DeviceFileService {
 
     /// Set metadata; switches to the paged variant when the JSON is large.
     public func setMetadata(fileID: UInt16, _ metadata: [String: JSONValue]) async throws {
+        await acquire()
+        defer { release() }
         let data = try JSONSerialization.data(withJSONObject: metadata.mapValues(\.anyValue))
         guard let json = String(data: data, encoding: .utf8) else { return }
         if json.utf8.count <= chunkSize - 8 {

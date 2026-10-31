@@ -533,6 +533,51 @@ struct E2E {
         let symB = try await sym(padB)
         check(aAt == Int(chainProbe + 1) && symA == aAt && symB == bAt && bAt != aAt,
               "chained moves map each pad one step — a \(symA.map(String.init) ?? "nil")/\(aAt.map(String.init) ?? "nil"), b \(symB.map(String.init) ?? "nil")/\(bAt.map(String.init) ?? "nil")")
+        // --- one transfer at a time per device ---
+        // The device keeps a single transfer state and data pages carry only a page
+        // number, so overlapping multi-page transfers must not interleave.
+        let pcmX = (0..<640).map { UInt8($0 % 251) }
+        let pcmY = (0..<640).map { UInt8(255 - $0 % 251) }
+        let soundX = try await files.put(parentID: soundsID, name: "parallel x", data: pcmX)
+        let soundY = try await files.put(parentID: soundsID, name: "parallel y", data: pcmY)
+        var mixedReads = 0
+        var rightLengthWrongBytes = 0
+        for _ in 0..<5 {
+            async let readX = files.get(fileID: soundX)
+            async let readY = files.get(fileID: soundY)
+            let (gotX, gotY) = try await (readX.data, readY.data)
+            if gotX != pcmX || gotY != pcmY { mixedReads += 1 }
+            if (gotX.count == pcmX.count && gotX != pcmX) || (gotY.count == pcmY.count && gotY != pcmY) {
+                rightLengthWrongBytes += 1
+            }
+        }
+        check(mixedReads == 0,
+              "parallel downloads each get their own bytes — \(mixedReads) of 5 rounds mixed, \(rightLengthWrongBytes) with a right-length wrong copy")
+
+        let pcmZ = (0..<640).map { UInt8(($0 * 7) % 256) }
+        let pcmW = (0..<640).map { UInt8(($0 * 13) % 256) }
+        async let putZ = try? files.put(parentID: soundsID, name: "parallel z", data: pcmZ)
+        async let putW = try? files.put(parentID: soundsID, name: "parallel w", data: pcmW)
+        let (soundZ, soundW) = await (putZ, putW)
+        var landedBoth = false
+        if let soundZ, let soundW {
+            let backZ = try await files.get(fileID: soundZ).data
+            let backW = try await files.get(fileID: soundW).data
+            landedBoth = backZ == pcmZ && backW == pcmW
+        }
+        check(landedBoth, "parallel uploads each land their own bytes — ids \(soundZ.map(String.init) ?? "failed"), \(soundW.map(String.init) ?? "failed")")
+
+        // A transfer that fails midway must not keep the next one waiting.
+        faulty.failAfterSend = { $0.payload.starts(with: [FileSub.get, 1]) }
+        check((try? await faultyFiles.get(fileID: soundX)) == nil, "a download that fails midway reports it")
+        faulty.failAfterSend = nil
+        // Polled rather than awaited: a lock that is never released would hang an await.
+        let nextRead = ReadBox()
+        Task { nextRead.set(try? await faultyFiles.get(fileID: soundX).data) }
+        for _ in 0..<100 where nextRead.value == nil {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        check(nextRead.value == pcmX, "a failed transfer does not block the next one")
 
         eventsTask.cancel()
         let seen = await eventsTask.value
@@ -630,4 +675,11 @@ final class GetLog: @unchecked Sendable {
     private var _ids: [UInt16] = []
     var ids: [UInt16] { lock.withLock { _ids } }
     func record(_ id: UInt16) { lock.withLock { _ids.append(id) } }
+}
+
+final class ReadBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: [UInt8]?
+    var value: [UInt8]? { lock.withLock { _value } }
+    func set(_ value: [UInt8]?) { lock.withLock { _value = value } }
 }
