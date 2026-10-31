@@ -39,8 +39,9 @@ extension KokokoCoreChecks {
         let bytes = staged.compactMap { try? Data(contentsOf: $0).first }
         check(bytes == (0..<count).map { UInt8($0) }, "drop copies survive source removal")
         eq(staging.failures.count, 1, "drop reports a file that could not be copied")
-        check(staging.failures.first?.hasPrefix("missing.wav: ") == true,
-              "drop names the file it could not copy")
+        let noSuchFile = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT)).localizedFailureReason ?? ""
+        eq(staging.failures.first, "missing.wav: \(noSuchFile)",
+           "drop names the file it could not copy once, with the system reason")
         staging.fail(name: "hat.wav", reason: "unreadable item")
         eq(staging.failures.last, "hat.wav: unreadable item", "drop names an item the provider could not load")
 

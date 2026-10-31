@@ -33,7 +33,9 @@ public final class DropStaging: @unchecked Sendable {
             try FileManager.default.copyItem(at: source, to: target)
             lock.withLock { slots[index] = target }
         } catch {
-            lock.withLock { errors.append("\(source.lastPathComponent): \(error.localizedDescription)") }
+            let reason = ((error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError)
+                .map { $0.localizedFailureReason ?? $0.localizedDescription } ?? error.localizedDescription
+            lock.withLock { errors.append("\(source.lastPathComponent): \(reason)") }
         }
     }
 
