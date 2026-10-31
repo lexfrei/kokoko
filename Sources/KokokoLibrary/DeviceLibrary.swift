@@ -142,8 +142,13 @@ public actor DeviceLibrary {
                                                     ?? "sound \(sound.nodeID)",
                                                 data: sound.pcm, fileID: targetID)
                 } catch {
-                    // Only an explicit slot is known to be ours; an assigned id is lost with the error.
-                    if targetID != 0 { await removeIfListed(targetID, in: soundsRoot) }
+                    // Once init has named the node it is known to be ours; before
+                    // that, only an explicit slot is.
+                    if case FileServiceError.putIncomplete(let partial, _) = error {
+                        await removeIfListed(partial, in: soundsRoot)
+                    } else if targetID != 0 {
+                        await removeIfListed(targetID, in: soundsRoot)
+                    }
                     throw error
                 }
                 // An assigned slot may equal a later sound's original id; without this
@@ -292,6 +297,13 @@ public actor DeviceLibrary {
             newID = try await files.put(parentID: soundsRoot, name: entry.name, data: sound.pcm,
                                         fileID: slot)
         } catch {
+            if case FileServiceError.putIncomplete(let partial, _) = error {
+                let removed = (try? await files.delete(fileID: partial)) != nil
+                if !removed && slot == 0 {
+                    throw RecycleBinError.partialSoundMayRemain(underlying: error.localizedDescription)
+                }
+                throw error
+            }
             guard slot != 0 else {
                 throw RecycleBinError.partialSoundMayRemain(underlying: error.localizedDescription)
             }
