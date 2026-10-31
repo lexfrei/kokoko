@@ -60,25 +60,12 @@ public func enumerateMIDIPairs() -> [MIDIEndpointPair] {
     return pairs
 }
 
-/// Iterate all UMP words in an event list (word counts may exceed the inline
-/// tuple capacity, so walk by raw pointer).
+/// Iterate all UMP words in an event list, across every packet.
 public func forEachWord(in eventList: UnsafePointer<MIDIEventList>,
                  _ body: (UInt32) -> Void) {
-    let wordsOffset = MemoryLayout<MIDIEventPacket>.offset(of: \.words)!
-    withUnsafePointer(to: eventList.pointee.packet) { first in
-        var ptr = UnsafePointer(first)
-        for _ in 0..<eventList.pointee.numPackets {
-            let wordCount = Int(ptr.pointee.wordCount)
-            let base = UnsafeRawPointer(ptr).advanced(by: wordsOffset)
-                .assumingMemoryBound(to: UInt32.self)
-            for w in 0..<wordCount {
-                body(base[w])
-            }
-            // MIDIEventPacketNext is a header-only inline; advance manually:
-            // next packet follows immediately after the words.
-            ptr = UnsafePointer(UnsafeRawPointer(ptr)
-                .advanced(by: 8 + wordCount * 4)
-                .assumingMemoryBound(to: MIDIEventPacket.self))
+    for packet in eventList.unsafeSequence() {
+        for word in packet.words() {
+            body(word)
         }
     }
 }
