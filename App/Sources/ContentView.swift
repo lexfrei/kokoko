@@ -225,6 +225,7 @@ struct ContentView: View {
             }
             if let error = state.lastError {
                 Text("err: \(error)").foregroundStyle(.red).lineLimit(1)
+                    .help(error)
             }
             Spacer()
             if case .connected = state.connection, state.view == .sounds {
@@ -298,7 +299,7 @@ struct ContentView: View {
             receiveDrop(providers, load: { provider, done in
                 _ = provider.loadObject(ofClass: URL.self) { url, error in done(url, error) }
             }, then: { urls in
-                for url in urls { await state.uploadProject(url: url) }
+                await state.uploadProjects(urls: urls)
             })
         }
     }
@@ -329,13 +330,15 @@ struct ContentView: View {
             }
         }
         let state = state
+        let total = providers.count
         group.notify(queue: .main) {
             Task { @MainActor in
                 await handle(staging.urls)
                 staging.discard()
-                // After the handler: its trailing reload clears lastError.
-                if let failure = staging.failures.first {
-                    state.lastError = "drop \(failure)"
+                // After the handler, whose trailing reload clears stale errors;
+                // appended so an error from the handler itself stays visible.
+                if let text = batchFailureText("drop", failures: staging.failures, total: total) {
+                    state.lastError = appendingError(state.lastError, text)
                 }
             }
         }
