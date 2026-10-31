@@ -20,11 +20,11 @@ sku = "TE" + (s[8] | s[9]<<7) padded to 3 + "AS" + (s[10] | s[11]<<7) padded to 
 
 Known SKUs and minimum OS versions enforced by the tool (os_version "0.1.0" is always accepted; other "0.x" counts as the beta channel):
 
-| SKU        | Device           | beta min | production min |
-| ---------- | ---------------- | -------- | -------------- |
-| TE032AS001 | EP-133 K.O. II   | 0.100.38 | 2.0.5          |
-| TE032AS005 | EP-1320 medieval | 0.2.13   | 1.0.2          |
-| TE032AS006 | EP-40 Riddim     | 0.4.7    | 1.0.5          |
+| SKU | Device | beta min | production min |
+| --- | --- | --- | --- |
+| TE032AS001 | EP-133 K.O. II | 0.100.38 | 2.0.5 |
+| TE032AS005 | EP-1320 medieval | 0.2.13 | 1.0.2 |
+| TE032AS006 | EP-40 Riddim | 0.4.7 | 1.0.5 |
 
 ## Frame format
 
@@ -48,14 +48,14 @@ Request id: 12-bit, per-output counter seeded at random, incremented mod 4096.
 
 Status byte:
 
-| value  | meaning |
-| ------ | ------- |
-| 0      | ok |
-| 1      | error |
-| 2      | command not found |
-| 3      | bad request |
+| value | meaning |
+| --- | --- |
+| 0 | ok |
+| 1 | error |
+| 2 | command not found |
+| 3 | bad request |
 | 16..63 | command-specific error |
-| >= 64  | command-specific success; the request stays open for follow-up messages until a terminal status arrives |
+| >= 64 | command-specific success; the request stays open for follow-up messages until a terminal status arrives |
 
 A frame with byte 5 = `33` (instead of `40`) carries a UTF-8 debug log string from the device in the unpacked payload.
 
@@ -66,11 +66,11 @@ MIDI data bytes must be < 128. Payload bytes are packed in groups of 7: each gro
 ## Top-level commands
 
 | cmd | name | notes |
-| --- | ---- | ----- |
-| 1   | GREET | empty payload; reply payload is a `key:value;` metadata string |
-| 2   | ECHO | payload echoed |
-| 3   | DFU | firmware update, see below |
-| 6   | SETTINGS | device settings JSON: sub 1=init, 2=get-all (paged), 3=set |
+| --- | --- | --- |
+| 1 | GREET | empty payload; reply payload is a `key:value;` metadata string |
+| 2 | ECHO | payload echoed |
+| 3 | DFU | firmware update, see below |
+| 6 | SETTINGS | device settings JSON: sub 1=init, 2=get-all (paged), 3=set |
 | 127 | PRODUCT_SPECIFIC | not used by the sample tool |
 
 GREET metadata string keys: `chip_id`, `mode` (`normal`/`bootloader`), `os_version`, `product`, `serial`, `sku`, `sw_version`, `base_sku`. Example shape: `chip_id:...;mode:normal;os_version:2.1.0;...`.
@@ -80,16 +80,16 @@ GREET metadata string keys: `chip_id`, `mode` (`normal`/`bootloader`), `os_versi
 All file operations use command 5; the first payload byte is the subcommand. Multi-byte integers are big-endian. Filenames on the wire are null-terminated UTF-8.
 
 | sub | name |
-| --- | ---- |
-| 1   | INIT |
-| 2   | PUT  |
-| 3   | GET  |
-| 4   | LIST |
-| 5   | PLAYBACK |
-| 6   | DELETE |
-| 7   | METADATA |
-| 11  | INFO |
-| 12  | MOVE |
+| --- | --- |
+| 1 | INIT |
+| 2 | PUT |
+| 3 | GET |
+| 4 | LIST |
+| 5 | PLAYBACK |
+| 6 | DELETE |
+| 7 | METADATA |
+| 11 | INFO |
+| 12 | MOVE |
 
 ### INIT
 
@@ -170,11 +170,11 @@ Reply: `[old_file_id:u16 parent_id:u16 new_file_id:u16]`. The tool tolerates a t
 Arrive as frames without a request id; payload byte 0 is the event kind:
 
 | kind | event | payload after kind |
-| ---- | ----- | ------------------ |
-| 3    | METADATA_UPDATED | `[node_id:u16 json:z]` |
-| 8    | FILE_ADDED / 9 = FILE_UPDATED | `[node_id:u16 xx xx:2 file_size:u32 name:z]` (size at bytes 5..8, name at 9) |
-| 10   | FILE_DELETED | `[node_id:u16]` |
-| 13   | FILE_MOVED | `[old_node:u16 parent:u16 new_node:u16]` |
+| --- | --- | --- |
+| 3 | METADATA_UPDATED | `[node_id:u16 json:z]` |
+| 8 | FILE_ADDED / 9 = FILE_UPDATED | `[node_id:u16 xx xx:2 file_size:u32 name:z]` (size at bytes 5..8, name at 9) |
+| 10 | FILE_DELETED | `[node_id:u16]` |
+| 13 | FILE_MOVED | `[old_node:u16 parent:u16 new_node:u16]` |
 
 ## Filesystem semantics
 
@@ -199,12 +199,12 @@ Supported audio formats are device-advertised: read metadata key `formats` of th
 - Otherwise: decode, resample (libsamplerate in the original), encode s16 PCM.
 - After PUT completes, sound metadata is set on the new node.
 
-Filename normalization (upload + rename): optionally strip a leading `NNN `, drop the extension, remove `/`, trim, NFD-normalize and strip diacritics, replace non-ASCII with `?`, remove `\` and `"`, if longer than 16 chars keep first 7 + `.` + last 8, lowercase.
+Filename normalization (upload + rename): optionally strip a leading `NNN` followed by a space, drop the extension, remove `/`, trim, NFD-normalize and strip diacritics, replace non-ASCII with `?`, remove `\` and `"`, if longer than 16 chars keep first 7 + `.` + last 8, lowercase.
 
 ## Sound metadata JSON keys and validators
 
 | key | constraint |
-| --- | ---------- |
+| --- | --- |
 | channels, samplerate, name | set by the tool on upload |
 | sound.loopstart, sound.loopend | >= 0, rescaled by the target/source rate ratio |
 | sound.rootnote | 1..127 |
