@@ -60,31 +60,17 @@ public func enumerateMIDIPairs() -> [MIDIEndpointPair] {
     return pairs
 }
 
-/// Iterate all UMP words in an event list (word counts may exceed the inline
-/// tuple capacity, so walk by raw pointer).
+/// Iterate all UMP words in an event list, across every packet.
 public func forEachWord(in eventList: UnsafePointer<MIDIEventList>,
                  _ body: (UInt32) -> Void) {
-    let wordsOffset = MemoryLayout<MIDIEventPacket>.offset(of: \.words)!
-    withUnsafePointer(to: eventList.pointee.packet) { first in
-        var ptr = UnsafePointer(first)
-        for _ in 0..<eventList.pointee.numPackets {
-            let wordCount = Int(ptr.pointee.wordCount)
-            let base = UnsafeRawPointer(ptr).advanced(by: wordsOffset)
-                .assumingMemoryBound(to: UInt32.self)
-            for w in 0..<wordCount {
-                body(base[w])
-            }
-            // MIDIEventPacketNext is a header-only inline; advance manually:
-            // next packet follows immediately after the words.
-            ptr = UnsafePointer(UnsafeRawPointer(ptr)
-                .advanced(by: 8 + wordCount * 4)
-                .assumingMemoryBound(to: MIDIEventPacket.self))
+    for packet in eventList.unsafeSequence() {
+        for word in packet.words() {
+            body(word)
         }
     }
 }
 
-/// CoreMIDI transport over UMP event lists (protocol MIDI 1.0). The legacy
-/// packet-list API corrupts long SysEx when coalesced by CoreMIDI; UMP carries
+/// CoreMIDI transport over UMP event lists (protocol MIDI 1.0). UMP carries
 /// SysEx7 in 6-byte words with explicit framing, and CoreMIDI translates for
 /// MIDI 1.0 devices automatically.
 public final class CoreMIDIWire: MIDIWire, @unchecked Sendable {
@@ -144,8 +130,8 @@ public final class CoreMIDIWire: MIDIWire, @unchecked Sendable {
 
     public func send(_ bytes: [UInt8]) async throws {
         let words = UMPCodec.encodeSysEx(bytes)
-        // Deliver in event packets of at most 64 words: the inline capacity of
-        // MIDIEventPacket, which CoreMIDI's virtual-endpoint delivery respects.
+        // 64-word lists match MIDIEventPacket's inline capacity. Whether real
+        // devices need the split is unverified; keep it until checked on hardware.
         var offset = 0
         while offset < words.count {
             let group = Array(words[offset..<min(offset + 64, words.count)])

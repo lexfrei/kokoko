@@ -29,6 +29,7 @@ struct KokokoCoreChecks {
         namesAndCRC()
         await sessionChecks()
         umpChecks()
+        eventListChecks()
         filterChecks()
         dropChecks()
         do {

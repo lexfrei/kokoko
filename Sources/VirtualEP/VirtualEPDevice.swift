@@ -367,55 +367,24 @@ public final class VirtualEPDevice: @unchecked Sendable {
     }
 
     /// Device-initiated event: IS_REQUEST set, no request id.
-    /// Deferred: CoreMIDI drops a second MIDIReceivedEventList issued in the
-    /// same runloop turn as the response it follows.
     private func emitEvent(_ payload: [UInt8]) {
         var out: [UInt8] = [0xF0, 0x00, 0x20, 0x76, deviceID, 0x40, 0x40, 0x00, TECommand.file]
         out.append(contentsOf: SevenBitCoding.pack(payload))
         out.append(0xF7)
-        DispatchQueue.global().async { [weak self] in
-            self?.sendRaw(out)
-        }
+        sendRaw(out)
     }
 
     private func sendRaw(_ bytes: [UInt8]) {
         let words = UMPCodec.encodeSysEx(bytes)
-        if words.count <= 64 {
-            sendGroup(words)
-            return
-        }
-        // Split into 64-word lists, one per runloop turn: back-to-back
-        // MIDIReceivedEventList in one turn drops all but the first, and
-        // single packets over 64 words arrive truncated.
-        var groups: [[UInt32]] = []
-        var offset = 0
-        while offset < words.count {
-            groups.append(Array(words[offset..<min(offset + 64, words.count)]))
-            offset += 64
-        }
-        sendGroups(groups)
-    }
-
-    private func sendGroup(_ group: [UInt32]) {
-        let listSize = 16 + MemoryLayout<MIDIEventPacket>.size + group.count * 4
+        let listSize = 16 + MemoryLayout<MIDIEventPacket>.size + words.count * 4
         let raw = UnsafeMutableRawPointer.allocate(byteCount: listSize,
                                                    alignment: MemoryLayout<MIDIEventList>.alignment)
         let eventList = raw.assumingMemoryBound(to: MIDIEventList.self)
         let packet = MIDIEventListInit(eventList, ._1_0)
-        group.withUnsafeBufferPointer { buffer in
-            _ = MIDIEventListAdd(eventList, listSize, packet, 0, group.count, buffer.baseAddress!)
+        words.withUnsafeBufferPointer { buffer in
+            _ = MIDIEventListAdd(eventList, listSize, packet, 0, words.count, buffer.baseAddress!)
         }
         MIDIReceivedEventList(source, eventList)
         raw.deallocate()
-    }
-
-    private func sendGroups(_ groups: [[UInt32]]) {
-        guard let first = groups.first else { return }
-        DispatchQueue.main.async { [weak self] in
-            self?.sendGroup(first)
-            if groups.count > 1 {
-                self?.sendGroups(Array(groups.dropFirst()))
-            }
-        }
     }
 }
