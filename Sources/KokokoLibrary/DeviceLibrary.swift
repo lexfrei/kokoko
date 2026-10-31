@@ -101,15 +101,30 @@ public actor DeviceLibrary {
                         progress: (@Sendable (String) -> Void)? = nil) async throws {
         if !backup.sounds.isEmpty {
             let soundsRoot = try await resolve("/sounds")
-            let existing = Set(try await files.list(nodeID: soundsRoot).map(\.id))
+            var existing = Set(try await files.list(nodeID: soundsRoot).map(\.id))
             for sound in backup.sounds {
                 progress?(sound.metadata["name"]?.stringValue ?? "node \(sound.nodeID)")
                 let targetID = existing.contains(sound.nodeID) ? 0 : sound.nodeID
-                let newID = try await files.put(parentID: soundsRoot,
+                let newID: UInt16
+                do {
+                    newID = try await files.put(parentID: soundsRoot,
                                                 name: sound.metadata["name"]?.stringValue
                                                     ?? "sound \(sound.nodeID)",
-                                                data: sound.pcm, fileID: UInt16(targetID))
-                try await files.setMetadata(fileID: newID, sound.metadata)
+                                                data: sound.pcm, fileID: targetID)
+                } catch {
+                    // Only an explicit slot is known to be ours; an assigned id is lost with the error.
+                    if targetID != 0 { await removeIfListed(targetID, in: soundsRoot) }
+                    throw error
+                }
+                // An assigned slot may equal a later sound's original id; without this
+                // that sound is put explicitly into the occupied slot over this one.
+                existing.insert(newID)
+                do {
+                    try await files.setMetadata(fileID: newID, sound.metadata)
+                } catch {
+                    try? await files.delete(fileID: newID)
+                    throw error
+                }
             }
         }
         if !backup.projectArchives.isEmpty {
@@ -125,6 +140,12 @@ public actor DeviceLibrary {
             for (nodeID, meta) in backup.projectMetadata {
                 try? await files.setMetadata(fileID: nodeID, meta)
             }
+        }
+    }
+
+    private func removeIfListed(_ id: UInt16, in parent: UInt16) async {
+        if let nodes = try? await files.list(nodeID: parent), nodes.contains(where: { $0.id == id }) {
+            try? await files.delete(fileID: id)
         }
     }
 
@@ -213,10 +234,7 @@ public actor DeviceLibrary {
                 throw RecycleBinError.partialSoundMayRemain(underlying: String(describing: error))
             }
             // Without this a retry finds the original slot taken by the partial copy.
-            if let after = try? await files.list(nodeID: soundsRoot),
-               after.contains(where: { $0.id == slot }) {
-                try? await files.delete(fileID: slot)
-            }
+            await removeIfListed(slot, in: soundsRoot)
             throw error
         }
         do {

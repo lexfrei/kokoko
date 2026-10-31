@@ -304,6 +304,60 @@ struct E2E {
             check(false, "resolve reports a missing path — got \(error)")
         }
 
+        // --- backup restore: slot bookkeeping and partial uploads ---
+        // The simulator hands out ids in order, so the next assigned id is known.
+        let probe = try await files.put(parentID: soundsID, name: "probe", data: [0])
+        try await files.delete(fileID: probe)
+        let nextAssigned = probe + 1
+        let occupied = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        let soundA = SoundBackup(nodeID: occupied, pcm: Array(repeating: 0xA1, count: 300),
+                                 metadata: ["name": .string("restore a")])
+        let soundB = SoundBackup(nodeID: nextAssigned, pcm: Array(repeating: 0xB2, count: 300),
+                                 metadata: ["name": .string("restore b")])
+        try await library.restore(DeviceBackup(deviceSKU: "TE032AS001", osVersion: "2.1.0",
+                                               createdAt: Date(), sounds: [soundA, soundB],
+                                               projectMetadata: [:]))
+        var restoredPCM: [[UInt8]] = []
+        for node in try await files.list(nodeID: soundsID) where node.size == 300 {
+            restoredPCM.append(try await files.get(fileID: node.id).data)
+        }
+        check(restoredPCM.contains(soundA.pcm) && restoredPCM.contains(soundB.pcm),
+              "backup restore keeps a sound placed into an assigned slot — \(restoredPCM.count) of 2")
+
+        let loneSlot: UInt16 = 900
+        let lone = SoundBackup(nodeID: loneSlot, pcm: Array(repeating: 0xC3, count: 300),
+                               metadata: ["name": .string("restore c")])
+        let loneBackup = DeviceBackup(deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+                                      sounds: [lone], projectMetadata: [:])
+        func slotListed() async throws -> Bool {
+            try await files.list(nodeID: soundsID).contains { $0.id == loneSlot }
+        }
+        faulty.failAfterSend = { $0.payload.starts(with: [FileSub.put, 1]) && $0.payload.count > 4 }
+        check((try? await faultyLibrary.restore(loneBackup)) == nil, "backup restore reports a failed upload")
+        check(try await !slotListed(), "failed backup upload leaves no partial sound in its slot")
+        faulty.failAfterSend = { $0.payload.first == FileSub.metadata && $0.payload.dropFirst().first != 2 }
+        check((try? await faultyLibrary.restore(loneBackup)) == nil, "backup restore reports a failed metadata write")
+        check(try await !slotListed(), "failed backup metadata write leaves no partial sound in its slot")
+        faulty.failAfterSend = nil
+        try await faultyLibrary.restore(loneBackup)
+        let loneBack = try await slotListed() ? try await files.get(fileID: loneSlot).data : []
+        check(loneBack == lone.pcm, "backup restore retry lands in the original slot")
+
+        let owner = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        let ownerPCM = try await files.get(fileID: owner).data
+        let countBeforeTaken = try await files.list(nodeID: soundsID).count
+        let intoTaken = DeviceBackup(deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+                                     sounds: [SoundBackup(nodeID: owner, pcm: Array(repeating: 0xD4, count: 300),
+                                                          metadata: ["name": .string("restore d")])],
+                                     projectMetadata: [:])
+        faulty.failAfterSend = { $0.payload.starts(with: [FileSub.put, 1]) && $0.payload.count > 4 }
+        check((try? await faultyLibrary.restore(intoTaken)) == nil, "backup restore into an assigned slot reports a failed upload")
+        faulty.failAfterSend = nil
+        let ownerAfter = try await files.get(fileID: owner).data
+        let countAfterTaken = try await files.list(nodeID: soundsID).count
+        check(ownerAfter == ownerPCM && countAfterTaken >= countBeforeTaken,
+              "failed backup upload into an assigned slot deletes nothing — \(countBeforeTaken) vs \(countAfterTaken)")
+
         eventsTask.cancel()
         let seen = await eventsTask.value
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },
