@@ -20,7 +20,9 @@ func midiName(of object: MIDIObjectRef) -> String {
 }
 
 /// Enumerate MIDI entities that expose both a source and a destination.
-/// Standalone virtual endpoints (no entity) are paired by name.
+/// Standalone virtual endpoints (no entity) are paired by name. A name used
+/// by more than one loose source or destination is skipped: CoreMIDI does not
+/// say which source belongs with which destination.
 public func enumerateMIDIPairs() -> [MIDIEndpointPair] {
     var pairs: [MIDIEndpointPair] = []
     let deviceCount = MIDIGetNumberOfDevices()
@@ -39,19 +41,20 @@ public func enumerateMIDIPairs() -> [MIDIEndpointPair] {
         }
     }
 
-    var looseSources: [String: MIDIEndpointRef] = [:]
-    for i in 0..<MIDIGetNumberOfSources() {
-        let source = MIDIGetSource(i)
-        var entity = MIDIEntityRef()
-        if MIDIEndpointGetEntity(source, &entity) == noErr, entity != 0 { continue }
-        looseSources[midiName(of: source)] = source
+    func loose(_ endpoints: [MIDIEndpointRef]) -> [MIDIEndpointRef] {
+        endpoints.filter { endpoint in
+            var entity = MIDIEntityRef()
+            return !(MIDIEndpointGetEntity(endpoint, &entity) == noErr && entity != 0)
+        }
     }
-    for i in 0..<MIDIGetNumberOfDestinations() {
-        let destination = MIDIGetDestination(i)
-        var entity = MIDIEntityRef()
-        if MIDIEndpointGetEntity(destination, &entity) == noErr, entity != 0 { continue }
+    let looseSources = Dictionary(grouping: loose((0..<MIDIGetNumberOfSources()).map(MIDIGetSource)),
+                                  by: midiName(of:))
+    let looseDestinations = loose((0..<MIDIGetNumberOfDestinations()).map(MIDIGetDestination))
+    let destinationNameCounts = Dictionary(looseDestinations.map { (midiName(of: $0), 1) }, uniquingKeysWith: +)
+    for destination in looseDestinations {
         let name = midiName(of: destination)
-        guard let source = looseSources[name] else { continue }
+        guard destinationNameCounts[name] == 1, let sources = looseSources[name], sources.count == 1 else { continue }
+        let source = sources[0]
         var uid: MIDIUniqueID = 0
         MIDIObjectGetIntegerProperty(destination, kMIDIPropertyUniqueID, &uid)
         pairs.append(MIDIEndpointPair(id: uid, name: name,
