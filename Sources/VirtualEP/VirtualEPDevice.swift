@@ -211,7 +211,8 @@ public final class VirtualEPDevice: @unchecked Sendable {
 
         case FileSub.delete:
             let fileID = readU16(p, 1)
-            guard nodes.removeValue(forKey: fileID) != nil else {
+            guard fileID != 0, !nodes.values.contains(where: { $0.parentID == fileID }),
+                  nodes.removeValue(forKey: fileID) != nil else {
                 respond(to: frame, status: 16, payload: [])
                 return
             }
@@ -219,6 +220,10 @@ public final class VirtualEPDevice: @unchecked Sendable {
             emitEvent([0x0A, UInt8(fileID >> 8), UInt8(fileID & 0xFF)])
 
         case FileSub.playback:
+            guard p.count >= 4, nodes[readU16(p, 2)] != nil else {
+                respond(to: frame, status: 16, payload: [])
+                return
+            }
             respond(to: frame, status: 0, payload: [])
 
         case FileSub.metadata:
@@ -244,7 +249,7 @@ public final class VirtualEPDevice: @unchecked Sendable {
             let fileID = readU16(p, 1)
             let parent = readU16(p, 3)
             let newID = readU16(p, 5)
-            guard nodes[fileID] != nil else {
+            guard nodes[fileID] != nil, nodes[parent] != nil else {
                 respond(to: frame, status: 16, payload: [])
                 return
             }
@@ -307,6 +312,10 @@ public final class VirtualEPDevice: @unchecked Sendable {
         switch p[1] {
         case 1: // set
             let fileID = readU16(p, 2)
+            guard nodes[fileID] != nil else {
+                respond(to: frame, status: 16, payload: [])
+                return
+            }
             let json = readZString(p, from: 4)
             if let data = json.data(using: .utf8),
                let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
@@ -317,6 +326,10 @@ public final class VirtualEPDevice: @unchecked Sendable {
             respond(to: frame, status: 0, payload: [])
         case 2: // get
             let fileID = readU16(p, 2)
+            guard nodes[fileID] != nil else {
+                respond(to: frame, status: 16, payload: [])
+                return
+            }
             let page = readU16(p, 4)
             if page > 0 {
                 respond(to: frame, status: 0, payload: [UInt8(page >> 8), UInt8(page & 0xFF), 0])
@@ -329,6 +342,10 @@ public final class VirtualEPDevice: @unchecked Sendable {
         case 4: // set paged
             if p[2] == 0 { // init
                 let fileID = readU16(p, 3)
+                guard nodes[fileID] != nil else {
+                    respond(to: frame, status: 16, payload: [])
+                    return
+                }
                 pendingMeta = (fileID, [], 0)
                 respond(to: frame, status: 0, payload: [])
             } else { // data
