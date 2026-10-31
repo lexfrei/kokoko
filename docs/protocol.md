@@ -220,7 +220,7 @@ Download-as-WAV embeds the metadata back into the WAV (loop points, root note, b
 
 ## Project archives and factory restore
 
-Project backups are TAR files named `*P01.tar`-style; upload goes to `/projects` with capability READ and a 15 s timeout. "Restore factory sounds" downloads a hosted `.pak` (e.g. `/apps/ep-sample-tool/assets/ep-133-factory-content-*.pak`) and uploads it like a project archive — not a protocol feature.
+Project backups are TAR files named `*P01.tar`-style; upload goes to `/projects` with capability READ. The reference tool waits 15 s for this upload; kokoko waits 60 s. "Restore factory sounds" downloads a hosted `.pak` (e.g. `/apps/ep-sample-tool/assets/ep-133-factory-content-*.pak`) and uploads it like a project archive — not a protocol feature.
 
 ## Firmware update (DFU, command 3)
 
