@@ -10,6 +10,7 @@ struct ContentView: View {
     // need Xcode's SwiftUIMacros plugin; this stays typecheckable with CLT.
     @ObservedObject var state: AppState
     @State private var renumberText = ""
+    @State private var binToRemove: BinEntry?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -71,6 +72,28 @@ struct ContentView: View {
             }
             Button("cancel", role: .cancel) {}
         }
+        .confirmationDialog("delete failed", isPresented: unbinnedDeleteBinding,
+                            presenting: state.unbinnedDelete) { pending in
+            Button("delete without keeping a copy", role: .destructive) {
+                Task { await state.deleteWithoutBin(pending.ids) }
+            }
+            Button("cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.prompt)
+        }
+        .confirmationDialog("remove from bin for good?", isPresented: binRemoveBinding,
+                            presenting: binToRemove) { entry in
+            Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
+            Button("cancel", role: .cancel) {}
+        }
+    }
+
+    private var unbinnedDeleteBinding: Binding<Bool> {
+        Binding(get: { state.unbinnedDelete != nil }, set: { if !$0 { state.unbinnedDelete = nil } })
+    }
+
+    private var binRemoveBinding: Binding<Bool> {
+        Binding(get: { binToRemove != nil }, set: { if !$0 { binToRemove = nil } })
     }
 
     private var renameBinding: Binding<Bool> {
@@ -108,13 +131,21 @@ struct ContentView: View {
                     .foregroundStyle(state.view == .sounds ? .primary : .secondary)
                 Button("[ projects ]") {
                     state.view = .projects
-                    Task { await state.loadProjects() }
+                    Task { await state.refreshProjects() }
                 }
                 .buttonStyle(.plain)
+                .disabled(state.deviceBusy)
                 .foregroundStyle(state.view == .projects ? .primary : .secondary)
                 Button("[ settings ]") { state.view = .settings }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     .foregroundStyle(state.view == .settings ? .primary : .secondary)
+                Button("[ bin ]") {
+                    state.view = .bin
+                    state.loadBin()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(state.view == .bin ? .primary : .secondary)
             }
             Spacer()
             switch state.connection {
@@ -141,6 +172,8 @@ struct ContentView: View {
                     projectList
                 } else if state.view == .settings {
                     SettingsView(state: state)
+                } else if state.view == .bin {
+                    binList
                 } else {
                     soundList
                 }
@@ -149,6 +182,7 @@ struct ContentView: View {
                     Text("connect the device over usb-c")
                     Button("[ retry ]") { Task { await state.scan() } }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             default:
@@ -181,6 +215,7 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                     Button("[>]") { Task { await state.audition(item) } }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                         .help("play 1s preview on device")
                     Button("[v]") {
                         Task {
@@ -191,15 +226,19 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     .help("download as wav")
                     Button("[r]") { state.renameText = item.displayName; state.renameItem = item }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                         .help("rename")
                     Button("[#]") { state.renumberItem = item }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                         .help("change slot number")
                     Button("[x]") { Task { await state.delete(item) } }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                         .help("delete from device")
                 }
                 .tag(item.id)
@@ -208,7 +247,8 @@ struct ContentView: View {
             }
         }
         .onDrop(of: [.audio], isTargeted: nil) { providers in
-            receiveDrop(providers, load: { provider, done in
+            guard !state.deviceBusy else { return false }
+            return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, error in
                     done(url, error)
                 }
@@ -239,40 +279,58 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     Button("[ v to folder ]") {
                         state.picker = .downloadFolder(Array(state.selection))
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     Button("[ x ]") { Task { await state.deleteMany(state.selection) } }
                         .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
                 }
-                if state.view == .sounds {
-                    Button("[ + add sounds ]") { state.showImporter = true }
-                        .buttonStyle(.plain)
-                    Button("[ backup sounds ]") { state.picker = .backupFolder(.sounds) }
-                        .buttonStyle(.plain)
-                    Button("[ restore sounds ]") { state.picker = .restoreFolder }
-                        .buttonStyle(.plain)
-                } else if state.view == .projects {
-                    Button("[ backup projects ]") { state.picker = .backupFolder(.projects) }
-                        .buttonStyle(.plain)
-                    Button("[ restore ]") { state.picker = .restoreFolder }
-                        .buttonStyle(.plain)
-                } else {
-                    Button("[ backup all ]") { state.picker = .backupFolder(.everything) }
-                        .buttonStyle(.plain)
-                    Button("[ restore all ]") { state.picker = .restoreFolder }
-                        .buttonStyle(.plain)
-                }
-                Button("[ refresh ]") {
-                    Task {
-                        if state.view == .projects { await state.loadProjects() } else { await state.reload() }
-                    }
-                }
-                .buttonStyle(.plain)
+                Button("[ + add sounds ]") { state.showImporter = true }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
+                Button("[ backup sounds ]") { state.picker = .backupFolder(.sounds) }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
+                Button("[ restore sounds ]") { state.picker = .restoreFolder }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
+                Button("[ refresh ]") { Task { await state.refreshSounds() } }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
             }
         }
         .padding()
+    }
+
+    private var binList: some View {
+        Group {
+            if state.binEntries.isEmpty {
+                Text("bin is empty")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(state.binEntries) { entry in
+                        HStack {
+                            Text(binRowLabel(slot: entry.originalSlot, name: entry.name,
+                                             deletedAt: entry.deletedAt))
+                            Spacer()
+                            Button("[restore]") { Task { await state.restoreFromBin(entry) } }
+                                .buttonStyle(.plain)
+                                .disabled(state.deviceBusy)
+                                .help("put back on the device")
+                            Button("[x]") { binToRemove = entry }
+                                .buttonStyle(.plain)
+                                .disabled(state.deviceBusy)
+                                .help("remove from the bin for good")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var projectList: some View {
@@ -291,12 +349,14 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
                     .help("download project archive")
                 }
             }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            receiveDrop(providers, load: { provider, done in
+            guard !state.deviceBusy else { return false }
+            return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadObject(ofClass: URL.self) { url, error in done(url, error) }
             }, then: { urls in
                 await state.uploadProjects(urls: urls)
@@ -375,6 +435,6 @@ struct SoundRowDrop: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.text])
+        !state.deviceBusy && info.hasItemsConforming(to: [.text])
     }
 }
