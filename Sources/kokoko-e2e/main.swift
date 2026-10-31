@@ -649,6 +649,31 @@ struct E2E {
                 && countAfterMetaUnreadable == countBeforeMetaUnreadable + 1,
               "unreadable occupant metadata falls back to a normal bin restore")
 
+        // --- metadata types survive a round trip through the device ---
+        let typedID = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        let typed: [String: JSONValue] = ["kk.flag": .bool(true), "kk.nothing": .null, "kk.ratio": .double(2.5)]
+        try await files.setMetadata(fileID: typedID, typed)
+        let typedBack = try await files.getMetadata(fileID: typedID)
+        check(typed.allSatisfy { typedBack[$0.key] == $0.value },
+              "bool, null and fractional metadata come back unchanged — got \(typed.keys.sorted().map { "\($0)=\(typedBack[$0].map { "\($0)" } ?? "missing")" })")
+
+        // --- metadata that JSON cannot carry is an error, not a crash ---
+        let unwritable: [String: JSONValue] = ["kk.bad": .double(.nan)]
+        do {
+            try await files.setMetadata(fileID: typedID, unwritable)
+            check(false, "unserializable metadata is refused on set")
+        } catch FileServiceError.unserializableMetadata {
+            check(true, "unserializable metadata is refused on set")
+        }
+        let countBeforeBadPut = try await files.list(nodeID: soundsID).count
+        do {
+            _ = try await files.put(parentID: soundsID, name: "bad meta", data: [1, 2], metadata: unwritable)
+            check(false, "unserializable metadata is refused on upload")
+        } catch FileServiceError.unserializableMetadata {
+            let countAfterBadPut = try await files.list(nodeID: soundsID).count
+            check(countAfterBadPut == countBeforeBadPut, "unserializable metadata is refused on upload before anything is sent")
+        }
+
         eventsTask.cancel()
         let seen = await eventsTask.value
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },

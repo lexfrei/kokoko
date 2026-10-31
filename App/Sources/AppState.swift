@@ -687,7 +687,8 @@ final class AppState: ObservableObject {
                 guard case .object(let dict) = item,
                       let id = dict["id"]?.intValue else { return nil }
                 let title = dict["title"]?.stringValue ?? dict["name"]?.stringValue ?? "setting \(id)"
-                let value = dict["value"] ?? dict["current"] ?? .null
+                // "value": null means unset; fall back to "current".
+                let value = [dict["value"], dict["current"]].compactMap { $0 }.first { $0 != .null } ?? .null
                 return SettingsEntryModel(id: id, title: title, value: value, range: nil)
             }
         }

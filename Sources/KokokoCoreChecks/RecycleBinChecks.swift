@@ -1,6 +1,7 @@
 import Foundation
 import KokokoCore
 import KokokoLibrary
+import KokokoMIDI
 
 extension KokokoCoreChecks {
     static func recycleBinChecks() {
@@ -52,7 +53,14 @@ extension KokokoCoreChecks {
 
             // NaN is not representable in JSON, so the info write fails after the pcm landed.
             let unwritable = SoundBackup(nodeID: 3, pcm: [9], metadata: ["x": .double(.nan)])
-            check((try? bin.add(unwritable)) == nil, "bin add with unwritable metadata throws")
+            do {
+                try bin.add(unwritable)
+                check(false, "bin add with unwritable metadata throws")
+            } catch FileServiceError.unserializableMetadata {
+                check(true, "bin add with unwritable metadata throws")
+            } catch {
+                check(false, "bin add with unwritable metadata throws the shared error — got \(error)")
+            }
             let dirs = try FileManager.default.contentsOfDirectory(atPath: root.path)
             eq(dirs.count, 2, "failed bin add leaves no directory behind")
         } catch {

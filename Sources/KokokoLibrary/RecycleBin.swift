@@ -45,7 +45,7 @@ public struct RecycleBin: Sendable {
             ]
             // JSONSerialization raises an uncatchable exception (e.g. on NaN) instead of throwing.
             guard JSONSerialization.isValidJSONObject(info) else {
-                throw FileServiceError.metadataParse("unserializable metadata for slot \(sound.nodeID)")
+                throw FileServiceError.unserializableMetadata
             }
             let data = try JSONSerialization.data(withJSONObject: info, options: [.sortedKeys])
             try data.write(to: dir.appendingPathComponent(Self.infoFile), options: .atomic)
