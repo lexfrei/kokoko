@@ -4,7 +4,7 @@ import KokokoCore
 import KokokoMIDI
 
 // Read-mostly exploration of a connected EP device: tree walk, metadata
-// dumps, chunk size, preview semantics, and a command-surface scan.
+// dumps, and a command-surface scan.
 // Skips command 3 (DFU) entirely. May play one 1-second preview aloud.
 
 @MainActor
@@ -73,17 +73,6 @@ struct Explore {
             print("  \(node.name) meta keys: \(meta.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))")
         }
 
-        // --- preview semantics: GET with extraArgs on a small sound ---
-        if let small = sounds.filter({ $0.isFile && $0.size > 4000 }).first {
-            // [01, start:u16, length:u16] per the bundle; try start=0 length=2048
-            do {
-                let reply = try await files.preview(fileID: small.id, start: 0, length: 2048)
-                print("preview of \(small.name): \(reply.count) bytes (asked 2048 of \(small.size))")
-            } catch {
-                print("preview failed: \(error)")
-            }
-        }
-
         // --- playback one short sound (audible!) ---
         if let first = sounds.first(where: { $0.isFile }) {
             print("playing 1s of \(first.name)...")
@@ -102,8 +91,10 @@ struct Explore {
                     results.append("\(cmd): ok")
                 } catch SessionError.deviceError(let status, _) {
                     results.append("\(cmd): status=\(status)")
-                } catch {
+                } catch SessionError.timeout {
                     results.append("\(cmd): timeout")
+                } catch {
+                    results.append("\(cmd): error \(error)")
                 }
             }
             for r in results { print("  " + r) }
