@@ -355,6 +355,20 @@ struct E2E {
         check(ownerAfter == ownerPCM && countAfterTaken >= countBeforeTaken,
               "failed backup upload into an assigned slot deletes nothing — \(countBeforeTaken) vs \(countAfterTaken)")
 
+        // --- backup: a short download is an error, not a smaller sound ---
+        faulty.truncateGets = true
+        do {
+            _ = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
+            check(false, "backup rejects a truncated sound")
+        } catch FileServiceError.truncated(let id, let expected, let got) {
+            check(got < expected, "backup rejects a truncated sound — node \(id): \(got) of \(expected)")
+        } catch {
+            check(false, "backup rejects a truncated sound — got \(error)")
+        }
+        faulty.truncateGets = false
+        let fullBackup = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
+        check(!fullBackup.sounds.isEmpty, "backup succeeds once reads are whole")
+
         eventsTask.cancel()
         let seen = await eventsTask.value
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },

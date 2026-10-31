@@ -62,9 +62,13 @@ public actor DeviceLibrary {
             let soundsRoot = try await resolve("/sounds")
             for node in try await files.list(nodeID: soundsRoot) where node.isFile {
                 progress?(node.name)
-                let data = try await files.get(fileID: node.id)
+                // get stops at the first empty page, so a short read is not an error by itself.
+                let pcm = try await files.get(fileID: node.id).data
+                guard pcm.count == Int(node.size) else {
+                    throw FileServiceError.truncated(fileID: node.id, expected: Int(node.size), got: pcm.count)
+                }
                 let meta = (try? await files.getMetadata(fileID: node.id)) ?? [:]
-                backups.append(SoundBackup(nodeID: node.id, pcm: data.data, metadata: meta))
+                backups.append(SoundBackup(nodeID: node.id, pcm: pcm, metadata: meta))
             }
         }
 

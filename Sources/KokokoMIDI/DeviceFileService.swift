@@ -7,6 +7,7 @@ public enum FileServiceError: Error {
     case missingResponse
     case metadataParse(String)
     case pathNotFound(String)
+    case truncated(fileID: UInt16, expected: Int, got: Int)
 }
 
 public struct FSNode: Equatable, Sendable, Identifiable {
