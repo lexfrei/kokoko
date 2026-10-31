@@ -8,8 +8,14 @@ public protocol MIDIWire: Sendable {
     func setMessageHandler(_ handler: (@Sendable ([UInt8]) -> Void)?)
 }
 
-public enum WireError: Error {
-    case midi(OSStatus)
+public enum WireError: LocalizedError {
     case noDevice
     case timeout
+
+    public var errorDescription: String? {
+        switch self {
+        case .noDevice: "no device is connected"
+        case .timeout: "device did not answer in time"
+        }
+    }
 }
