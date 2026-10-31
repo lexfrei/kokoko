@@ -5,8 +5,9 @@ import KokokoMIDI
 public enum RecycleBinError: Error, Equatable {
     case notASound(UInt16)
     case incompleteCopy(slot: UInt16, expected: Int, got: Int)
-    /// An upload into a device-assigned slot failed; its id is unknown, so the
-    /// partial sound cannot be told apart from others and is left on the device.
+    /// An upload into a device-assigned slot failed and a partial sound may be
+    /// left on the device: either the device never named the node, or deleting
+    /// the named node failed too.
     case partialSoundMayRemain(underlying: String)
 }
 

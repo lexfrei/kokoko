@@ -278,24 +278,41 @@ struct E2E {
             }
             do {
                 _ = try await faultyLibrary.restore(entry, from: bin)
-                check(false, "failed upload into an assigned slot reports a possible partial sound")
-            } catch RecycleBinError.partialSoundMayRemain(let underlying) {
-                check(true, "failed upload into an assigned slot reports a possible partial sound")
-                check(underlying == WireError.timeout.localizedDescription,
-                      "a possible partial sound carries the cause as user-facing text — got \(underlying)")
+                check(false, "failed upload into an assigned slot fails the restore")
             } catch {
-                check(false, "failed upload into an assigned slot reports a possible partial sound — got \(error)")
+                check(error.localizedDescription == WireError.timeout.localizedDescription,
+                      "a failed upload into an assigned slot carries the cause as user-facing text — got \(error)")
             }
             faulty.beforeFailure = nil
             let afterNodes = try await files.list(nodeID: soundsID)
             let bystanderID = await bystander.id
             check(bystanderID.map { id in afterNodes.contains { $0.id == id } } == true,
                   "failed restore leaves another writer's new sound alone")
-            check(try afterNodes.count == countBefore + 2 && bin.entries().count == 1,
-                  "failed upload into an assigned slot deletes nothing — \(countBefore) vs \(afterNodes.count)")
+            check(try afterNodes.count == countBefore + 1 && bin.entries().count == 1,
+                  "failed upload into an assigned slot removes only its own partial node — \(countBefore) vs \(afterNodes.count)")
             faulty.failAfterSend = nil
         } else {
             check(false, "bin entry for slot \(victim) missing")
+        }
+
+        // A failed init never names the node: nothing may be deleted, not even the
+        // node the device created for it, since its id is unknown.
+        if let entry = try bin.entries().first {
+            let beforeInit = Set(try await files.list(nodeID: soundsID).map(\.id))
+            faulty.failAfterSend = { $0.payload.starts(with: [FileSub.put, 0]) && $0.payload.count > 4 }
+            do {
+                _ = try await faultyLibrary.restore(entry, from: bin)
+                check(false, "bin restore with a failed init into an assigned slot reports a possible partial sound")
+            } catch RecycleBinError.partialSoundMayRemain {
+                check(true, "bin restore with a failed init into an assigned slot reports a possible partial sound")
+            } catch {
+                check(false, "bin restore with a failed init into an assigned slot reports a possible partial sound — got \(error)")
+            }
+            faulty.failAfterSend = nil
+            let afterInit = Set(try await files.list(nodeID: soundsID).map(\.id))
+            check(afterInit.isSuperset(of: beforeInit) && afterInit.count == beforeInit.count + 1,
+                  "bin restore with a failed init deletes nothing and leaves the node it cannot name — \(beforeInit.count) vs \(afterInit.count)")
+            for orphan in afterInit.subtracting(beforeInit) { try await files.delete(fileID: orphan) }
         }
 
         let folder = try await files.put(parentID: soundsID, name: "folder", data: [], isDirectory: true)
@@ -371,8 +388,19 @@ struct E2E {
         faulty.failAfterSend = nil
         let ownerAfter = try await files.get(fileID: owner).data
         let countAfterTaken = try await files.list(nodeID: soundsID).count
-        check(ownerAfter == ownerPCM && countAfterTaken >= countBeforeTaken,
-              "failed backup upload into an assigned slot deletes nothing — \(countBeforeTaken) vs \(countAfterTaken)")
+        check(ownerAfter == ownerPCM && countAfterTaken == countBeforeTaken,
+              "failed backup upload into an assigned slot removes only its own partial node and keeps the owner — \(countBeforeTaken) vs \(countAfterTaken)")
+
+        let beforeInitTaken = Set(try await files.list(nodeID: soundsID).map(\.id))
+        faulty.failAfterSend = { $0.payload.starts(with: [FileSub.put, 0]) && $0.payload.count > 4 }
+        check((try? await faultyLibrary.restore(intoTaken)) == nil, "backup restore into an assigned slot reports a failed init")
+        faulty.failAfterSend = nil
+        let afterInitTaken = Set(try await files.list(nodeID: soundsID).map(\.id))
+        let ownerAfterInit = try await files.get(fileID: owner).data
+        check(ownerAfterInit == ownerPCM && afterInitTaken.isSuperset(of: beforeInitTaken)
+                && afterInitTaken.count == beforeInitTaken.count + 1,
+              "failed backup init into an assigned slot deletes nothing and keeps the owner — \(beforeInitTaken.count) vs \(afterInitTaken.count)")
+        for orphan in afterInitTaken.subtracting(beforeInitTaken) { try await files.delete(fileID: orphan) }
 
         // --- backup: a short download is an error, not a smaller sound ---
         faulty.truncateGets = true

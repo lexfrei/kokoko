@@ -42,6 +42,23 @@ public final class VirtualEPDevice: @unchecked Sendable {
     private let refuseLock = NSLock()
     private var refuseMetadata = false
 
+    /// When set, every put data page from this index on answers status 16 and
+    /// is not stored, so the node stays listed but incomplete.
+    public var refusePutDataFromPage: Int? {
+        get { refusePutLock.withLock { refusePutFrom } }
+        set { refusePutLock.withLock { refusePutFrom = newValue } }
+    }
+    private let refusePutLock = NSLock()
+    private var refusePutFrom: Int?
+
+    /// When set, every delete answers status 16 and the node stays.
+    public var refuseDelete: Bool {
+        get { refuseDeleteLock.withLock { refuseDeletes } }
+        set { refuseDeleteLock.withLock { refuseDeletes = newValue } }
+    }
+    private let refuseDeleteLock = NSLock()
+    private var refuseDeletes = false
+
     public init(name: String = "kokoko-vep-\(getpid())") {
         self.name = name
         seed()
@@ -163,6 +180,10 @@ public final class VirtualEPDevice: @unchecked Sendable {
                     respond(to: frame, status: 3, payload: [])
                     return
                 }
+                if let refuseFrom = refusePutDataFromPage, Int(page) >= refuseFrom {
+                    respond(to: frame, status: 16, payload: [])
+                    return
+                }
                 nodes[put.nodeID]?.data.append(contentsOf: chunk)
                 put.nextPage &+= 1
                 pendingPut = put
@@ -221,7 +242,7 @@ public final class VirtualEPDevice: @unchecked Sendable {
 
         case FileSub.delete:
             let fileID = readU16(p, 1)
-            guard fileID != 0, !nodes.values.contains(where: { $0.parentID == fileID }),
+            guard fileID != 0, !refuseDelete, !nodes.values.contains(where: { $0.parentID == fileID }),
                   nodes.removeValue(forKey: fileID) != nil else {
                 respond(to: frame, status: 16, payload: [])
                 return
