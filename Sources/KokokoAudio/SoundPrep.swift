@@ -26,6 +26,18 @@ public enum SoundPrepError: Error {
     case unreadable(String)
 }
 
+extension SoundPrepError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .tooLong(let seconds):
+            // Rounded up so a sound just over the limit never reads as exactly the limit.
+            "sound is \(String(format: "%.1f", (seconds * 10).rounded(.up) / 10)) s long, the limit is \(Int(maxSampleSeconds)) s"
+        case .unreadable(let detail):
+            "cannot read audio: \(detail)"
+        }
+    }
+}
+
 /// Prepare an audio file for upload: WAV already in device format is passed
 /// through raw (fast path from the original tool); anything else is decoded
 /// and resampled to 46875 Hz s16 via AVFoundation.

@@ -13,6 +13,14 @@ public enum CoreMIDIError: Error {
     case osStatus(String, OSStatus)
 }
 
+extension CoreMIDIError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .osStatus(let call, let status): "\(call) failed with OSStatus \(status)"
+        }
+    }
+}
+
 func midiName(of object: MIDIObjectRef) -> String {
     var name: Unmanaged<CFString>?
     MIDIObjectGetStringProperty(object, kMIDIPropertyName, &name)

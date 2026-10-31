@@ -2,9 +2,15 @@ import Foundation
 import KokokoCore
 
 public enum SettingsError: Error {
-    case notInitialized
-    case malformedPage
     case invalidJSON(String)
+}
+
+extension SettingsError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .invalidJSON(let text): "device sent invalid settings JSON: \(text.prefix(200))"
+        }
+    }
 }
 
 /// Device settings over command 6: paged JSON dump and per-id writes.
