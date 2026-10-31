@@ -32,6 +32,16 @@ public final class VirtualEPDevice: @unchecked Sendable {
     private var pendingPut: (nodeID: UInt16, nextPage: UInt16)?
     private var pendingMeta: (nodeID: UInt16, buffer: [UInt8], nextPage: UInt16)?
 
+    /// When set, every metadata set and paged-set init answers status 16 and
+    /// changes nothing, so callers can exercise a refused metadata write.
+    public var refuseMetadataSet: Bool {
+        get { refuseLock.withLock { refuseMetadata } }
+        set { refuseLock.withLock { refuseMetadata = newValue } }
+    }
+    // Written from the caller's thread, read on the MIDI callback thread.
+    private let refuseLock = NSLock()
+    private var refuseMetadata = false
+
     public init(name: String = "kokoko-vep-\(getpid())") {
         self.name = name
         seed()
@@ -312,7 +322,7 @@ public final class VirtualEPDevice: @unchecked Sendable {
         switch p[1] {
         case 1: // set
             let fileID = readU16(p, 2)
-            guard nodes[fileID] != nil else {
+            guard nodes[fileID] != nil, !refuseMetadataSet else {
                 respond(to: frame, status: 16, payload: [])
                 return
             }
@@ -342,7 +352,7 @@ public final class VirtualEPDevice: @unchecked Sendable {
         case 4: // set paged
             if p[2] == 0 { // init
                 let fileID = readU16(p, 3)
-                guard nodes[fileID] != nil else {
+                guard nodes[fileID] != nil, !refuseMetadataSet else {
                     respond(to: frame, status: 16, payload: [])
                     return
                 }
