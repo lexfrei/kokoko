@@ -253,7 +253,7 @@ NOT AVAILABLE on EP-133 os 2.5.1: the device answers command-not-found. The API 
 
 ## Verified on real hardware (EP-133, os 2.5.1)
 
-Read-only probe over USB-C, 2026-10-30:
+Probe runs over USB-C, 2026-10-30: a read-only pass, then a write test.
 
 - Identity reply decodes to `TE032AS002` (not AS001) with `base_sku: TE032AS001` — match devices by base_sku.
 - GREET metadata contains `mode`, `os_version`, `serial`, `sku`, `base_sku` as documented.
