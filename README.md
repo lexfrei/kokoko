@@ -1,38 +1,30 @@
 # kokoko
 
-A clean-room sample manager for the EP-133 K.O. II / EP-1320 / EP-40 family of samplers. Native SwiftUI app for iOS (iPad) and macOS, text-mode UI by design.
+kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 and EP-40 samplers. It runs on iPad and Mac, talks to the device over USB-C, and has a text-mode UI by design.
 
-## Status
+## What it does
 
-Protocol, transport, and audio layers are implemented and covered by runnable checks. The app shell typechecks and launches on macOS. Everything that touches real hardware still needs on-device verification — see "Open items" in [docs/protocol.md](docs/protocol.md).
+- Finds a connected device on its own and shows its name, serial and OS version. If teenage engineering's release list is reachable, it also shows whether a newer firmware exists.
+- Lists the sounds on the device with slot number, name and size, and filters the list by name or slot.
+- Adds sounds from audio files, picked or dropped onto the list. WAV files already in the device format (16-bit, 46875 Hz, mono or stereo) are sent as they are. Other audio is converted to 16-bit at 46875 Hz first, and audio that needs converting is refused if it is longer than 40 seconds.
+- Plays a one-second preview of a sound on the device.
+- Downloads a sound as a WAV file, by button or by dragging its row out of the app, and downloads a selection of sounds into a folder.
+- Renames a sound, moves it to another slot, and swaps two sounds by dragging one row onto the other. A selection of sounds can be moved, in slot order, onto the free slots counting up from a chosen number, skipping slots held by other sounds.
+- Deletes one sound or a selection and keeps a copy of each in a recycle bin on the Mac or iPad. If deleting into the bin fails, it offers to delete that sound without keeping a copy.
+- Lists the deleted sounds in a bin tab with their original slot, name and time of deletion. A sound can be put back, into its original slot if that slot is free and into another one otherwise, or removed from the bin for good.
+- Backs up the sounds into a folder and restores such a backup.
+- Lists the projects, downloads one as a `.tar` archive, and uploads archives named like `P01.tar` by dropping them onto the project list, into a slot that already exists on the device.
+- Shows the device settings where the firmware exposes them.
 
-## Layout
+## Status and limits
 
-- `Sources/KokokoCore` — wire protocol: 7-bit packing, frame codec, command-5 file messages, events, filename rules, CRC-32.
-- `Sources/KokokoMIDI` — CoreMIDI transport, SysEx request/response session, chunked file service.
-- `Sources/KokokoAudio` — WAV parse/write, resample to the device format (46875 Hz s16) via AVFoundation.
-- `Sources/KokokoLibrary` — batch operations, scoped backup/restore, sound list filtering.
-- `Sources/VirtualEP` — in-memory device simulator over virtual CoreMIDI endpoints.
-- `Sources/KokokoCoreChecks` — self-check suite (no test framework in Command Line Tools).
-- `Sources/vep` — standalone virtual device executable.
-- `Sources/kokoko-e2e` — end-to-end protocol loop against the virtual device.
-- `Sources/kokoko-probe` — probe of a connected device: read-only by default, `--write-test` uploads, moves and deletes a test file, and creates and deletes a test directory in `/sounds`.
-- `Sources/kokoko-explore` — exploration of a connected device: the `/projects` tree with metadata, metadata of the first sounds, a request to play the first file in `/sounds` aloud for one second, if there is one, and an opt-in command scan (`--command-scan`) that sends every command except DFU with an empty payload and may change device state or crash the firmware.
-- `App/Sources` — SwiftUI app shared by iOS and macOS targets.
-- `docs/protocol.md` — protocol notes from static analysis of the reference tool.
-- `docs/conformance.md` — which protocol messages kokoko implements, simulates, tests, and has verified on hardware.
+Checked on an EP-133 with OS 2.5.1: finding the device and reading its info, listing files, reading metadata, and sending, reading back and deleting a sound file. Everything else has not been checked on hardware yet. That includes writing a sound's name and metadata, which adding and renaming rely on, as well as slot moves, previews, the recycle bin, projects, backup and restore, and the EP-1320 and EP-40. [docs/conformance.md](docs/conformance.md) lists the status per protocol message.
 
-## Run
+The factory sounds on that device report no move and no playback permission ([docs/protocol.md](docs/protocol.md)). [docs/protocol.md](docs/protocol.md) also notes that the settings command answered command-not-found on that firmware; when it does, the settings tab says so.
 
-```bash
-swift run KokokoCoreChecks   # unit-level checks
-swift run kokoko-e2e         # full protocol loop against a virtual device
-swift run kokoko-probe       # read-only probe of a connected device
-swift run vep                # virtual EP device (standalone simulator)
-swift run kokoko-mac         # macOS UI (connects to vep or a real device)
-```
+## Install and run
 
-## App builds (requires Xcode)
+The app is built with Xcode and XcodeGen:
 
 ```bash
 brew install xcodegen
@@ -40,7 +32,19 @@ xcodegen generate
 open kokoko.xcodeproj
 ```
 
-One target, both platforms: pick `kokoko > My Mac` for macOS or an iPad destination for iOS. For a physical iPad set your development team under Signing & Capabilities.
+The `kokoko` target covers both platforms. Pick `My Mac` to run it on macOS, or an iPad as the destination. On a physical iPad, set your own development team under Signing & Capabilities.
+
+## Development
+
+```bash
+swift run KokokoCoreChecks   # self-checks
+swift run kokoko-e2e         # full protocol loop against a virtual device
+swift run vep                # standalone virtual device to connect the app to
+swift run kokoko-mac         # macOS UI without Xcode
+swift run kokoko-probe       # read-only probe of a connected device
+```
+
+The code is a Swift package: protocol, transport, audio and library modules under `Sources/`, a device simulator, check suites, and the SwiftUI app in `App/Sources`. [docs/protocol.md](docs/protocol.md) describes the wire protocol, and [docs/conformance.md](docs/conformance.md) maps it to the code.
 
 ## License
 
