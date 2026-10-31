@@ -476,12 +476,21 @@ final class AppState: ObservableObject {
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
             }
             progress.update(op, nil)
-            await reload()
+            await reloadSoundsAndProjects()
         } catch {
             progress.update(op, nil)
-            await reload()
-            lastError = "restore: \(error.localizedDescription)"
+            await reloadSoundsAndProjects()
+            lastError = appendingError(lastError, "restore: \(error.localizedDescription)")
         }
+    }
+
+    /// A restore can change both lists. Each reload clears lastError when it
+    /// succeeds, so a projects failure is kept across the sounds reload.
+    private func reloadSoundsAndProjects() async {
+        await loadProjects()
+        let projectsError = lastError
+        await reload()
+        if let projectsError { lastError = appendingError(lastError, projectsError) }
     }
 
     // MARK: - rename
