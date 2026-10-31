@@ -191,10 +191,12 @@ final class AppState: ObservableObject {
             MIDIObjectGetIntegerProperty($0.destination, kMIDIPropertyOffline, &offline)
             return offline == 0
         }
+        var failures: [String] = []
         for pair in pairs {
             do {
                 connection = .connecting(pair.name)
                 let wire = try CoreMIDIWire(pair: pair)
+                // No identity reply: not a sampler, skipped without a failure.
                 guard let reply = try? await identifyDevice(on: wire) else {
                     continue
                 }
@@ -215,10 +217,10 @@ final class AppState: ObservableObject {
                 await reload()
                 return
             } catch {
-                continue
+                failures.append("\(pair.name): \(error.localizedDescription)")
             }
         }
-        connection = .failed("no device found")
+        connection = .failed(failures.isEmpty ? "no device found" : failures.joined(separator: "; "))
     }
 
     /// False when the listing failed, so `sounds` may be stale.

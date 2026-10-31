@@ -158,7 +158,8 @@ struct ContentView: View {
             case .connected(let name, let serial, let os):
                 Text("[ \(name) \(serial) os \(os)\(state.firmwareSuffix) ]").lineLimit(1)
             case .failed(let why):
-                Text("[ !! \(why) ]")
+                Text("[ !! \(why) ]").lineLimit(1)
+                    .help(why)
             }
         }
         .padding()
