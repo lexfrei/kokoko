@@ -108,6 +108,25 @@ public final class VirtualEPDevice: @unchecked Sendable {
         }
     }
 
+    /// Marks both endpoints offline or back online, as a USB device that is
+    /// unplugged but still listed would be.
+    public func setOffline(_ offline: Bool) {
+        let value: Int32 = offline ? 1 : 0
+        MIDIObjectSetIntegerProperty(source, kMIDIPropertyOffline, value)
+        MIDIObjectSetIntegerProperty(destination, kMIDIPropertyOffline, value)
+    }
+
+    /// Removes the device from the system, as an unplug would. The file
+    /// contents stay, and start() publishes the device again.
+    public func stop() {
+        if source != 0 { MIDIEndpointDispose(source) }
+        if destination != 0 { MIDIEndpointDispose(destination) }
+        if client != 0 { MIDIClientDispose(client) }
+        source = 0
+        destination = 0
+        client = 0
+    }
+
     private func handle(_ message: [UInt8]) {
         if message == Identity.requestBytes {
             sendRaw([0xF0, 0x7E, deviceID, 0x06, 0x02, 0x00, 0x20, 0x76,
