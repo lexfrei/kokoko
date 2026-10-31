@@ -99,8 +99,9 @@ public actor DeviceLibrary {
         }
     }
 
-    /// Recreate sounds with original node ids; upload project archives back
-    /// into their slots; reapply project metadata (active selections).
+    /// Recreate sounds in their original slots, or in a device-assigned slot when
+    /// the original is taken; upload project archives back into their slots;
+    /// reapply project metadata (active selections).
     public func restore(_ backup: DeviceBackup,
                         progress: (@Sendable (String) -> Void)? = nil) async throws {
         if !backup.sounds.isEmpty {
