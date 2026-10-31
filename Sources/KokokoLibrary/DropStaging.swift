@@ -37,8 +37,10 @@ public final class DropStaging: @unchecked Sendable {
         }
     }
 
-    public func fail(_ message: String) {
-        lock.withLock { errors.append(message) }
+    /// Records an item that never reached `stage(_:at:)`, under the name
+    /// the user will recognise in the error line.
+    public func fail(name: String, reason: String) {
+        lock.withLock { errors.append("\(name): \(reason)") }
     }
 
     /// Staged copies in drop order.

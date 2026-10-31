@@ -320,11 +320,12 @@ struct ContentView: View {
         let group = DispatchGroup()
         for (index, provider) in providers.enumerated() {
             group.enter()
+            let name = provider.suggestedName ?? "item \(index + 1)"
             load(provider) { url, error in
                 if let url {
                     staging.stage(url, at: index)
                 } else {
-                    staging.fail(error?.localizedDescription ?? "unreadable item")
+                    staging.fail(name: name, reason: error?.localizedDescription ?? "unreadable item")
                 }
                 group.leave()
             }
