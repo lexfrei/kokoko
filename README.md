@@ -11,6 +11,8 @@ Protocol, transport, and audio layers are implemented and covered by runnable ch
 - `Sources/KokokoCore` — wire protocol: 7-bit packing, frame codec, command-5 file messages, events, filename rules, CRC-32.
 - `Sources/KokokoMIDI` — CoreMIDI transport, SysEx request/response session, chunked file service.
 - `Sources/KokokoAudio` — WAV parse/write, resample to the device format (46875 Hz s16) via AVFoundation.
+- `Sources/KokokoLibrary` — batch operations, scoped backup/restore, sound list filtering.
+- `Sources/VirtualEP` — in-memory device simulator over virtual CoreMIDI endpoints.
 - `Sources/KokokoCoreChecks` — self-check suite (no test framework in Command Line Tools).
 - `App/Sources` — SwiftUI app shared by iOS and macOS targets.
 - `docs/protocol.md` — protocol notes from static analysis of the reference tool.
