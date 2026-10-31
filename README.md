@@ -17,7 +17,7 @@ Protocol, transport, and audio layers are implemented and covered by runnable ch
 - `Sources/vep` — standalone virtual device executable.
 - `Sources/kokoko-e2e` — end-to-end protocol loop against the virtual device.
 - `Sources/kokoko-probe` — probe of a connected device: read-only by default, `--write-test` uploads, moves and deletes a test file, and creates and deletes a test directory in `/sounds`.
-- `Sources/kokoko-explore` — exploration of a connected device: the `/projects` tree with metadata, metadata of the first sounds, a one-second audible preview, and an opt-in command scan (`--command-scan`) that sends undocumented commands and may crash the firmware.
+- `Sources/kokoko-explore` — exploration of a connected device: the `/projects` tree with metadata, metadata of the first sounds, a request to play one sound aloud for one second, and an opt-in command scan (`--command-scan`) that sends every command except DFU with an empty payload and may crash the firmware.
 - `App/Sources` — SwiftUI app shared by iOS and macOS targets.
 - `docs/protocol.md` — protocol notes from static analysis of the reference tool.
 

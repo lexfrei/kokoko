@@ -4,8 +4,9 @@ import CoreMIDI
 import KokokoAudio
 import KokokoMIDI
 
-// Read-only probe against real hardware: identify, greet, file init, list.
-// Sends no write commands.
+// Probe of a connected EP device, read-only unless --write-test, which
+// uploads, moves and deletes a test file and creates and deletes a test
+// directory in /sounds.
 
 @MainActor
 @main
@@ -65,7 +66,6 @@ struct Probe {
                         let afterUp = try await files.list(nodeID: sounds.id)
                         let listed = afterUp.first(where: { $0.id == newID })
                         print("  write-test: listed as name=\(listed?.name ?? "?") size=\(listed?.size ?? 0)")
-                        // renumber: MOVE to a fresh slot, verify, move back
                         let nodesNow = try await files.list(nodeID: sounds.id)
                         var free: UInt16 = 900
                         while nodesNow.contains(where: { $0.id == free }) { free += 1 }
