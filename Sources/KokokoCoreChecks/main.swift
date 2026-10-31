@@ -40,6 +40,7 @@ struct KokokoCoreChecks {
         recycleBinChecks()
         fileServiceErrorChecks()
         await pairingChecks()
+        await virtualDeviceChecks()
         do {
             try audioChecks()
         } catch {
