@@ -29,6 +29,7 @@ struct KokokoCoreChecks {
         namesAndCRC()
         await sessionChecks()
         umpChecks()
+        filterChecks()
         do {
             try audioChecks()
         } catch {

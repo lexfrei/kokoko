@@ -44,8 +44,24 @@ enum PendingPicker: Equatable {
 @MainActor
 final class AppState: ObservableObject {
     @Published var connection: ConnectionState = .idle
-    @Published var sounds: [SoundItem] = []
+    @Published var sounds: [SoundItem] = [] {
+        didSet { pruneSelection() }
+    }
     @Published var selection = Set<UInt16>()
+    @Published var filterText = "" {
+        didSet { pruneSelection() }
+    }
+
+    private func pruneSelection() {
+        let pruned = visibleSelection(selection,
+                                      items: sounds.map { (slot: $0.id, name: $0.displayName) },
+                                      query: filterText)
+        if pruned != selection { selection = pruned }
+    }
+
+    var visibleSounds: [SoundItem] {
+        sounds.filter { soundMatches(name: $0.displayName, slot: $0.id, query: filterText) }
+    }
     @Published var progressText: String?
     @Published var lastError: String?
     @Published var showImporter = false
