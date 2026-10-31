@@ -269,14 +269,12 @@ final class AppState: ObservableObject {
                 let prepared = try prepareForUpload(fileData: data, fileName: url.lastPathComponent)
                 let name = normalizedDeviceFileName(url.lastPathComponent)
                 progress.update(op, "send \(name)")
-                let fileID = try await files.put(parentID: root, name: name, data: prepared.pcm) { done, total in
+                _ = try await uploadSound(files: files, parent: root, name: name, pcm: prepared.pcm,
+                                          metadata: prepared.metadata) { done, total in
                     Task { @MainActor in
                         self.progress.update(op, "send \(name) \(done * 100 / max(total, 1))%")
                     }
                 }
-                var meta = prepared.metadata
-                meta["name"] = .string(name)
-                try await files.setMetadata(fileID: fileID, meta)
                 progress.update(op, nil)
             } catch {
                 progress.update(op, nil)

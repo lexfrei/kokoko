@@ -45,6 +45,7 @@ struct KokokoCoreChecks {
         fileServiceErrorChecks()
         await pairingChecks()
         await virtualDeviceChecks()
+        await uploadSoundChecks()
         do {
             try audioChecks()
         } catch {
