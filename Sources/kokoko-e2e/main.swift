@@ -369,6 +369,102 @@ struct E2E {
         let fullBackup = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
         check(!fullBackup.sounds.isEmpty, "backup succeeds once reads are whole")
 
+        // --- backup restore is safe to repeat ---
+        func soundCount() async throws -> Int { try await files.list(nodeID: soundsID).count }
+        func copies(of pcm: [UInt8]) async throws -> Int {
+            var n = 0
+            for node in try await files.list(nodeID: soundsID) where Int(node.size) == pcm.count {
+                if try await files.get(fileID: node.id).data == pcm { n += 1 }
+            }
+            return n
+        }
+        let first = SoundBackup(nodeID: 901, pcm: Array(repeating: 0xE5, count: 300), metadata: ["name": .string("again a")])
+        let second = SoundBackup(nodeID: 902, pcm: Array(repeating: 0xF6, count: 300), metadata: ["name": .string("again b")])
+        let twice = DeviceBackup(deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+                                 sounds: [first, second], projectMetadata: [:])
+        // The upload of the second sound never starts, so the first one is the only thing restored.
+        faulty.failBeforeSend = { $0.payload.starts(with: [FileSub.put, 0]) && $0.payload.count > 4
+            && (UInt16($0.payload[3]) << 8 | UInt16($0.payload[4])) == 902 }
+        check((try? await faultyLibrary.restore(twice)) == nil, "backup restore stops when an upload fails midway")
+        faulty.failBeforeSend = nil
+        try await library.restore(twice)
+        let firstCopies = try await copies(of: first.pcm)
+        let secondCopies = try await copies(of: second.pcm)
+        check(firstCopies == 1 && secondCopies == 1,
+              "retried backup restore does not duplicate what already landed — \(firstCopies), \(secondCopies)")
+
+        try await files.setMetadata(fileID: 901, ["name": .string("stale")])
+        try await library.restore(twice)
+        let renamed = try await files.getMetadata(fileID: 901)["name"]?.stringValue
+        check(renamed == "again a", "repeated backup restore reapplies metadata — got \(renamed ?? "nil")")
+
+        // Twins: same PCM, and the first one lands in the slot that is the second one's original id.
+        let twinProbe = try await files.put(parentID: soundsID, name: "probe", data: [0])
+        try await files.delete(fileID: twinProbe)
+        let twinPCM = Array(repeating: UInt8(0x2A), count: 300)
+        let twinOccupied = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        try await library.restore(DeviceBackup(
+            deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+            sounds: [SoundBackup(nodeID: twinOccupied, pcm: twinPCM, metadata: ["name": .string("twin a")]),
+                     SoundBackup(nodeID: twinProbe + 1, pcm: twinPCM, metadata: ["name": .string("twin b")])],
+            projectMetadata: [:]))
+        let twinCopies = try await copies(of: twinPCM)
+        check(twinCopies == 2, "two backup sounds with identical PCM both land — \(twinCopies)")
+
+        // A backup that lists the same original id twice: the second sound must not
+        // be taken for the first one that this run just put back.
+        let dupSlot = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        let dupPCM = try await files.get(fileID: dupSlot).data
+        let dupBefore = try await copies(of: dupPCM)
+        try await library.restore(DeviceBackup(
+            deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+            sounds: [SoundBackup(nodeID: dupSlot, pcm: dupPCM, metadata: ["name": .string("dup a")]),
+                     SoundBackup(nodeID: dupSlot, pcm: dupPCM, metadata: ["name": .string("dup b")])],
+            projectMetadata: [:]))
+        let dupCopies = try await copies(of: dupPCM)
+        // The first matches the occupant and is skipped; the second needs its own slot.
+        check(dupCopies == dupBefore + 1, "a backup with a repeated sound id keeps both sounds — \(dupBefore) to \(dupCopies)")
+
+        let reads = GetLog()
+        faulty.failBeforeSend = { frame in
+            if frame.payload.starts(with: [FileSub.get, 0]) && frame.payload.count > 3 {
+                reads.record(UInt16(frame.payload[2]) << 8 | UInt16(frame.payload[3]))
+            }
+            return false
+        }
+        let otherSize = SoundBackup(nodeID: 901, pcm: Array(repeating: 0x3B, count: 299), metadata: ["name": .string("other size")])
+        try await faultyLibrary.restore(DeviceBackup(deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+                                                     sounds: [otherSize], projectMetadata: [:]))
+        faulty.failBeforeSend = nil
+        check(!reads.ids.contains(901), "a size mismatch falls back without reading the occupant")
+
+        let snapshot = try await library.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
+        let countBeforeSame = try await soundCount()
+        try await library.restore(snapshot)
+        let countAfterSame = try await soundCount()
+        check(countAfterSame == countBeforeSame,
+              "restoring a backup onto the same sounds adds nothing — \(countBeforeSame) vs \(countAfterSame)")
+
+        let lookalike = SoundBackup(nodeID: 901, pcm: Array(repeating: 0x17, count: 300), metadata: ["name": .string("lookalike")])
+        let countBeforeLook = try await soundCount()
+        try await library.restore(DeviceBackup(deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+                                               sounds: [lookalike], projectMetadata: [:]))
+        let lookCopies = try await copies(of: lookalike.pcm)
+        let countAfterLook = try await soundCount()
+        check(countAfterLook == countBeforeLook + 1 && lookCopies == 1,
+              "a same-size occupant with other bytes is kept and the sound goes elsewhere")
+
+        let countBeforeUnreadable = try await soundCount()
+        faulty.failBeforeSend = { $0.payload.starts(with: [FileSub.get, 0]) && $0.payload.count > 3
+            && (UInt16($0.payload[2]) << 8 | UInt16($0.payload[3])) == 901 }
+        let unreadable = DeviceBackup(deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(),
+                                      sounds: [first], projectMetadata: [:])
+        check((try? await faultyLibrary.restore(unreadable)) != nil, "an unreadable occupant does not abort the restore")
+        faulty.failBeforeSend = nil
+        let countAfterUnreadable = try await soundCount()
+        check(countAfterUnreadable == countBeforeUnreadable + 1,
+              "an unreadable occupant falls back to an assigned slot — \(countBeforeUnreadable) vs \(countAfterUnreadable)")
+
         eventsTask.cancel()
         let seen = await eventsTask.value
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },
@@ -458,4 +554,11 @@ final class FaultyWire: MIDIWire, @unchecked Sendable {
 actor Bystander {
     private(set) var id: UInt16?
     func set(_ id: UInt16?) { self.id = id }
+}
+
+final class GetLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _ids: [UInt16] = []
+    var ids: [UInt16] { lock.withLock { _ids } }
+    func record(_ id: UInt16) { lock.withLock { _ids.append(id) } }
 }
