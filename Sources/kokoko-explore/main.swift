@@ -91,8 +91,10 @@ struct Explore {
                     results.append("\(cmd): ok")
                 } catch SessionError.deviceError(let status, _) {
                     results.append("\(cmd): status=\(status)")
-                } catch {
+                } catch SessionError.timeout {
                     results.append("\(cmd): timeout")
+                } catch {
+                    results.append("\(cmd): error \(error)")
                 }
             }
             for r in results { print("  " + r) }
