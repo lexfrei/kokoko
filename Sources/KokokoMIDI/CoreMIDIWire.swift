@@ -70,8 +70,7 @@ public func forEachWord(in eventList: UnsafePointer<MIDIEventList>,
     }
 }
 
-/// CoreMIDI transport over UMP event lists (protocol MIDI 1.0). The legacy
-/// packet-list API corrupts long SysEx when coalesced by CoreMIDI; UMP carries
+/// CoreMIDI transport over UMP event lists (protocol MIDI 1.0). UMP carries
 /// SysEx7 in 6-byte words with explicit framing, and CoreMIDI translates for
 /// MIDI 1.0 devices automatically.
 public final class CoreMIDIWire: MIDIWire, @unchecked Sendable {
@@ -131,8 +130,8 @@ public final class CoreMIDIWire: MIDIWire, @unchecked Sendable {
 
     public func send(_ bytes: [UInt8]) async throws {
         let words = UMPCodec.encodeSysEx(bytes)
-        // Deliver in event packets of at most 64 words: the inline capacity of
-        // MIDIEventPacket, which CoreMIDI's virtual-endpoint delivery respects.
+        // 64-word lists match MIDIEventPacket's inline capacity. Whether real
+        // devices need the split is unverified; keep it until checked on hardware.
         var offset = 0
         while offset < words.count {
             let group = Array(words[offset..<min(offset + 64, words.count)])
