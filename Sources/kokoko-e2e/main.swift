@@ -294,6 +294,16 @@ struct E2E {
         check(try afterFolder.contains(victim) && afterFolder.contains(folder) && bin.entries().count == binnedBefore,
               "bin delete checks every id before deleting any")
 
+        // --- library path lookup ---
+        do {
+            _ = try await library.resolve("/nope")
+            check(false, "resolve reports a missing path")
+        } catch FileServiceError.pathNotFound(let path) {
+            check(path == "/nope", "resolve reports a missing path — got \(path)")
+        } catch {
+            check(false, "resolve reports a missing path — got \(error)")
+        }
+
         eventsTask.cancel()
         let seen = await eventsTask.value
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },

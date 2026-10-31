@@ -6,6 +6,7 @@ public enum FileServiceError: Error {
     case unexpectedPage(expected: UInt16, got: UInt16)
     case missingResponse
     case metadataParse(String)
+    case pathNotFound(String)
 }
 
 public struct FSNode: Equatable, Sendable, Identifiable {

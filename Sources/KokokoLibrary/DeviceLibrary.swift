@@ -133,7 +133,7 @@ public actor DeviceLibrary {
         for part in path.split(separator: "/") {
             let children = try await files.list(nodeID: current)
             guard let next = children.first(where: { $0.name == String(part) }) else {
-                throw WireError.noDevice
+                throw FileServiceError.pathNotFound(path)
             }
             current = next.id
         }
