@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import KokokoAudio
 import KokokoCore
+import KokokoLibrary
 import KokokoMIDI
 
 struct ContentView: View {
@@ -207,19 +208,13 @@ struct ContentView: View {
             }
         }
         .onDrop(of: [.audio], isTargeted: nil) { providers in
-            var urls: [URL] = []
-            let group = DispatchGroup()
-            for provider in providers {
-                group.enter()
-                _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, _ in
-                    if let url { urls.append(url) }
-                    group.leave()
+            receiveDrop(providers, load: { provider, done in
+                _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, error in
+                    done(url, error)
                 }
-            }
-            group.notify(queue: .main) {
-                Task { await state.upload(urls: urls) }
-            }
-            return true
+            }, then: { urls in
+                await state.upload(urls: urls)
+            })
         }
     }
 
@@ -300,15 +295,51 @@ struct ContentView: View {
             }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { url, _, _ in
-                    if let url {
-                        Task { await state.uploadProject(url: url) }
-                    }
+            receiveDrop(providers, load: { provider, done in
+                _ = provider.loadObject(ofClass: URL.self) { url, error in done(url, error) }
+            }, then: { urls in
+                for url in urls { await state.uploadProject(url: url) }
+            })
+        }
+    }
+
+    /// Copies every dropped file inside its provider callback, then hands the
+    /// copies over in drop order once all callbacks finished, one batch, so
+    /// uploads run sequentially on the single device session.
+    private func receiveDrop(_ providers: [NSItemProvider],
+                             load: (NSItemProvider, @escaping @Sendable (URL?, Error?) -> Void) -> Void,
+                             then handle: @escaping @MainActor ([URL]) async -> Void) -> Bool {
+        let staging: DropStaging
+        do {
+            staging = try DropStaging(count: providers.count)
+        } catch {
+            state.lastError = "drop: \(error.localizedDescription)"
+            return false
+        }
+        let group = DispatchGroup()
+        for (index, provider) in providers.enumerated() {
+            group.enter()
+            load(provider) { url, error in
+                if let url {
+                    staging.stage(url, at: index)
+                } else {
+                    staging.fail(error?.localizedDescription ?? "unreadable item")
+                }
+                group.leave()
+            }
+        }
+        let state = state
+        group.notify(queue: .main) {
+            Task { @MainActor in
+                await handle(staging.urls)
+                staging.discard()
+                // After the handler: its trailing reload clears lastError.
+                if let failure = staging.failures.first {
+                    state.lastError = "drop \(failure)"
                 }
             }
-            return true
         }
+        return true
     }
 
     private func formatSize(_ size: UInt32) -> String {
