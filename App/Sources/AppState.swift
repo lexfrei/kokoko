@@ -51,7 +51,8 @@ final class AppState: ObservableObject {
     @Published var filterText = "" {
         didSet { pruneSelection() }
     }
-    @Published var progressText: String?
+    @Published private(set) var progress = ProgressLine()
+    var progressText: String? { progress.text }
     @Published var lastError: String?
     @Published var showImporter = false
     @Published var exportDocument: DataDocument?
@@ -105,11 +106,11 @@ final class AppState: ObservableObject {
     /// original error. A failed reply does not mean the move did not run,
     /// hence the re-read instead of a blind undo.
     private func runMoves(_ steps: [(from: UInt16, to: UInt16)], files: DeviceFileService,
-                          root: UInt16, progress: Bool = false) async throws {
+                          root: UInt16, op: ProgressLine.Operation? = nil) async throws {
         var done: [(from: UInt16, to: UInt16)] = []
         do {
             for (index, step) in steps.enumerated() {
-                if progress { progressText = "move \(index + 1)/\(steps.count)" }
+                if let op { progress.update(op, "move \(index + 1)/\(steps.count)") }
                 try await move(files, step.from, to: step.to, root: root)
                 done.append(step)
             }
@@ -123,7 +124,7 @@ final class AppState: ObservableObject {
             }
             let undo = rollbackMoves(done, occupied: occupied)
             for (index, step) in undo.enumerated() {
-                if progress { progressText = "undo \(index + 1)/\(undo.count)" }
+                if let op { progress.update(op, "undo \(index + 1)/\(undo.count)") }
                 do {
                     try await move(files, step.from, to: step.to, root: root)
                 } catch {
@@ -216,6 +217,8 @@ final class AppState: ObservableObject {
     // MARK: - upload
 
     func upload(urls: [URL]) async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let files, let root = soundsRootID else { return }
         var failures: [String] = []
         for url in urls {
@@ -223,21 +226,21 @@ final class AppState: ObservableObject {
                 let accessing = url.startAccessingSecurityScopedResource()
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 let data = try Data(contentsOf: url)
-                progressText = "prep \(url.lastPathComponent)"
+                progress.update(op, "prep \(url.lastPathComponent)")
                 let prepared = try prepareForUpload(fileData: data, fileName: url.lastPathComponent)
                 let name = normalizedDeviceFileName(url.lastPathComponent)
-                progressText = "send \(name)"
+                progress.update(op, "send \(name)")
                 let fileID = try await files.put(parentID: root, name: name, data: prepared.pcm) { done, total in
                     Task { @MainActor in
-                        self.progressText = "send \(name) \(done * 100 / max(total, 1))%"
+                        self.progress.update(op, "send \(name) \(done * 100 / max(total, 1))%")
                     }
                 }
                 var meta = prepared.metadata
                 meta["name"] = .string(name)
                 try await files.setMetadata(fileID: fileID, meta)
-                progressText = nil
+                progress.update(op, nil)
             } catch {
-                progressText = nil
+                progress.update(op, nil)
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
         }
@@ -252,41 +255,45 @@ final class AppState: ObservableObject {
     // MARK: - download (single + batch)
 
     func download(_ item: SoundItem) async -> (name: String, wav: [UInt8])? {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let files else { return nil }
         do {
-            progressText = "recv \(item.displayName)"
+            progress.update(op, "recv \(item.displayName)")
             let meta = (try? await files.getMetadata(fileID: item.node.id)) ?? [:]
             let channels = meta["channels"]?.intValue ?? 1
             let rate = meta["samplerate"]?.intValue ?? deviceSampleRate
             let result = try await files.get(fileID: item.node.id) { done, total in
                 Task { @MainActor in
-                    self.progressText = "recv \(item.displayName) \(done * 100 / max(total, 1))%"
+                    self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                 }
             }
-            progressText = nil
+            progress.update(op, nil)
             return (item.displayName + ".wav",
                     makeWAV(pcm: result.data, channels: channels, sampleRate: rate))
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             lastError = "download: \(error.localizedDescription)"
             return nil
         }
     }
 
     func downloadManyToFolder(_ ids: [UInt16], folder: URL) async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let library else { return }
         do {
             let accessing = folder.startAccessingSecurityScopedResource()
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             let wavs = try await library.downloadMany(ids) { [weak self] done, total in
-                Task { @MainActor in self?.progressText = "recv \(done)/\(total)" }
+                Task { @MainActor in self?.progress.update(op, "recv \(done)/\(total)") }
             }
             for wav in wavs {
                 try Data(wav.wav).write(to: folder.appendingPathComponent(wav.name))
             }
-            progressText = nil
+            progress.update(op, nil)
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             lastError = "batch download: \(error.localizedDescription)"
         }
     }
@@ -304,16 +311,18 @@ final class AppState: ObservableObject {
     }
 
     func deleteMany(_ ids: Set<UInt16>) async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let library else { return }
         do {
             try await library.deleteMany(Array(ids)) { [weak self] done, total in
-                Task { @MainActor in self?.progressText = "del \(done)/\(total)" }
+                Task { @MainActor in self?.progress.update(op, "del \(done)/\(total)") }
             }
             selection = []
-            progressText = nil
+            progress.update(op, nil)
             await reload()
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             // A partial failure still changed the device: reload so the list
             // and the selection show what is really there. Its success path
             // clears lastError, so the error is set after it.
@@ -325,42 +334,46 @@ final class AppState: ObservableObject {
     // MARK: - backup / restore
 
     func backupToFolder(_ folder: URL, scope: DeviceLibrary.Scope = .everything) async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let library else { return }
         do {
             let accessing = folder.startAccessingSecurityScopedResource()
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
-            progressText = "backup..."
+            progress.update(op, "backup...")
             let backup = try await library.backup(deviceSKU: deviceMeta.sku,
                                                   osVersion: deviceMeta.osVersion,
                                                   scope: scope) { [weak self] name in
-                Task { @MainActor in self?.progressText = "backup \(name)" }
+                Task { @MainActor in self?.progress.update(op, "backup \(name)") }
             }
             let stamp = ISO8601DateFormatter().string(from: backup.createdAt)
                 .replacingOccurrences(of: ":", with: "-")
             let label = scope == .sounds ? "sounds" : scope == .projects ? "projects" : "all"
             let target = folder.appendingPathComponent("kokoko-backup-\(label)-\(stamp)")
             try BackupStore.write(backup, to: target)
-            progressText = nil
+            progress.update(op, nil)
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             lastError = "backup: \(error.localizedDescription)"
         }
     }
 
     func restoreFromFolder(_ folder: URL) async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let library else { return }
         do {
             let accessing = folder.startAccessingSecurityScopedResource()
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             let backup = try BackupStore.read(from: folder)
-            progressText = "restore..."
+            progress.update(op, "restore...")
             try await library.restore(backup) { [weak self] name in
-                Task { @MainActor in self?.progressText = "restore \(name)" }
+                Task { @MainActor in self?.progress.update(op, "restore \(name)") }
             }
-            progressText = nil
+            progress.update(op, nil)
             await reload()
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             await reload()
             lastError = "restore: \(error.localizedDescription)"
         }
@@ -403,6 +416,8 @@ final class AppState: ObservableObject {
     /// `start`, in slot order; see planBulkMove. The selection stays on the
     /// moved sounds.
     func moveSelection(startingAt start: UInt16) async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
         do {
             let nodes = try await files.list(nodeID: root)
@@ -411,11 +426,11 @@ final class AppState: ObservableObject {
                 lastError = "bulk move: not enough free slots from \(start)"
                 return
             }
-            try await runMoves(plan, files: files, root: root, progress: true)
-            progressText = nil
+            try await runMoves(plan, files: files, root: root, op: op)
+            progress.update(op, nil)
             await reload()
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             await reload()
             lastError = "bulk move: \(error.localizedDescription)"
         }
@@ -457,14 +472,16 @@ final class AppState: ObservableObject {
 
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let files else { return nil }
         do {
-            progressText = "recv P\(project.name)"
+            progress.update(op, "recv P\(project.name)")
             let result = try await files.get(fileID: project.id)
-            progressText = nil
+            progress.update(op, nil)
             return ("P\(project.name).tar", result.data)
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             lastError = "project download: \(error.localizedDescription)"
             return nil
         }
@@ -472,15 +489,17 @@ final class AppState: ObservableObject {
 
     /// Upload .tar project archives; each name carries the target slot (P01..P09).
     func uploadProjects(urls: [URL]) async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let files else { return }
         var failures: [String] = []
         for url in urls {
             do {
-                try await sendProject(url: url, files: files)
+                try await sendProject(url: url, files: files, op: op)
             } catch {
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
-            progressText = nil
+            progress.update(op, nil)
         }
         // After the reload, whose success path clears lastError; appended so
         // a failed reload stays visible too.
@@ -494,7 +513,8 @@ final class AppState: ObservableObject {
         let errorDescription: String?
     }
 
-    private func sendProject(url: URL, files: DeviceFileService) async throws {
+    private func sendProject(url: URL, files: DeviceFileService,
+                             op: ProgressLine.Operation) async throws {
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         guard let match = url.lastPathComponent.range(of: #"P(\d{2})\.tar$"#,
@@ -508,12 +528,12 @@ final class AppState: ObservableObject {
             .first(where: { $0.name == slot }) else {
             throw ProjectUploadError(errorDescription: "no project slot P\(slot) on device")
         }
-        progressText = "send P\(slot)"
+        progress.update(op, "send P\(slot)")
         _ = try await files.put(parentID: projectsRoot, name: slot, data: data,
                                 fileID: parent.id, capabilities: [FileCapability.read],
                                 progress: { [weak self] done, total in
                                     Task { @MainActor in
-                                        self?.progressText = "send P\(slot) \(done * 100 / max(total, 1))%"
+                                        self?.progress.update(op, "send P\(slot) \(done * 100 / max(total, 1))%")
                                     }
                                 },
                                 timeout: .seconds(60))
@@ -522,18 +542,20 @@ final class AppState: ObservableObject {
     // MARK: - settings
 
     func loadSettings() async {
+        let op = progress.begin()
+        defer { progress.end(op) }
         guard let settings else { return }
         do {
-            progressText = "settings..."
+            progress.update(op, "settings...")
             try await settings.initialize()
             let all = try await settings.getAll()
             settingsTree = Self.parseSettingsTree(all)
-            progressText = nil
+            progress.update(op, nil)
         } catch SessionError.deviceError(.commandNotFound, _) {
-            progressText = nil
+            progress.update(op, nil)
             settingsUnsupported = true
         } catch {
-            progressText = nil
+            progress.update(op, nil)
             lastError = "settings: \(error.localizedDescription)"
         }
     }
