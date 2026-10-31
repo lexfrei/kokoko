@@ -24,6 +24,7 @@ public struct PreparedSound: Sendable {
 public enum SoundPrepError: Error {
     case tooLong(Double)
     case unreadable(String)
+    case tooManyChannels(Int)
 }
 
 extension SoundPrepError: LocalizedError {
@@ -34,6 +35,8 @@ extension SoundPrepError: LocalizedError {
             "sound is \(String(format: "%.1f", (seconds * 10).rounded(.up) / 10)) s long, the limit is \(Int(maxSampleSeconds)) s"
         case .unreadable(let detail):
             "cannot read audio: \(detail)"
+        case .tooManyChannels(let count):
+            "sound has \(count) channels, the device takes mono or stereo"
         }
     }
 }
@@ -71,10 +74,15 @@ private func convertWithAVFoundation(url: URL, fileName: String) throws -> Prepa
     guard length <= maxSampleSeconds else { throw SoundPrepError.tooLong(length) }
 
     let channels = Int(sourceFormat.channelCount)
-    let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                     sampleRate: Double(deviceSampleRate),
-                                     channels: AVAudioChannelCount(channels),
-                                     interleaved: true)!
+    // Refused rather than downmixed: a correct downmix depends on the channel layout,
+    // and a wrong one would silently drop content.
+    guard channels <= 2 else { throw SoundPrepError.tooManyChannels(channels) }
+    guard let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
+                                           sampleRate: Double(deviceSampleRate),
+                                           channels: AVAudioChannelCount(channels),
+                                           interleaved: true) else {
+        throw SoundPrepError.unreadable("no device format for \(fileName)")
+    }
     let frameCapacity = AVAudioFrameCount(source.length)
     guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCapacity) else {
         throw SoundPrepError.unreadable(fileName)
