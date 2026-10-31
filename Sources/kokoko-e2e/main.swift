@@ -657,6 +657,23 @@ struct E2E {
         check(typed.allSatisfy { typedBack[$0.key] == $0.value },
               "bool, null and fractional metadata come back unchanged — got \(typed.keys.sorted().map { "\($0)=\(typedBack[$0].map { "\($0)" } ?? "missing")" })")
 
+        // --- metadata that JSON cannot carry is an error, not a crash ---
+        let unwritable: [String: JSONValue] = ["kk.bad": .double(.nan)]
+        do {
+            try await files.setMetadata(fileID: typedID, unwritable)
+            check(false, "unserializable metadata is refused on set")
+        } catch FileServiceError.unserializableMetadata {
+            check(true, "unserializable metadata is refused on set")
+        }
+        let countBeforeBadPut = try await files.list(nodeID: soundsID).count
+        do {
+            _ = try await files.put(parentID: soundsID, name: "bad meta", data: [1, 2], metadata: unwritable)
+            check(false, "unserializable metadata is refused on upload")
+        } catch FileServiceError.unserializableMetadata {
+            let countAfterBadPut = try await files.list(nodeID: soundsID).count
+            check(countAfterBadPut == countBeforeBadPut, "unserializable metadata is refused on upload before anything is sent")
+        }
+
         eventsTask.cancel()
         let seen = await eventsTask.value
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },

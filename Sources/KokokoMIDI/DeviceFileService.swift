@@ -8,6 +8,7 @@ public enum FileServiceError: Error {
     case metadataParse(String)
     case pathNotFound(String)
     case truncated(fileID: UInt16, expected: Int, got: Int)
+    case unserializableMetadata
 }
 
 extension FileServiceError: LocalizedError {
@@ -19,6 +20,7 @@ extension FileServiceError: LocalizedError {
         case .metadataParse(let json): "could not parse metadata: \(json.prefix(200))"
         case .pathNotFound(let path): "path not found on device: \(path)"
         case .truncated(let id, let expected, let got): "node \(id) read \(got) of \(expected) bytes"
+        case .unserializableMetadata: "metadata has a value JSON cannot carry"
         }
     }
 }
@@ -81,6 +83,17 @@ public actor DeviceFileService {
         }
     }
 
+    // JSONSerialization raises an Objective-C exception on NaN or infinity, which Swift
+    // cannot catch, so the object is checked first.
+    private static func json(of metadata: [String: JSONValue]) throws -> String {
+        let object = metadata.mapValues(\.anyValue)
+        guard JSONSerialization.isValidJSONObject(object),
+              let json = String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8) else {
+            throw FileServiceError.unserializableMetadata
+        }
+        return json
+    }
+
     private var maxPayload: Int {
         maxChunkPayloadLength(chunkSize: chunkSize)
     }
@@ -135,9 +148,7 @@ public actor DeviceFileService {
         defer { release() }
         var flags = capabilities.reduce(0) { $0 | $1 }
         flags |= isDirectory ? FileTypeFlag.directory : FileTypeFlag.file
-        let metadataJSON: String? = metadata.flatMap {
-            (try? JSONSerialization.data(withJSONObject: $0.mapValues(\.anyValue))).flatMap { String(data: $0, encoding: .utf8) }
-        }
+        let metadataJSON = try metadata.map(Self.json(of:))
         let initReply = try await call(
             PutInitRequest(fileID: fileID, parentID: parentID, flags: flags,
                            fileSize: UInt32(data.count), filename: name,
@@ -250,8 +261,7 @@ public actor DeviceFileService {
     public func setMetadata(fileID: UInt16, _ metadata: [String: JSONValue]) async throws {
         await acquire()
         defer { release() }
-        let data = try JSONSerialization.data(withJSONObject: metadata.mapValues(\.anyValue))
-        guard let json = String(data: data, encoding: .utf8) else { return }
+        let json = try Self.json(of: metadata)
         if json.utf8.count <= chunkSize - 8 {
             _ = try await call(SetMetadataRequest(fileID: fileID, json: json).bytes)
             return
