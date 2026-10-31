@@ -42,6 +42,7 @@ struct KokokoCoreChecks {
         bulkMoveChecks()
         rollbackChecks()
         recycleBinChecks()
+        jsonValueChecks()
         fileServiceErrorChecks()
         await pairingChecks()
         await virtualDeviceChecks()
