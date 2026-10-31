@@ -358,34 +358,22 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Bulk move: selected sounds land on consecutive slots starting at `start`.
-    /// Everything moves out to temporary ids first, then into place — order is
-    /// preserved and occupied targets never collide.
+    /// Bulk move: selected sounds land on consecutive slots starting at
+    /// `start`, in slot order; see planBulkMove. The selection stays on the
+    /// moved sounds.
     func moveSelection(startingAt start: UInt16) async {
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
         do {
-            let ids = selection.sorted()
             let nodes = try await files.list(nodeID: root)
-            let occupied = Set(nodes.map(\.id))
-            var temp: UInt16 = 65000
-            var tempMap: [(from: UInt16, temp: UInt16)] = []
-            progressText = "move out..."
-            for id in ids {
-                while occupied.contains(temp) { temp &-= 1 }
-                try await move(files, id, to: temp, root: root)
-                tempMap.append((id, temp))
-                temp &-= 1
+            guard let plan = planBulkMove(selected: Array(selection),
+                                          occupied: Set(nodes.map(\.id)), start: start) else {
+                lastError = "bulk move: not enough free slots from \(start)"
+                return
             }
-            var target = start
-            for (index, pair) in tempMap.enumerated() {
-                progressText = "move \(index + 1)/\(tempMap.count)"
-                // Skip slots still held by members of the selection in flight.
-                while occupied.contains(target) && !ids.contains(target) { target &+= 1 }
-                if pair.from == target { continue }
-                try await move(files, pair.temp, to: target, root: root)
-                target &+= 1
+            for (index, step) in plan.enumerated() {
+                progressText = "move \(index + 1)/\(plan.count)"
+                try await move(files, step.from, to: step.to, root: root)
             }
-            selection = []
             progressText = nil
             await reload()
         } catch {
