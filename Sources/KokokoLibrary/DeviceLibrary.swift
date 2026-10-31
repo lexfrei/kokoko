@@ -267,12 +267,25 @@ public actor DeviceLibrary {
     }
 
     /// Put a binned sound back into its original slot, or a device-assigned
-    /// one when that slot is taken. Returns the slot it landed in.
+    /// one when that slot is taken. A slot that already holds the same PCM and
+    /// metadata means the sound is back, so only the entry is dropped; a sound an
+    /// earlier restore put into a device-assigned slot is uploaded again. Returns
+    /// the slot it is in.
     public func restore(_ entry: BinEntry, from bin: RecycleBin) async throws -> UInt16 {
         let sound = try bin.load(entry)
         let soundsRoot = try await resolve("/sounds")
-        let before = Set(try await files.list(nodeID: soundsRoot).map(\.id))
-        let slot: UInt16 = before.contains(sound.nodeID) ? 0 : sound.nodeID
+        var sizes: [UInt16: Int] = [:]
+        for node in try await files.list(nodeID: soundsRoot) {
+            sizes[node.id] = Int(node.size)
+        }
+        // Already back, settings included: an earlier restore could not drop the entry.
+        // With other settings the entry is their only copy, so it is restored normally.
+        if await self.slot(sound.nodeID, sized: sizes, holds: sound.pcm),
+           (try? await files.getMetadata(fileID: sound.nodeID)) == sound.metadata {
+            try? bin.remove(entry)
+            return sound.nodeID
+        }
+        let slot: UInt16 = sizes[sound.nodeID] == nil ? sound.nodeID : 0
         let newID: UInt16
         do {
             newID = try await files.put(parentID: soundsRoot, name: entry.name, data: sound.pcm,
