@@ -20,6 +20,7 @@ Protocol, transport, and audio layers are implemented and covered by runnable ch
 - `Sources/kokoko-explore` — exploration of a connected device: the `/projects` tree with metadata, metadata of the first sounds, a request to play the first file in `/sounds` aloud for one second, if there is one, and an opt-in command scan (`--command-scan`) that sends every command except DFU with an empty payload and may change device state or crash the firmware.
 - `App/Sources` — SwiftUI app shared by iOS and macOS targets.
 - `docs/protocol.md` — protocol notes from static analysis of the reference tool.
+- `docs/conformance.md` — which protocol messages kokoko implements, simulates, tests, and has verified on hardware.
 
 ## Run
 
