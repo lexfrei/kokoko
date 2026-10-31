@@ -76,6 +76,18 @@ extension KokokoCoreChecks {
                 try await files.delete(fileID: fileID)
             }
             vep.refusePutDataFromPage = nil
+
+            vep.refusePutDataFromPage = 1
+            do {
+                _ = try await uploadSound(files: files, parent: soundsRoot, name: "up cut", pcm: pcm,
+                                          metadata: ["channels": .int(1)])
+                check(false, "upload: a put cut short fails the upload")
+            } catch UploadSoundError.putIncomplete(_, _, let removed) {
+                check(removed, "upload: a put cut short removes its partial sound")
+            }
+            vep.refusePutDataFromPage = nil
+            eq(Set(try await files.list(nodeID: soundsRoot).map(\.id)), before,
+               "upload: no partial sound stays on the device")
         } catch {
             check(false, "upload checks threw \(error)")
         }
