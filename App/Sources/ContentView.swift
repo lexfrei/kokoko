@@ -158,8 +158,19 @@ struct ContentView: View {
     }
 
     private var soundList: some View {
+        VStack(spacing: 0) {
+            TextField("filter: name or slot", text: $state.filterText)
+                .textFieldStyle(.plain)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            Divider()
+            soundRows
+        }
+    }
+
+    private var soundRows: some View {
         List(selection: $state.selection) {
-            ForEach(state.sounds) { item in
+            ForEach(state.visibleSounds) { item in
                 HStack {
                     Text(String(format: "%03d", item.node.id))
                         .foregroundStyle(.secondary)
