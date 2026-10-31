@@ -36,6 +36,7 @@ struct KokokoCoreChecks {
         selectionChecks()
         bulkMoveChecks()
         recycleBinChecks()
+        fileServiceErrorChecks()
         await pairingChecks()
         do {
             try audioChecks()
