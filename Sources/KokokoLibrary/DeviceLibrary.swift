@@ -8,6 +8,12 @@ public struct SoundBackup: Sendable {
     public var nodeID: UInt16
     public var pcm: [UInt8]
     public var metadata: [String: JSONValue]
+
+    public init(nodeID: UInt16, pcm: [UInt8], metadata: [String: JSONValue]) {
+        self.nodeID = nodeID
+        self.pcm = pcm
+        self.metadata = metadata
+    }
 }
 
 /// Whole-device state: manifest + sounds + project tree metadata.
@@ -151,12 +157,77 @@ public actor DeviceLibrary {
         return out
     }
 
-    public func deleteMany(_ ids: [UInt16],
+    /// With a bin, each sound is copied into it before the device delete; a
+    /// sound whose copy is not byte-complete is not deleted. After a failed
+    /// delete the copy is kept unless the sound is still listed on the device.
+    public func deleteMany(_ ids: [UInt16], into bin: RecycleBin? = nil,
                            progress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
+        var sizes: [UInt16: UInt32] = [:]
+        if bin != nil {
+            for node in try await files.list(nodeID: try await resolve("/sounds")) where node.isFile {
+                sizes[node.id] = node.size
+            }
+            if let stray = ids.first(where: { sizes[$0] == nil }) {
+                throw RecycleBinError.notASound(stray)
+            }
+        }
         for (index, id) in ids.enumerated() {
             progress?(index, ids.count)
-            try await files.delete(fileID: id)
+            guard let bin else {
+                try await files.delete(fileID: id)
+                continue
+            }
+            guard let size = sizes[id] else { throw RecycleBinError.notASound(id) }
+            let pcm = try await files.get(fileID: id).data
+            guard pcm.count == Int(size) else {
+                throw RecycleBinError.incompleteCopy(slot: id, expected: Int(size), got: pcm.count)
+            }
+            let metadata = try await files.getMetadata(fileID: id)
+            let entry = try bin.add(SoundBackup(nodeID: id, pcm: pcm, metadata: metadata))
+            do {
+                try await files.delete(fileID: id)
+            } catch {
+                // A sound still listed was not deleted; its copy would restore as a duplicate.
+                if let left = try? await files.list(nodeID: try await resolve("/sounds")),
+                   left.contains(where: { $0.id == id }) {
+                    try? bin.remove(entry)
+                }
+                throw error
+            }
         }
+    }
+
+    /// Put a binned sound back into its original slot, or a device-assigned
+    /// one when that slot is taken. Returns the slot it landed in.
+    public func restore(_ entry: BinEntry, from bin: RecycleBin) async throws -> UInt16 {
+        let sound = try bin.load(entry)
+        let soundsRoot = try await resolve("/sounds")
+        let before = Set(try await files.list(nodeID: soundsRoot).map(\.id))
+        let slot: UInt16 = before.contains(sound.nodeID) ? 0 : sound.nodeID
+        let newID: UInt16
+        do {
+            newID = try await files.put(parentID: soundsRoot, name: entry.name, data: sound.pcm,
+                                        fileID: slot)
+        } catch {
+            guard slot != 0 else {
+                throw RecycleBinError.partialSoundMayRemain(underlying: String(describing: error))
+            }
+            // Without this a retry finds the original slot taken by the partial copy.
+            if let after = try? await files.list(nodeID: soundsRoot),
+               after.contains(where: { $0.id == slot }) {
+                try? await files.delete(fileID: slot)
+            }
+            throw error
+        }
+        do {
+            try await files.setMetadata(fileID: newID, sound.metadata)
+        } catch {
+            try? await files.delete(fileID: newID)
+            throw error
+        }
+        // The sound is back; a stale entry is better than reporting a failure.
+        try? bin.remove(entry)
+        return newID
     }
 }
 
