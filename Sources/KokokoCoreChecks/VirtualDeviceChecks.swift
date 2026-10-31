@@ -45,11 +45,62 @@ extension KokokoCoreChecks {
             await rejectsMissingNode("vep: info of a missing node answers status 16") {
                 _ = try await files.info(fileID: missing)
             }
+            await rejectsMissingNode("vep: metadata get of a missing node answers status 16") {
+                _ = try await files.getMetadata(fileID: missing)
+            }
+            await rejectsMissingNode("vep: metadata set of a missing node answers status 16") {
+                try await files.setMetadata(fileID: missing, ["name": .string("x")])
+            }
+            await rejectsMissingNode("vep: paged metadata set of a missing node answers status 16") {
+                try await files.setMetadata(fileID: missing, ["name": .string(String(repeating: "x", count: 200))])
+            }
+            await rejectsMissingNode("vep: playback of a missing node answers status 16") {
+                try await files.startPlayback(fileID: missing)
+            }
+
+            let root = try await files.list(nodeID: 0)
+            guard let sounds = root.first(where: { $0.name == "sounds" }),
+                  let sound = try await files.list(nodeID: sounds.id).first else {
+                check(false, "vep: seeded /sounds with a sound")
+                return
+            }
+            await rejectsMissingNode("vep: move into a missing parent answers status 16") {
+                try await files.move(fileID: sound.id, toParent: missing)
+            }
+            await rejectsMissingNode("vep: delete of the root answers status 16") {
+                try await files.delete(fileID: 0)
+            }
+            await rejectsMissingNode("vep: delete of a non-empty directory answers status 16") {
+                try await files.delete(fileID: sounds.id)
+            }
+            let soundsAfter = try await files.list(nodeID: sounds.id)
+            check(soundsAfter.contains { $0.id == sound.id }, "vep: refused operations leave the sound in place")
+
+            func accepts(_ label: String, _ operation: () async throws -> Void) async {
+                do {
+                    try await operation()
+                    check(true, label)
+                } catch {
+                    check(false, "\(label) — threw \(error)")
+                }
+            }
+            await accepts("vep: playback of a known node is accepted") {
+                try await files.startPlayback(fileID: sound.id)
+            }
+            await accepts("vep: move into an existing parent is accepted") {
+                try await files.move(fileID: sound.id, toParent: sounds.id)
+            }
+            await accepts("vep: delete of an empty directory is accepted") {
+                let empty = try await files.put(parentID: sounds.id, name: "empty", data: [], isDirectory: true)
+                try await files.delete(fileID: empty)
+            }
 
             try await Task.sleep(for: .milliseconds(200))
             events.cancel()
             let seen = await events.value
             check(!seen.contains(.deleted(nodeID: missing)), "vep: no delete event for a missing node")
+            check(!seen.contains(.deleted(nodeID: 0)) && !seen.contains(.deleted(nodeID: sounds.id)),
+                  "vep: no delete event for a refused delete")
         } catch {
             check(false, "vep checks threw \(error)")
         }
