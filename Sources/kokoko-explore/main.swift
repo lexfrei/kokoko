@@ -3,9 +3,9 @@ import Foundation
 import KokokoCore
 import KokokoMIDI
 
-// Read-mostly exploration of a connected EP device: tree walk, metadata
-// dumps, and a command-surface scan.
-// Skips command 3 (DFU) entirely. May play one 1-second preview aloud.
+// Exploration of a connected EP device; asks it to play one sound aloud.
+// --command-scan sends every command except DFU with an empty payload and
+// may change device state or crash the firmware.
 
 @MainActor
 @main
@@ -35,7 +35,6 @@ struct Explore {
             return
         }
 
-        // --- full tree with metadata ---
         func resolve(_ path: String) async throws -> UInt16 {
             var current: UInt16 = 0
             for part in path.split(separator: "/") {
