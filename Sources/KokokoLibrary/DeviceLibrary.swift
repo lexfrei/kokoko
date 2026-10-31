@@ -8,6 +8,12 @@ public struct SoundBackup: Sendable {
     public var nodeID: UInt16
     public var pcm: [UInt8]
     public var metadata: [String: JSONValue]
+
+    public init(nodeID: UInt16, pcm: [UInt8], metadata: [String: JSONValue]) {
+        self.nodeID = nodeID
+        self.pcm = pcm
+        self.metadata = metadata
+    }
 }
 
 /// Whole-device state: manifest + sounds + project tree metadata.
