@@ -62,9 +62,13 @@ public actor DeviceLibrary {
             let soundsRoot = try await resolve("/sounds")
             for node in try await files.list(nodeID: soundsRoot) where node.isFile {
                 progress?(node.name)
-                let data = try await files.get(fileID: node.id)
+                // get stops at the first empty page, so a short read is not an error by itself.
+                let pcm = try await files.get(fileID: node.id).data
+                guard pcm.count == Int(node.size) else {
+                    throw FileServiceError.truncated(fileID: node.id, expected: Int(node.size), got: pcm.count)
+                }
                 let meta = (try? await files.getMetadata(fileID: node.id)) ?? [:]
-                backups.append(SoundBackup(nodeID: node.id, pcm: data.data, metadata: meta))
+                backups.append(SoundBackup(nodeID: node.id, pcm: pcm, metadata: meta))
             }
         }
 
@@ -95,16 +99,35 @@ public actor DeviceLibrary {
         }
     }
 
-    /// Recreate sounds with original node ids; upload project archives back
-    /// into their slots; reapply project metadata (active selections).
+    /// Recreate sounds in their original slots, or in a device-assigned slot when
+    /// the original holds a different sound or cannot be read back. A sound whose
+    /// original slot already holds the same PCM only gets its metadata reapplied,
+    /// so repeating a restore does not upload it again; a sound that went to a
+    /// device-assigned slot is uploaded again on every repeat.
+    /// Upload project archives back into their slots; reapply project metadata
+    /// (active selections).
     public func restore(_ backup: DeviceBackup,
                         progress: (@Sendable (String) -> Void)? = nil) async throws {
         if !backup.sounds.isEmpty {
             let soundsRoot = try await resolve("/sounds")
-            var existing = Set(try await files.list(nodeID: soundsRoot).map(\.id))
+            // Sizes in bytes of what was on the device before this restore started.
+            var listed: [UInt16: Int] = [:]
+            for node in try await files.list(nodeID: soundsRoot) {
+                listed[node.id] = Int(node.size)
+            }
+            // Only slots from the initial listing are candidates for "already there":
+            // a slot this run filled holds another backup sound, even with equal PCM.
+            var placed: Set<UInt16> = []
             for sound in backup.sounds {
                 progress?(sound.metadata["name"]?.stringValue ?? "node \(sound.nodeID)")
-                let targetID = existing.contains(sound.nodeID) ? 0 : sound.nodeID
+                if !placed.contains(sound.nodeID), await slot(sound.nodeID, sized: listed, holds: sound.pcm) {
+                    // Already there, e.g. from an interrupted earlier restore.
+                    try await files.setMetadata(fileID: sound.nodeID, sound.metadata)
+                    placed.insert(sound.nodeID)
+                    continue
+                }
+                let taken = listed[sound.nodeID] != nil || placed.contains(sound.nodeID)
+                let targetID = taken ? 0 : sound.nodeID
                 let newID: UInt16
                 do {
                     newID = try await files.put(parentID: soundsRoot,
@@ -118,7 +141,7 @@ public actor DeviceLibrary {
                 }
                 // An assigned slot may equal a later sound's original id; without this
                 // that sound is put explicitly into the occupied slot over this one.
-                existing.insert(newID)
+                placed.insert(newID)
                 do {
                     try await files.setMetadata(fileID: newID, sound.metadata)
                 } catch {
@@ -141,6 +164,13 @@ public actor DeviceLibrary {
                 try? await files.setMetadata(fileID: nodeID, meta)
             }
         }
+    }
+
+    /// Byte-identical PCM counts as the same sound. A read failure means "not
+    /// the same": the caller falls back to an assigned slot instead of aborting.
+    private func slot(_ id: UInt16, sized sizes: [UInt16: Int], holds pcm: [UInt8]) async -> Bool {
+        guard sizes[id] == pcm.count else { return false }
+        return (try? await files.get(fileID: id).data) == pcm
     }
 
     private func removeIfListed(_ id: UInt16, in parent: UInt16) async {

@@ -7,6 +7,20 @@ public enum FileServiceError: Error {
     case missingResponse
     case metadataParse(String)
     case pathNotFound(String)
+    case truncated(fileID: UInt16, expected: Int, got: Int)
+}
+
+extension FileServiceError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .notInitialized: "file service is not initialized"
+        case .unexpectedPage(let expected, let got): "device sent page \(got), expected \(expected)"
+        case .missingResponse: "device sent no usable response"
+        case .metadataParse(let json): "could not parse metadata: \(json.prefix(200))"
+        case .pathNotFound(let path): "path not found on device: \(path)"
+        case .truncated(let id, let expected, let got): "node \(id) read \(got) of \(expected) bytes"
+        }
+    }
 }
 
 public struct FSNode: Equatable, Sendable, Identifiable {
