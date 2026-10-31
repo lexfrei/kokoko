@@ -10,6 +10,7 @@ struct ContentView: View {
     // need Xcode's SwiftUIMacros plugin; this stays typecheckable with CLT.
     @ObservedObject var state: AppState
     @State private var renumberText = ""
+    @State private var binToRemove: BinEntry?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -71,6 +72,28 @@ struct ContentView: View {
             }
             Button("cancel", role: .cancel) {}
         }
+        .confirmationDialog("delete failed", isPresented: unbinnedDeleteBinding,
+                            presenting: state.unbinnedDelete) { pending in
+            Button("delete without keeping a copy", role: .destructive) {
+                Task { await state.deleteWithoutBin(pending.ids) }
+            }
+            Button("cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.prompt)
+        }
+        .confirmationDialog("remove from bin for good?", isPresented: binRemoveBinding,
+                            presenting: binToRemove) { entry in
+            Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
+            Button("cancel", role: .cancel) {}
+        }
+    }
+
+    private var unbinnedDeleteBinding: Binding<Bool> {
+        Binding(get: { state.unbinnedDelete != nil }, set: { if !$0 { state.unbinnedDelete = nil } })
+    }
+
+    private var binRemoveBinding: Binding<Bool> {
+        Binding(get: { binToRemove != nil }, set: { if !$0 { binToRemove = nil } })
     }
 
     private var renameBinding: Binding<Bool> {
@@ -115,6 +138,12 @@ struct ContentView: View {
                 Button("[ settings ]") { state.view = .settings }
                     .buttonStyle(.plain)
                     .foregroundStyle(state.view == .settings ? .primary : .secondary)
+                Button("[ bin ]") {
+                    state.view = .bin
+                    state.loadBin()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(state.view == .bin ? .primary : .secondary)
             }
             Spacer()
             switch state.connection {
@@ -141,6 +170,8 @@ struct ContentView: View {
                     projectList
                 } else if state.view == .settings {
                     SettingsView(state: state)
+                } else if state.view == .bin {
+                    binList
                 } else {
                     soundList
                 }
@@ -200,6 +231,7 @@ struct ContentView: View {
                         .help("change slot number")
                     Button("[x]") { Task { await state.delete(item) } }
                         .buttonStyle(.plain)
+                        .disabled(state.binBusy)
                         .help("delete from device")
                 }
                 .tag(item.id)
@@ -245,6 +277,7 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                     Button("[ x ]") { Task { await state.deleteMany(state.selection) } }
                         .buttonStyle(.plain)
+                        .disabled(state.binBusy)
                 }
                 if state.view == .sounds {
                     Button("[ + add sounds ]") { state.showImporter = true }
@@ -273,6 +306,33 @@ struct ContentView: View {
             }
         }
         .padding()
+    }
+
+    private var binList: some View {
+        Group {
+            if state.binEntries.isEmpty {
+                Text("bin is empty")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(state.binEntries) { entry in
+                        HStack {
+                            Text(binRowLabel(slot: entry.originalSlot, name: entry.name,
+                                             deletedAt: entry.deletedAt))
+                            Spacer()
+                            Button("[restore]") { Task { await state.restoreFromBin(entry) } }
+                                .buttonStyle(.plain)
+                                .disabled(state.binBusy)
+                                .help("put back on the device")
+                            Button("[x]") { binToRemove = entry }
+                                .buttonStyle(.plain)
+                                .disabled(state.binBusy)
+                                .help("remove from the bin for good")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var projectList: some View {

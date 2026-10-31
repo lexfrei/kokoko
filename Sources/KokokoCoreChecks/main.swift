@@ -35,6 +35,8 @@ struct KokokoCoreChecks {
         filterChecks()
         dropChecks()
         progressChecks()
+        binListChecks()
+        binFallbackChecks()
         batchErrorChecks()
         selectionChecks()
         bulkMoveChecks()

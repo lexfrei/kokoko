@@ -19,6 +19,7 @@ enum AppView {
     case sounds
     case projects
     case settings
+    case bin
 }
 
 struct ProjectItem: Identifiable, Equatable {
@@ -78,6 +79,13 @@ final class AppState: ObservableObject {
     @Published var settingsUnsupported = false
     @Published var view: AppView = .sounds
     @Published var projects: [ProjectItem] = []
+    @Published var binEntries: [BinEntry] = []
+    /// True while a delete or a bin restore runs. Transfers on the wire are
+    /// not serialized, and two interleaved reads or writes corrupt each
+    /// other, so these run one at a time.
+    @Published private(set) var binBusy = false
+    /// The sound a delete into the bin failed on, offered for a delete without a copy.
+    @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String)?
     @Published var bulkMoveStart = ""
 
     var visibleSounds: [SoundItem] {
@@ -135,6 +143,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Last copies of deleted sounds, kept outside the device.
+    let bin = RecycleBin(root: FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("kokoko/recycle-bin", isDirectory: true))
+
     private var session: SysExSession?
     private var files: DeviceFileService?
     private var library: DeviceLibrary?
@@ -181,8 +194,10 @@ final class AppState: ObservableObject {
         connection = .failed("no device found")
     }
 
-    func reload() async {
-        guard let files else { return }
+    /// False when the listing failed, so `sounds` may be stale.
+    @discardableResult
+    func reload() async -> Bool {
+        guard let files else { return false }
         do {
             let root = try await resolve("/sounds")
             soundsRootID = root
@@ -195,8 +210,10 @@ final class AppState: ObservableObject {
             }
             sounds = items
             lastError = nil
+            return true
         } catch {
             lastError = "list failed: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -292,24 +309,30 @@ final class AppState: ObservableObject {
     // MARK: - delete
 
     func delete(_ item: SoundItem) async {
-        guard let files else { return }
-        do {
-            try await files.delete(fileID: item.node.id)
-            await reload()
-        } catch {
-            lastError = "delete: \(error.localizedDescription)"
-        }
+        await deleteIntoBin([item.node.id], label: "delete")
     }
 
     func deleteMany(_ ids: Set<UInt16>) async {
+        // The reload afterwards prunes deleted slots from the selection.
+        await deleteIntoBin(ids, label: "batch delete")
+    }
+
+    /// When a delete fails, the sound it stopped on is offered for a delete
+    /// without a bin copy: a sound the device cannot read back would
+    /// otherwise be impossible to delete from the app.
+    private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
+        guard let library, !binBusy else { return }
+        binBusy = true
+        defer { binBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let library else { return }
+        let ordered = Array(ids)
+        let started = StartedIndex()
         do {
-            try await library.deleteMany(Array(ids)) { [weak self] done, total in
-                Task { @MainActor in self?.progress.update(op, "del \(done)/\(total)") }
+            try await library.deleteMany(ordered, into: bin) { [weak self] done, total in
+                started.set(done)
+                Task { @MainActor in self?.progress.update(op, "bin \(done + 1)/\(total)") }
             }
-            selection = []
             progress.update(op, nil)
             await reload()
         } catch {
@@ -317,9 +340,66 @@ final class AppState: ObservableObject {
             // A partial failure still changed the device: reload so the list
             // and the selection show what is really there. Its success path
             // clears lastError, so the error is set after it.
-            await reload()
-            lastError = "batch delete: \(error.localizedDescription)"
+            let listed = await reload() ? Set(sounds.map(\.id)) : []
+            lastError = appendingError(lastError, "\(label): \(error.localizedDescription)")
+            let offer = binFallbackCandidates(ids: ordered, lastStarted: started.current,
+                                              error: error, listed: listed)
+            if let slot = offer.first {
+                let name = sounds.first(where: { $0.id == slot })?.displayName ?? "sound \(slot)"
+                unbinnedDelete = (offer, binFallbackPrompt(slot: slot, name: name,
+                                                           reason: error.localizedDescription))
+            }
         }
+    }
+
+    func deleteWithoutBin(_ ids: Set<UInt16>) async {
+        guard let library, !binBusy else { return }
+        binBusy = true
+        defer { binBusy = false }
+        let op = progress.begin("delete without copy")
+        defer { progress.end(op) }
+        do {
+            try await library.deleteMany(Array(ids))
+            await reload()
+        } catch {
+            await reload()
+            lastError = appendingError(lastError, "delete: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - recycle bin
+
+    func loadBin() {
+        do {
+            binEntries = try bin.entries()
+        } catch {
+            lastError = "bin: \(error.localizedDescription)"
+        }
+    }
+
+    func restoreFromBin(_ entry: BinEntry) async {
+        guard let library, !binBusy else { return }
+        binBusy = true
+        defer { binBusy = false }
+        let op = progress.begin("restore \(entry.name)")
+        defer { progress.end(op) }
+        do {
+            _ = try await library.restore(entry, from: bin)
+            await reload()
+        } catch {
+            await reload()
+            lastError = appendingError(lastError, "restore \(entry.name): \(error.localizedDescription)")
+        }
+        loadBin()
+    }
+
+    func removeFromBin(_ entry: BinEntry) {
+        do {
+            try bin.remove(entry)
+        } catch {
+            lastError = "bin: \(error.localizedDescription)"
+        }
+        loadBin()
     }
 
     // MARK: - backup / restore
@@ -629,4 +709,15 @@ final class AppState: ObservableObject {
         }
         return provider
     }
+}
+
+/// The index a batch call reported last, written from the library's actor
+/// and read back on the main actor once the call threw.
+private final class StartedIndex: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int?
+
+    func set(_ index: Int) { lock.withLock { value = index } }
+
+    var current: Int? { lock.withLock { value } }
 }
