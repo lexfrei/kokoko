@@ -48,6 +48,7 @@ struct ContentView: View {
             state.exportDocument = nil
         }
         .task {
+            state.watchDevices()
             if case .idle = state.connection {
                 await state.scan()
             }
@@ -75,7 +76,7 @@ struct ContentView: View {
         .confirmationDialog("delete failed", isPresented: unbinnedDeleteBinding,
                             presenting: state.unbinnedDelete) { pending in
             Button("delete without keeping a copy", role: .destructive) {
-                Task { await state.deleteWithoutBin(pending.ids) }
+                Task { await state.deleteWithoutBin(pending.ids, generation: pending.generation) }
             }
             Button("cancel", role: .cancel) {}
         } message: { pending in

@@ -84,9 +84,11 @@ final class AppState: ObservableObject {
     /// are not serialized, and pages from two interleaved operations corrupt
     /// each other, so every such action runs one at a time; the UI disables
     /// its device controls while this is set.
-    @Published private(set) var deviceBusy = false
+    @Published private(set) var deviceBusy = false {
+        didSet { if !deviceBusy { rescanIfDue() } }
+    }
     /// The sound a delete into the bin failed on, offered for a delete without a copy.
-    @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String)?
+    @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String, generation: Int)?
     @Published var bulkMoveStart = ""
 
     var visibleSounds: [SoundItem] {
@@ -150,6 +152,9 @@ final class AppState: ObservableObject {
         .appendingPathComponent("kokoko/recycle-bin", isDirectory: true))
 
     private var session: SysExSession?
+    private var hotplug = HotplugPolicy(debounce: 1)
+    private var hotplugWatcher: HotplugWatcher?
+    private var connectedPair: MIDIEndpointPair?
     private var files: DeviceFileService?
     private var library: DeviceLibrary?
     private var settings: SettingsService?
@@ -180,9 +185,72 @@ final class AppState: ObservableObject {
         await loadProjects()
     }
 
+    /// Starts following MIDI devices coming and going. If that fails, only
+    /// the retry button rescans.
+    func watchDevices() {
+        guard hotplugWatcher == nil else { return }
+        do {
+            hotplugWatcher = try HotplugWatcher { [weak self] in
+                Task { @MainActor in self?.devicesChanged() }
+            }
+        } catch {
+            lastError = "device watch: \(error.localizedDescription)"
+        }
+    }
+
+    // The debounce sleeps on ContinuousClock, so the policy reads the same clock.
+    private let clockStart = ContinuousClock.now
+    private var clockSeconds: Double {
+        let elapsed = (ContinuousClock.now - clockStart).components
+        return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+    }
+
+    private func devicesChanged() {
+        let online = connectedPair.map(pairIsOnline) ?? false
+        if hotplug.changed(now: clockSeconds, pairOnline: online) == .disconnect {
+            let reason = connectedPair.map { "\($0.name) disconnected" } ?? "device disconnected"
+            forgetDevice()
+            connection = .failed(reason)
+            lastError = appendingError(lastError, reason)
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(hotplug.debounce))
+            rescanIfDue()
+        }
+    }
+
+    private func forgetDevice() {
+        connectedPair = nil
+        session = nil
+        files = nil
+        library = nil
+        settings = nil
+        soundsRootID = nil
+        sounds = []
+        projects = []
+        selection = []
+        unbinnedDelete = nil
+        renameItem = nil
+        renumberItem = nil
+        picker = .none
+        firmwareNote = nil
+        settingsTree = []
+        settingsUnsupported = false
+    }
+
+    private func rescanIfDue() {
+        // Checked inside the task: scan() claims the device before its first
+        // await, so nothing can take the device between the check and the scan.
+        Task {
+            guard hotplug.takeRescan(now: clockSeconds, busy: deviceBusy) else { return }
+            await scan()
+        }
+    }
+
     func scan() async {
         guard enterDevice() else { return }
         defer { deviceBusy = false }
+        let token = hotplug.currentGeneration()
         connection = .scanning
         // Offline entries are cached ghosts of unplugged devices; they can
         // never answer and each would burn the full identity timeout.
@@ -204,6 +272,9 @@ final class AppState: ObservableObject {
                 let meta = try await session.greet()
                 let service = DeviceFileService(session: session)
                 try await service.initialize()
+                guard pairIsOnline(pair) else { continue }
+                guard hotplug.commitConnection(token: token) else { break }
+                connectedPair = pair
                 self.session = session
                 self.files = service
                 self.library = DeviceLibrary(files: service)
@@ -213,7 +284,7 @@ final class AppState: ObservableObject {
                                         serial: meta.serial,
                                         osVersion: meta.osVersion)
                 Task { await self.checkFirmware(baseSKU: meta.baseSKU.isEmpty ? meta.sku : meta.baseSKU,
-                                                current: meta.osVersion) }
+                                                current: meta.osVersion, token: token) }
                 await reload()
                 return
             } catch {
@@ -227,9 +298,12 @@ final class AppState: ObservableObject {
     @discardableResult
     func reload() async -> Bool {
         guard let files else { return false }
+        // A disconnect while listing makes the result belong to a device that left.
+        let token = hotplug.currentGeneration()
         do {
             let root = try await resolve("/sounds")
-            soundsRootID = root
+            // Uploads need the root even when the listing below fails.
+            if hotplug.isCurrent(token) { soundsRootID = root }
             let nodes = try await files.list(nodeID: root)
             var items: [SoundItem] = []
             for node in nodes where node.isFile {
@@ -237,11 +311,12 @@ final class AppState: ObservableObject {
                 let display = meta?["name"]?.stringValue ?? node.name
                 items.append(SoundItem(node: node, displayName: display))
             }
+            guard hotplug.isCurrent(token) else { return false }
             sounds = items
             lastError = nil
             return true
         } catch {
-            lastError = "list failed: \(error.localizedDescription)"
+            if hotplug.isCurrent(token) { lastError = "list failed: \(error.localizedDescription)" }
             return false
         }
     }
@@ -360,6 +435,7 @@ final class AppState: ObservableObject {
         defer { progress.end(op) }
         let ordered = Array(ids)
         let started = StartedIndex()
+        let token = hotplug.currentGeneration()
         do {
             try await library.deleteMany(ordered, into: bin) { [weak self] done, total in
                 started.set(done)
@@ -376,15 +452,21 @@ final class AppState: ObservableObject {
             lastError = appendingError(lastError, "\(label): \(error.localizedDescription)")
             let offer = binFallbackCandidates(ids: ordered, lastStarted: started.current,
                                               error: error, listed: listed)
-            if let slot = offer.first {
+            if let slot = offer.first, hotplug.isCurrent(token) {
                 let name = sounds.first(where: { $0.id == slot })?.displayName ?? "sound \(slot)"
                 unbinnedDelete = (offer, binFallbackPrompt(slot: slot, name: name,
-                                                           reason: error.localizedDescription))
+                                                           reason: error.localizedDescription), token)
             }
         }
     }
 
-    func deleteWithoutBin(_ ids: Set<UInt16>) async {
+    /// `generation` is the device the offer was made for; a later device
+    /// gets nothing deleted, since the same slot number names another sound.
+    func deleteWithoutBin(_ ids: Set<UInt16>, generation: Int) async {
+        guard hotplug.isCurrent(generation) else {
+            lastError = "the device changed, nothing was deleted"
+            return
+        }
         guard let library, enterDevice() else { return }
         defer { deviceBusy = false }
         let op = progress.begin("delete without copy")
@@ -582,13 +664,15 @@ final class AppState: ObservableObject {
 
     func loadProjects() async {
         guard let files else { return }
+        let token = hotplug.currentGeneration()
         do {
             let root = try await resolve("/projects")
             let nodes = try await files.list(nodeID: root)
+            guard hotplug.isCurrent(token) else { return }
             projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
             lastError = nil
         } catch {
-            lastError = "projects: \(error.localizedDescription)"
+            if hotplug.isCurrent(token) { lastError = "projects: \(error.localizedDescription)" }
         }
     }
 
@@ -673,18 +757,19 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let settings else { return }
+        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "settings...")
             try await settings.initialize()
             let all = try await settings.getAll()
-            settingsTree = Self.parseSettingsTree(all)
+            if hotplug.isCurrent(token) { settingsTree = Self.parseSettingsTree(all) }
             progress.update(op, nil)
         } catch SessionError.deviceError(.commandNotFound, _) {
             progress.update(op, nil)
-            settingsUnsupported = true
+            if hotplug.isCurrent(token) { settingsUnsupported = true }
         } catch {
             progress.update(op, nil)
-            lastError = "settings: \(error.localizedDescription)"
+            if hotplug.isCurrent(token) { lastError = "settings: \(error.localizedDescription)" }
         }
     }
 
@@ -713,7 +798,7 @@ final class AppState: ObservableObject {
     // MARK: - firmware
 
     /// Compare device os_version against the latest published release.
-    func checkFirmware(baseSKU: String, current: String) async {
+    func checkFirmware(baseSKU: String, current: String, token: Int) async {
         struct Release: Decodable { let sku: String; let version: String }
         struct Registry: Decodable { let devices: [Release] }
         do {
@@ -722,9 +807,10 @@ final class AppState: ObservableObject {
             let registry = try JSONDecoder().decode(Registry.self, from: data)
             guard let latest = registry.devices.first(where: { $0.sku == baseSKU }) else { return }
             let latestVersion = latest.version.split(separator: "+").first.map(String.init) ?? latest.version
+            guard hotplug.isCurrent(token) else { return }
             firmwareNote = current == latestVersion ? "fw \(current) ✓" : "fw \(current) → \(latestVersion)"
         } catch {
-            firmwareNote = nil
+            if hotplug.isCurrent(token) { firmwareNote = nil }
         }
     }
 
