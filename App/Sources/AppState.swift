@@ -182,6 +182,7 @@ final class AppState: ObservableObject {
 
     func upload(urls: [URL]) async {
         guard let files, let root = soundsRootID else { return }
+        var failures: [String] = []
         for url in urls {
             do {
                 let accessing = url.startAccessingSecurityScopedResource()
@@ -202,10 +203,15 @@ final class AppState: ObservableObject {
                 progressText = nil
             } catch {
                 progressText = nil
-                lastError = "upload \(url.lastPathComponent): \(error.localizedDescription)"
+                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
         }
+        // After the reload, whose success path clears lastError; appended so
+        // a failed reload stays visible too.
         await reload()
+        if let text = batchFailureText("upload", failures: failures, total: urls.count) {
+            lastError = appendingError(lastError, text)
+        }
     }
 
     // MARK: - download (single + batch)
@@ -433,40 +439,53 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Upload a .tar project archive; the name carries the target slot (P01..P09).
-    func uploadProject(url: URL) async {
+    /// Upload .tar project archives; each name carries the target slot (P01..P09).
+    func uploadProjects(urls: [URL]) async {
         guard let files else { return }
-        do {
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            guard let match = url.lastPathComponent.range(of: #"P(\d{2})\.tar$"#,
-                                                          options: .regularExpression) else {
-                lastError = "project archive must be named like P01.tar"
-                return
+        var failures: [String] = []
+        for url in urls {
+            do {
+                try await sendProject(url: url, files: files)
+            } catch {
+                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
-            let slot = String(url.lastPathComponent[match].dropFirst().dropLast(4))
-            let data = Array(try Data(contentsOf: url))
-            let projectsRoot = try await resolvePath("/projects")
-            guard let parent = try await files.list(nodeID: projectsRoot)
-                .first(where: { $0.name == slot }) else {
-                lastError = "no project slot P\(slot) on device"
-                return
-            }
-            progressText = "send P\(slot)"
-            _ = try await files.put(parentID: projectsRoot, name: slot, data: data,
-                                    fileID: parent.id, capabilities: [FileCapability.read],
-                                    progress: { [weak self] done, total in
-                                        Task { @MainActor in
-                                            self?.progressText = "send P\(slot) \(done * 100 / max(total, 1))%"
-                                        }
-                                    },
-                                    timeout: .seconds(60))
             progressText = nil
-            await loadProjects()
-        } catch {
-            progressText = nil
-            lastError = "project upload: \(error.localizedDescription)"
         }
+        // After the reload, whose success path clears lastError; appended so
+        // a failed reload stays visible too.
+        await loadProjects()
+        if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
+            lastError = appendingError(lastError, text)
+        }
+    }
+
+    private struct ProjectUploadError: LocalizedError {
+        let errorDescription: String?
+    }
+
+    private func sendProject(url: URL, files: DeviceFileService) async throws {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        guard let match = url.lastPathComponent.range(of: #"P(\d{2})\.tar$"#,
+                                                      options: .regularExpression) else {
+            throw ProjectUploadError(errorDescription: "project archive must be named like P01.tar")
+        }
+        let slot = String(url.lastPathComponent[match].dropFirst().dropLast(4))
+        let data = Array(try Data(contentsOf: url))
+        let projectsRoot = try await resolvePath("/projects")
+        guard let parent = try await files.list(nodeID: projectsRoot)
+            .first(where: { $0.name == slot }) else {
+            throw ProjectUploadError(errorDescription: "no project slot P\(slot) on device")
+        }
+        progressText = "send P\(slot)"
+        _ = try await files.put(parentID: projectsRoot, name: slot, data: data,
+                                fileID: parent.id, capabilities: [FileCapability.read],
+                                progress: { [weak self] done, total in
+                                    Task { @MainActor in
+                                        self?.progressText = "send P\(slot) \(done * 100 / max(total, 1))%"
+                                    }
+                                },
+                                timeout: .seconds(60))
     }
 
     // MARK: - settings
