@@ -31,12 +31,12 @@ Paths are relative to `Sources/`.
 | 3 GET init extra args | `KokokoCore/FileMessages.swift` `GetInitRequest.extraArgs`, no caller | ignored | none | unverified; protocol.md records a firmware crash after a guessed layout |
 | 4 LIST | `KokokoCore/FileMessages.swift` `ListRequest`, `ListResponse`; `KokokoMIDI/DeviceFileService.swift` `list` | yes, `handleFile` | checks "list request", "list entries count"; e2e "seeded sounds" | verified |
 | 5 PLAYBACK start / stop | `KokokoCore/FileMessages.swift` `PlaybackRequest`; `KokokoMIDI/DeviceFileService.swift` `startPlayback`, `stopPlayback` | acknowledges, plays nothing | checks "playback start", "playback stop" | unverified |
-| 6 DELETE | `KokokoCore/FileMessages.swift` `DeleteRequest`; `KokokoMIDI/DeviceFileService.swift` `delete` | yes, `handleFile` | checks "delete request"; e2e "deleted node gone" | verified |
+| 6 DELETE | `KokokoCore/FileMessages.swift` `DeleteRequest`; `KokokoMIDI/DeviceFileService.swift` `delete` | yes, `handleFile` | checks "delete request", "vep: delete of a missing node answers status 16"; e2e "deleted node gone" | verified |
 | 7 METADATA set, short form | `KokokoCore/FileMessages.swift` `SetMetadataRequest`; `KokokoMIDI/DeviceFileService.swift` `setMetadata` | yes, `handleMetadata` | checks "set metadata"; e2e "metadata name" | unverified |
 | 7 METADATA get, paged | `KokokoCore/FileMessages.swift` `GetMetadataRequest`, `GetMetadataResponse`; `KokokoMIDI/DeviceFileService.swift` `getMetadata` | yes, `handleMetadata` | checks "get metadata request", "get metadata fragment"; e2e "metadata samplerate" | verified |
 | 7 METADATA set, paged | `KokokoCore/FileMessages.swift` `SetMetadataPagedInitRequest`, `SetMetadataPagedDataRequest`; `KokokoMIDI/DeviceFileService.swift` `setMetadata` | yes, `handleMetadata` | checks "paged metadata init", "paged metadata data" | unverified |
-| 11 INFO | `KokokoCore/FileMessages.swift` `FileInfoRequest`, `FileInfoResponse`; `KokokoMIDI/DeviceFileService.swift` `info` | yes, `handleFile` | checks "info request", "info name" | unverified |
-| 12 MOVE | `KokokoCore/FileMessages.swift` `MoveRequest`, `MoveResponse`; `KokokoMIDI/DeviceFileService.swift` `move` | yes, `handleFile`; keeps the node id, emits no event | checks "move request", "move new" | unverified |
+| 11 INFO | `KokokoCore/FileMessages.swift` `FileInfoRequest`, `FileInfoResponse`; `KokokoMIDI/DeviceFileService.swift` `info` | yes, `handleFile` | checks "info request", "info name", "vep: info of a missing node answers status 16" | unverified |
+| 12 MOVE | `KokokoCore/FileMessages.swift` `MoveRequest`, `MoveResponse`; `KokokoMIDI/DeviceFileService.swift` `move` | yes, `handleFile`; keeps the node id, emits no event | checks "move request", "move new", "vep: move of a missing node answers status 16" | unverified |
 
 ## File events
 
@@ -45,7 +45,7 @@ Paths are relative to `Sources/`.
 | 3 METADATA_UPDATED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | not emitted | checks "event metadata" | unverified |
 | 8 FILE_ADDED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | emitted after a PUT completes, `emitEvent` | checks "event added"; e2e "added event seen" | unverified |
 | 9 FILE_UPDATED | `KokokoCore/FileMessages.swift` `FileEvent.parse`, same branch as 8 | not emitted | none | unverified |
-| 10 FILE_DELETED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | emitted after DELETE, `emitEvent` | checks "event deleted", "session event deleted node"; e2e "deleted event seen" | unverified |
+| 10 FILE_DELETED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | emitted after a DELETE of an existing node, `emitEvent` | checks "event deleted", "session event deleted node", "vep: no delete event for a missing node"; e2e "deleted event seen" | unverified |
 | 13 FILE_MOVED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | not emitted | checks "event moved" | unverified |
 
 ## Command 6: SETTINGS
