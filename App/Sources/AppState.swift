@@ -51,17 +51,6 @@ final class AppState: ObservableObject {
     @Published var filterText = "" {
         didSet { pruneSelection() }
     }
-
-    private func pruneSelection() {
-        let pruned = visibleSelection(selection,
-                                      items: sounds.map { (slot: $0.id, name: $0.displayName) },
-                                      query: filterText)
-        if pruned != selection { selection = pruned }
-    }
-
-    var visibleSounds: [SoundItem] {
-        sounds.filter { soundMatches(name: $0.displayName, slot: $0.id, query: filterText) }
-    }
     @Published var progressText: String?
     @Published var lastError: String?
     @Published var showImporter = false
@@ -89,6 +78,26 @@ final class AppState: ObservableObject {
     @Published var view: AppView = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var bulkMoveStart = ""
+
+    var visibleSounds: [SoundItem] {
+        sounds.filter { soundMatches(name: $0.displayName, slot: $0.id, query: filterText) }
+    }
+
+    private func pruneSelection() {
+        let pruned = visibleSelection(selection,
+                                      items: sounds.map { (slot: $0.id, name: $0.displayName) },
+                                      query: filterText)
+        if pruned != selection { selection = pruned }
+    }
+
+    /// Selection is keyed by slot, so every slot change on the device must
+    /// carry it along, one completed move at a time: a failure halfway
+    /// through a swap still leaves each selected sound selected where it is.
+    private func move(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
+                      root: UInt16) async throws {
+        try await files.move(fileID: id, toParent: root, newFileID: target)
+        selection = remapSelection(selection, moves: [(from: id, to: target)])
+    }
 
     private var session: SysExSession?
     private var files: DeviceFileService?
@@ -264,6 +273,10 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             progressText = nil
+            // A partial failure still changed the device: reload so the list
+            // and the selection show what is really there. Its success path
+            // clears lastError, so the error is set after it.
+            await reload()
             lastError = "batch delete: \(error.localizedDescription)"
         }
     }
@@ -307,6 +320,7 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             progressText = nil
+            await reload()
             lastError = "restore: \(error.localizedDescription)"
         }
     }
@@ -337,7 +351,7 @@ final class AppState: ObservableObject {
                 lastError = "slot \(target) is occupied"
                 return
             }
-            try await files.move(fileID: item.node.id, toParent: root, newFileID: target)
+            try await move(files, item.node.id, to: target, root: root)
             await reload()
         } catch {
             lastError = "renumber: \(error.localizedDescription)"
@@ -358,7 +372,7 @@ final class AppState: ObservableObject {
             progressText = "move out..."
             for id in ids {
                 while occupied.contains(temp) { temp &-= 1 }
-                try await files.move(fileID: id, toParent: root, newFileID: temp)
+                try await move(files, id, to: temp, root: root)
                 tempMap.append((id, temp))
                 temp &-= 1
             }
@@ -368,7 +382,7 @@ final class AppState: ObservableObject {
                 // Skip slots still held by members of the selection in flight.
                 while occupied.contains(target) && !ids.contains(target) { target &+= 1 }
                 if pair.from == target { continue }
-                try await files.move(fileID: pair.temp, toParent: root, newFileID: target)
+                try await move(files, pair.temp, to: target, root: root)
                 target &+= 1
             }
             selection = []
@@ -376,6 +390,7 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             progressText = nil
+            await reload()
             lastError = "bulk move: \(error.localizedDescription)"
         }
     }
@@ -388,14 +403,15 @@ final class AppState: ObservableObject {
             if let occupant = nodes.first(where: { $0.id == target }) {
                 var temp: UInt16 = 65000
                 while nodes.contains(where: { $0.id == temp }) { temp &-= 1 }
-                try await files.move(fileID: id, toParent: root, newFileID: temp)
-                try await files.move(fileID: occupant.id, toParent: root, newFileID: id)
-                try await files.move(fileID: temp, toParent: root, newFileID: target)
+                try await move(files, id, to: temp, root: root)
+                try await move(files, occupant.id, to: id, root: root)
+                try await move(files, temp, to: target, root: root)
             } else {
-                try await files.move(fileID: id, toParent: root, newFileID: target)
+                try await move(files, id, to: target, root: root)
             }
             await reload()
         } catch {
+            await reload()
             lastError = "move: \(error.localizedDescription)"
         }
     }

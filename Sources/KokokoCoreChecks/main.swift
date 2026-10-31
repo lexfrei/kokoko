@@ -31,6 +31,7 @@ struct KokokoCoreChecks {
         umpChecks()
         filterChecks()
         dropChecks()
+        selectionChecks()
         do {
             try audioChecks()
         } catch {
