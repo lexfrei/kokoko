@@ -281,7 +281,8 @@ public actor DeviceLibrary {
         // Already back, settings included: an earlier restore could not drop the entry.
         // With other settings the entry is their only copy, so it is restored normally.
         if await self.slot(sound.nodeID, sized: sizes, holds: sound.pcm),
-           (try? await files.getMetadata(fileID: sound.nodeID)) == sound.metadata {
+           let current = try? await files.getMetadata(fileID: sound.nodeID),
+           current.mapValues(\.normalizedNumbers) == sound.metadata.mapValues(\.normalizedNumbers) {
             try? bin.remove(entry)
             return sound.nodeID
         }

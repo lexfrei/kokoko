@@ -49,6 +49,21 @@ extension KokokoCoreChecks {
             check(false, "json value store round trip threw \(error)")
         }
 
+        // A device may send 2.0 while the bin's JSON copy reads back as 2; the bin's
+        // "already back" check must still see them as the same metadata.
+        let fromDevice = decoded(#"{"r":2.0,"l":[1.0,{"q":3.0}],"s":"x"}"#)
+        let fromBinDir = root.appendingPathComponent("bin-numbers")
+        let numberBin = RecycleBin(root: fromBinDir)
+        if let entry = try? numberBin.add(SoundBackup(nodeID: 5, pcm: [1], metadata: fromDevice)),
+           let fromBin = try? numberBin.load(entry).metadata {
+            check(fromBin != fromDevice, "the bin's JSON copy turns 2.0 into 2")
+            eq(fromBin.mapValues(\.normalizedNumbers), fromDevice.mapValues(\.normalizedNumbers),
+               "normalized metadata matches across the bin's JSON copy")
+        } else {
+            check(false, "bin round trip for number normalization")
+        }
+        eq(JSONValue.double(2.5).normalizedNumbers, .double(2.5), "a fractional double stays a double when normalized")
+
         // A value JSON cannot carry is refused before the backup folder is touched.
         let nan: [String: JSONValue] = ["x": .double(.nan)]
         for (label, backup) in [

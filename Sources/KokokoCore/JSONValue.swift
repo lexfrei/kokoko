@@ -50,6 +50,17 @@ public enum JSONValue: Equatable, Sendable {
         }
     }
 
+    /// The value with every integral double turned into an int, for comparing metadata
+    /// across a JSON round trip, which writes 2.0 as 2.
+    public var normalizedNumbers: JSONValue {
+        switch self {
+        case .double(let v): return Int(exactly: v).map(JSONValue.int) ?? self
+        case .array(let v): return .array(v.map(\.normalizedNumbers))
+        case .object(let v): return .object(v.mapValues(\.normalizedNumbers))
+        default: return self
+        }
+    }
+
     public var stringValue: String? {
         if case .string(let v) = self { return v }
         return nil
