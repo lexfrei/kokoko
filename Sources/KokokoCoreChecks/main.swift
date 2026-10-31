@@ -35,6 +35,7 @@ struct KokokoCoreChecks {
         batchErrorChecks()
         selectionChecks()
         bulkMoveChecks()
+        rollbackChecks()
         recycleBinChecks()
         do {
             try audioChecks()

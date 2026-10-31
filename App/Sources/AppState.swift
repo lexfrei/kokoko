@@ -99,6 +99,41 @@ final class AppState: ObservableObject {
         selection = remapSelection(selection, moves: [(from: id, to: target)])
     }
 
+    /// Runs `steps` in order. When one fails, re-reads the slots and undoes
+    /// as much as they allow, stopping at the first undo that is unsafe or
+    /// refused; if the re-read fails, nothing is undone. Then rethrows the
+    /// original error. A failed reply does not mean the move did not run,
+    /// hence the re-read instead of a blind undo.
+    private func runMoves(_ steps: [(from: UInt16, to: UInt16)], files: DeviceFileService,
+                          root: UInt16, progress: Bool = false) async throws {
+        var done: [(from: UInt16, to: UInt16)] = []
+        do {
+            for (index, step) in steps.enumerated() {
+                if progress { progressText = "move \(index + 1)/\(steps.count)" }
+                try await move(files, step.from, to: step.to, root: root)
+                done.append(step)
+            }
+        } catch {
+            guard let nodes = try? await files.list(nodeID: root) else { throw error }
+            let occupied = Set(nodes.map(\.id))
+            let failed = steps[done.count]
+            if stepLanded(failed, occupied: occupied) {
+                selection = remapSelection(selection, moves: [failed])
+                done.append(failed)
+            }
+            let undo = rollbackMoves(done, occupied: occupied)
+            for (index, step) in undo.enumerated() {
+                if progress { progressText = "undo \(index + 1)/\(undo.count)" }
+                do {
+                    try await move(files, step.from, to: step.to, root: root)
+                } catch {
+                    break
+                }
+            }
+            throw error
+        }
+    }
+
     private var session: SysExSession?
     private var files: DeviceFileService?
     private var library: DeviceLibrary?
@@ -376,10 +411,7 @@ final class AppState: ObservableObject {
                 lastError = "bulk move: not enough free slots from \(start)"
                 return
             }
-            for (index, step) in plan.enumerated() {
-                progressText = "move \(index + 1)/\(plan.count)"
-                try await move(files, step.from, to: step.to, root: root)
-            }
+            try await runMoves(plan, files: files, root: root, progress: true)
             progressText = nil
             await reload()
         } catch {
@@ -397,9 +429,8 @@ final class AppState: ObservableObject {
             if let occupant = nodes.first(where: { $0.id == target }) {
                 var temp: UInt16 = 65000
                 while nodes.contains(where: { $0.id == temp }) { temp &-= 1 }
-                try await move(files, id, to: temp, root: root)
-                try await move(files, occupant.id, to: id, root: root)
-                try await move(files, temp, to: target, root: root)
+                try await runMoves([(id, temp), (occupant.id, id), (temp, target)],
+                                   files: files, root: root)
             } else {
                 try await move(files, id, to: target, root: root)
             }
