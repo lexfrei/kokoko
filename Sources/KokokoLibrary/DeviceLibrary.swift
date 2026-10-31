@@ -105,9 +105,13 @@ public actor DeviceLibrary {
     /// so repeating a restore does not upload it again; a sound that went to a
     /// device-assigned slot is uploaded again on every repeat.
     /// Upload project archives back into their slots; reapply project metadata
-    /// (active selections).
+    /// (active selections, pad assignments). A pad's "sym" that names a sound which
+    /// moved is pointed at the slot it landed in; references inside the project
+    /// archives themselves are not rewritten.
     public func restore(_ backup: DeviceBackup,
                         progress: (@Sendable (String) -> Void)? = nil) async throws {
+        // Original id → the slot a sound actually landed in, for sounds that moved.
+        var movedTo: [UInt16: UInt16] = [:]
         if !backup.sounds.isEmpty {
             let soundsRoot = try await resolve("/sounds")
             // Sizes in bytes of what was on the device before this restore started.
@@ -118,12 +122,15 @@ public actor DeviceLibrary {
             // Only slots from the initial listing are candidates for "already there":
             // a slot this run filled holds another backup sound, even with equal PCM.
             var placed: Set<UInt16> = []
+            // Original ids of backup sounds already handled by this run.
+            var restoredIDs: Set<UInt16> = []
             for sound in backup.sounds {
                 progress?(sound.metadata["name"]?.stringValue ?? "node \(sound.nodeID)")
                 if !placed.contains(sound.nodeID), await slot(sound.nodeID, sized: listed, holds: sound.pcm) {
                     // Already there, e.g. from an interrupted earlier restore.
                     try await files.setMetadata(fileID: sound.nodeID, sound.metadata)
                     placed.insert(sound.nodeID)
+                    restoredIDs.insert(sound.nodeID)
                     continue
                 }
                 let taken = listed[sound.nodeID] != nil || placed.contains(sound.nodeID)
@@ -142,6 +149,12 @@ public actor DeviceLibrary {
                 // An assigned slot may equal a later sound's original id; without this
                 // that sound is put explicitly into the occupied slot over this one.
                 placed.insert(newID)
+                // A pad names the first sound restored under an id; a later one with
+                // the same original id must not pull the pad away from it.
+                if newID != sound.nodeID, !restoredIDs.contains(sound.nodeID) {
+                    movedTo[sound.nodeID] = newID
+                }
+                restoredIDs.insert(sound.nodeID)
                 do {
                     try await files.setMetadata(fileID: newID, sound.metadata)
                 } catch {
@@ -161,6 +174,11 @@ public actor DeviceLibrary {
                                         timeout: .seconds(60))
             }
             for (nodeID, meta) in backup.projectMetadata {
+                var meta = meta
+                if let sym = meta["sym"]?.intValue, let original = UInt16(exactly: sym),
+                   let landed = movedTo[original] {
+                    meta["sym"] = .int(Int(landed))
+                }
                 try? await files.setMetadata(fileID: nodeID, meta)
             }
         }

@@ -465,6 +465,83 @@ struct E2E {
         check(countAfterUnreadable == countBeforeUnreadable + 1,
               "an unreadable occupant falls back to an assigned slot — \(countBeforeUnreadable) vs \(countAfterUnreadable)")
 
+        // --- backup restore: pad references follow a sound that moved ---
+        let projectsID = try await resolve("/projects")
+        _ = try await files.put(parentID: projectsID, name: "99", data: [], isDirectory: true)
+        func pad(_ name: String) async throws -> UInt16 {
+            try await files.put(parentID: projectsID, name: name, data: [], isDirectory: true)
+        }
+        func sym(_ pad: UInt16) async throws -> Int? { try await files.getMetadata(fileID: pad)["sym"]?.intValue }
+        func landedAt(_ pcm: [UInt8]) async throws -> [UInt16] {
+            var ids: [UInt16] = []
+            for node in try await files.list(nodeID: soundsID) where Int(node.size) == pcm.count {
+                if try await files.get(fileID: node.id).data == pcm { ids.append(node.id) }
+            }
+            return ids
+        }
+        func restoreWithPads(_ sounds: [SoundBackup], _ pads: [UInt16: Int]) async throws {
+            try await library.restore(DeviceBackup(
+                deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(), sounds: sounds,
+                projectMetadata: pads.mapValues { ["sym": .int($0)] }, projectArchives: ["99": [1, 2, 3]]))
+        }
+
+        let padOwner = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        let wanderer = SoundBackup(nodeID: padOwner, pcm: Array(repeating: 0x4C, count: 300),
+                                   metadata: ["name": .string("wanderer")])
+        let movedPad = try await pad("pad moved")
+        let foreignPad = try await pad("pad foreign")
+        let oddPad = try await pad("pad odd")
+        let notInBackup = try await files.list(nodeID: soundsID).map(\.id).sorted()[1]
+        try await restoreWithPads([wanderer], [movedPad: Int(padOwner), foreignPad: Int(notInBackup), oddPad: -1])
+        let wandererAt = try await landedAt(wanderer.pcm).first
+        let movedSym = try await sym(movedPad)
+        check(wandererAt != nil && wandererAt != padOwner && movedSym == wandererAt.map(Int.init),
+              "a pad follows its sound to an assigned slot — sym \(movedSym.map(String.init) ?? "nil"), landed \(wandererAt.map(String.init) ?? "nil")")
+        check(try await sym(foreignPad) == Int(notInBackup), "a pad naming a sound outside the backup keeps its reference")
+        check(try await sym(oddPad) == -1, "a pad reference outside the id range passes through")
+
+        // In place: a sound that lands in its own original slot keeps its pads.
+        let homeSlot: UInt16 = 950
+        let homer = SoundBackup(nodeID: homeSlot, pcm: Array(repeating: 0x5D, count: 300), metadata: ["name": .string("homer")])
+        let homePad = try await pad("pad home")
+        try await restoreWithPads([homer], [homePad: Int(homeSlot)])
+        let homerAt = try await landedAt(homer.pcm)
+        let homeSym = try await sym(homePad)
+        check(homerAt == [homeSlot] && homeSym == Int(homeSlot),
+              "a pad whose sound landed in its original slot keeps its reference")
+
+        // Repeated id: the first sound takes the original slot, the pad must stay with it.
+        let dupHome: UInt16 = 951
+        let dupFirst = SoundBackup(nodeID: dupHome, pcm: Array(repeating: 0x6E, count: 300), metadata: ["name": .string("dup first")])
+        let dupSecond = SoundBackup(nodeID: dupHome, pcm: Array(repeating: 0x7F, count: 300), metadata: ["name": .string("dup second")])
+        let dupPad = try await pad("pad dup")
+        try await restoreWithPads([dupFirst, dupSecond], [dupPad: Int(dupHome)])
+        let dupSym = try await sym(dupPad)
+        let dupFirstAt = try await landedAt(dupFirst.pcm)
+        check(dupFirstAt == [dupHome] && dupSym == Int(dupHome),
+              "a repeated sound id does not pull the pad off the sound in the original slot — sym \(dupSym.map(String.init) ?? "nil")")
+        // Again: now the first sound is found already in place and only its metadata is reapplied.
+        try await restoreWithPads([dupFirst, dupSecond], [dupPad: Int(dupHome)])
+        let dupSymAgain = try await sym(dupPad)
+        check(dupSymAgain == Int(dupHome),
+              "a repeated sound id keeps the pad on a sound found already in place — sym \(dupSymAgain.map(String.init) ?? "nil")")
+
+        // Chain: A's assigned slot is B's original id, so B moves on too.
+        let padA = try await pad("pad chain a")
+        let padB = try await pad("pad chain b")
+        let chainProbe = try await files.put(parentID: soundsID, name: "probe", data: [0])
+        try await files.delete(fileID: chainProbe)
+        let chainTaken = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]
+        let chainA = SoundBackup(nodeID: chainTaken, pcm: Array(repeating: 0x81, count: 300), metadata: ["name": .string("chain a")])
+        let chainB = SoundBackup(nodeID: chainProbe + 1, pcm: Array(repeating: 0x92, count: 300), metadata: ["name": .string("chain b")])
+        try await restoreWithPads([chainA, chainB], [padA: Int(chainTaken), padB: Int(chainProbe + 1)])
+        let aAt = try await landedAt(chainA.pcm).first.map(Int.init)
+        let bAt = try await landedAt(chainB.pcm).first.map(Int.init)
+        let symA = try await sym(padA)
+        let symB = try await sym(padB)
+        check(aAt == Int(chainProbe + 1) && symA == aAt && symB == bAt && bAt != aAt,
+              "chained moves map each pad one step — a \(symA.map(String.init) ?? "nil")/\(aAt.map(String.init) ?? "nil"), b \(symB.map(String.init) ?? "nil")/\(bAt.map(String.init) ?? "nil")")
+
         eventsTask.cancel()
         let seen = await eventsTask.value
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },
