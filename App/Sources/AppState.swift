@@ -184,7 +184,7 @@ final class AppState: ObservableObject {
     func reload() async {
         guard let files else { return }
         do {
-            let root = try await resolvePath("/sounds")
+            let root = try await resolve("/sounds")
             soundsRootID = root
             let nodes = try await files.list(nodeID: root)
             var items: [SoundItem] = []
@@ -200,18 +200,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Resolve a path like "/sounds" by walking the tree from the root (id 0).
-    private func resolvePath(_ path: String) async throws -> UInt16 {
-        guard let files else { throw WireError.noDevice }
-        var current: UInt16 = 0
-        for part in path.split(separator: "/") {
-            let children = try await files.list(nodeID: current)
-            guard let next = children.first(where: { $0.name == String(part) }) else {
-                throw WireError.noDevice
-            }
-            current = next.id
-        }
-        return current
+    private func resolve(_ path: String) async throws -> UInt16 {
+        guard let library else { throw WireError.noDevice }
+        return try await library.resolve(path)
     }
 
     // MARK: - upload
@@ -461,7 +452,7 @@ final class AppState: ObservableObject {
     func loadProjects() async {
         guard let files else { return }
         do {
-            let root = try await resolvePath("/projects")
+            let root = try await resolve("/projects")
             let nodes = try await files.list(nodeID: root)
             projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
             lastError = nil
@@ -523,7 +514,7 @@ final class AppState: ObservableObject {
         }
         let slot = String(url.lastPathComponent[match].dropFirst().dropLast(4))
         let data = Array(try Data(contentsOf: url))
-        let projectsRoot = try await resolvePath("/projects")
+        let projectsRoot = try await resolve("/projects")
         guard let parent = try await files.list(nodeID: projectsRoot)
             .first(where: { $0.name == slot }) else {
             throw ProjectUploadError(errorDescription: "no project slot P\(slot) on device")
