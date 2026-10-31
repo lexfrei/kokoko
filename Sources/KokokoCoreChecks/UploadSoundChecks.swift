@@ -28,6 +28,15 @@ extension KokokoCoreChecks {
                 eq(status, .specificError(16), "vep: a refused metadata set answers status 16")
             }
             vep.refuseMetadataSet = false
+            vep.refuseDelete = true
+            do {
+                try await files.delete(fileID: 3)
+                check(false, "vep: a refused delete fails")
+            } catch SessionError.deviceError(let status, _) {
+                eq(status, .specificError(16), "vep: a refused delete answers status 16")
+            }
+            vep.refuseDelete = false
+            check(try await files.list(nodeID: 1).contains { $0.id == 3 }, "vep: a refused delete keeps the node")
             try await files.setMetadata(fileID: 1, ["name": .string("kick")])
             eq(try await files.getMetadata(fileID: 1)["name"]?.stringValue, "kick",
                "vep: metadata set works again once refusal is off")
@@ -54,6 +63,19 @@ extension KokokoCoreChecks {
                       "upload: the error names the slot — got \(text)")
             }
             vep.refuseMetadataSet = false
+
+            let before = Set(try await files.list(nodeID: soundsRoot).map(\.id))
+            vep.refusePutDataFromPage = 1
+            do {
+                _ = try await files.put(parentID: soundsRoot, name: "cut short", data: pcm)
+                check(false, "vep: a put refused partway fails")
+            } catch SessionError.deviceError(let status, _) {
+                eq(status, .specificError(16), "vep: a put refused partway answers status 16")
+            }
+            vep.refusePutDataFromPage = nil
+            let after = Set(try await files.list(nodeID: soundsRoot).map(\.id))
+            eq(after.subtracting(before).count, 1, "vep: a put refused partway leaves an incomplete node listed")
+            for orphan in after.subtracting(before) { try await files.delete(fileID: orphan) }
         } catch {
             check(false, "upload checks threw \(error)")
         }
