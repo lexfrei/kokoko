@@ -172,7 +172,11 @@ struct ContentView: View {
                 if state.view == .projects {
                     projectList
                 } else if state.view == .settings {
-                    SettingsView(state: state)
+                    VStack(spacing: 0) {
+                        backupRow(.everything, label: "[ backup all ]")
+                        Divider()
+                        SettingsView(state: state)
+                    }
                 } else if state.view == .bin {
                     binList
                 } else {
@@ -296,7 +300,7 @@ struct ContentView: View {
                 Button("[ backup sounds ]") { state.picker = .backupFolder(.sounds) }
                     .buttonStyle(.plain)
                     .disabled(state.deviceBusy)
-                Button("[ restore sounds ]") { state.picker = .restoreFolder }
+                Button("[ restore backup ]") { state.picker = .restoreFolder }
                     .buttonStyle(.plain)
                     .disabled(state.deviceBusy)
                 Button("[ refresh ]") { Task { await state.refreshSounds() } }
@@ -334,7 +338,29 @@ struct ContentView: View {
         }
     }
 
+    private func backupRow(_ scope: DeviceLibrary.Scope, label: String) -> some View {
+        HStack {
+            Button(label) { state.picker = .backupFolder(scope) }
+                .buttonStyle(.plain)
+                .disabled(state.deviceBusy)
+            Button("[ restore backup ]") { state.picker = .restoreFolder }
+                .buttonStyle(.plain)
+                .disabled(state.deviceBusy)
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
     private var projectList: some View {
+        VStack(spacing: 0) {
+            backupRow(.projects, label: "[ backup projects ]")
+            Divider()
+            projectRows
+        }
+    }
+
+    private var projectRows: some View {
         List {
             ForEach(state.projects) { project in
                 HStack {
