@@ -3,7 +3,8 @@ import Foundation
 import KokokoCore
 import KokokoMIDI
 
-// Exploration of a connected EP device; asks it to play one sound aloud.
+// Exploration of a connected EP device; asks it to play the first file in
+// /sounds aloud, if there is one.
 // --command-scan sends every command except DFU with an empty payload and
 // may change device state or crash the firmware.
 

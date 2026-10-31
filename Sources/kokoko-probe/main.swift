@@ -52,7 +52,6 @@ struct Probe {
                         print("  sound \(node.id): \(node.name) \(node.size)b flags=\(node.flags)")
                     }
                     if CommandLine.arguments.contains("--write-test") {
-                        // Upload a tiny in-format sound, read it back, delete it.
                         var pcm: [UInt8] = []
                         for i in 0..<4000 {
                             let v = Int16(sin(Double(i) / 8.0) * 8000)
