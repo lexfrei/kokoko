@@ -316,9 +316,6 @@ public enum BackupStore {
     /// Write a backup as a directory: manifest.json + sounds/NNN.pcm + .json sidecars.
     public static func write(_ backup: DeviceBackup, to dir: URL) throws {
         let fm = FileManager.default
-        let soundsDir = dir.appendingPathComponent("sounds")
-        try fm.createDirectory(at: soundsDir, withIntermediateDirectories: true)
-
         var manifest: [String: Any] = [
             "deviceSKU": backup.deviceSKU,
             "osVersion": backup.osVersion,
@@ -330,6 +327,15 @@ public enum BackupStore {
         if !backup.projectArchives.isEmpty {
             manifest["projectArchives"] = backup.projectArchives.keys.sorted()
         }
+        // Checked up front: JSONSerialization raises an uncatchable exception on NaN, and
+        // a refused backup should not leave a half-written folder behind.
+        let soundMetadata = backup.sounds.map { $0.metadata.mapValues(\.anyValue) }
+        guard JSONSerialization.isValidJSONObject(manifest),
+              soundMetadata.allSatisfy(JSONSerialization.isValidJSONObject) else {
+            throw FileServiceError.unserializableMetadata
+        }
+        let soundsDir = dir.appendingPathComponent("sounds")
+        try fm.createDirectory(at: soundsDir, withIntermediateDirectories: true)
         let manifestData = try JSONSerialization.data(withJSONObject: manifest,
                                                       options: [.prettyPrinted, .sortedKeys])
         try manifestData.write(to: dir.appendingPathComponent("manifest.json"))
@@ -342,12 +348,11 @@ public enum BackupStore {
             }
         }
 
-        for sound in backup.sounds {
+        for (sound, metadata) in zip(backup.sounds, soundMetadata) {
             let base = String(format: "%03d", sound.nodeID)
             try Data(sound.pcm).write(to: soundsDir.appendingPathComponent("\(base).pcm"))
-            let metaData = try JSONSerialization.data(
-                withJSONObject: sound.metadata.mapValues(\.anyValue),
-                options: [.prettyPrinted, .sortedKeys])
+            let metaData = try JSONSerialization.data(withJSONObject: metadata,
+                                                      options: [.prettyPrinted, .sortedKeys])
             try metaData.write(to: soundsDir.appendingPathComponent("\(base).json"))
         }
     }

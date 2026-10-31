@@ -1,6 +1,7 @@
 import Foundation
 import KokokoCore
 import KokokoLibrary
+import KokokoMIDI
 
 extension KokokoCoreChecks {
     static func jsonValueChecks() {
@@ -46,6 +47,26 @@ extension KokokoCoreChecks {
             eq(reread.projectMetadata[9], tricky, "backup folder keeps bool, null and fractional project metadata")
         } catch {
             check(false, "json value store round trip threw \(error)")
+        }
+
+        // A value JSON cannot carry is refused before the backup folder is touched.
+        let nan: [String: JSONValue] = ["x": .double(.nan)]
+        for (label, backup) in [
+            ("sound", DeviceBackup(deviceSKU: "x", osVersion: "y", createdAt: Date(),
+                                   sounds: [SoundBackup(nodeID: 4, pcm: [1], metadata: nan)], projectMetadata: [:])),
+            ("project", DeviceBackup(deviceSKU: "x", osVersion: "y", createdAt: Date(),
+                                     sounds: [], projectMetadata: [9: nan])),
+        ] {
+            let dir = root.appendingPathComponent("nan-\(label)")
+            do {
+                try BackupStore.write(backup, to: dir)
+                check(false, "backup with unserializable \(label) metadata is refused")
+            } catch FileServiceError.unserializableMetadata {
+                check(!FileManager.default.fileExists(atPath: dir.path),
+                      "backup with unserializable \(label) metadata is refused before writing")
+            } catch {
+                check(false, "backup with unserializable \(label) metadata — got \(error)")
+            }
         }
     }
 }
