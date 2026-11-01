@@ -5,7 +5,7 @@ One row per message in [protocol.md](protocol.md). Columns:
 - **kokoko**: where the client builds or parses the message, as `file` `symbol`.
 - **vep**: whether `Sources/VirtualEP/VirtualEPDevice.swift` answers it, and in which function.
 - **checks / e2e**: the label of a check in `swift run KokokoCoreChecks` or `swift run kokoko-e2e` that exercises it. Labels are quoted so they can be found with grep.
-- **hardware**: taken only from "Verified on real hardware (EP-133, os 2.5.1)" in protocol.md, probe runs of 2026-10-30. Everything not stated there is "unverified".
+- **hardware**: taken only from "Verified on real hardware (EP-133, os 2.5.1)" in protocol.md, probe runs of 2026-10-30. Everything not stated there is "unverified"; "not sent" marks a message the probe never reached.
 
 Paths are relative to `Sources/`.
 
@@ -52,6 +52,6 @@ Paths are relative to `Sources/`.
 
 | Message | kokoko | vep | checks / e2e | hardware |
 | --- | --- | --- | --- | --- |
-| 1 init | `KokokoMIDI/SettingsService.swift` `initialize` | yes, `handleSettings` | e2e "settings groups" | unverified |
-| 2 get all, paged | `KokokoMIDI/SettingsService.swift` `getAll` | yes, `handleSettings` | checks "settings big response"; e2e "settings groups" | unverified |
-| 3 set | `KokokoMIDI/SettingsService.swift` `set` | acknowledges, stores nothing | none | unverified |
+| 1 init | `KokokoMIDI/SettingsService.swift` `initialize` | yes, `handleSettings` | e2e "settings groups" | verified: answers command not found |
+| 2 get all, paged | `KokokoMIDI/SettingsService.swift` `getAll` | yes, `handleSettings` | checks "settings big response"; e2e "settings groups" | not sent: init answered command not found |
+| 3 set | `KokokoMIDI/SettingsService.swift` `set` | acknowledges, stores nothing | none | not sent: init answered command not found |

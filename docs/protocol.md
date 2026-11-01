@@ -1,6 +1,6 @@
 # EP-133/EP-1320/EP-40 SysEx file protocol
 
-Reverse-engineered from the teenage.engineering ep-sample-tool web bundle (`index-C1wBjhTa.js`, sha256 `d032b3a1d9398663f313c54b671e366c5625f3612a2285ceaacad636cb5d7a98`). This document is our own specification of the observed wire behavior.
+Documented from the published teenage.engineering ep-sample-tool web bundle (`index-C1wBjhTa.js`, sha256 `d032b3a1d9398663f313c54b671e366c5625f3612a2285ceaacad636cb5d7a98`), the teenage.engineering/apps/update bundle (DFU and settings), and probe runs on an EP-133 (see "Verified on real hardware"). This document is our own specification of the wire behavior.
 
 ## Transport and discovery
 
@@ -243,7 +243,7 @@ Latest firmware per SKU: `https://teenage.engineering/_software/releases.json` (
 - get all: `[02 <page:u16>]` → text fragment from byte 2 until a 0 byte; page until empty
 - set: `[03 <id:u16> <json...> 00]`
 
-NOT AVAILABLE on EP-133 os 2.5.1: the device answers command-not-found. The API exists in the updater bundle for other TE products. Device settings are not exposed over MIDI on this hardware.
+Documented from the teenage.engineering/apps/update bundle. On EP-133 os 2.5.1 init answers command not found; see "Verified on real hardware".
 
 ## Open items to verify on the wire
 
@@ -253,7 +253,7 @@ NOT AVAILABLE on EP-133 os 2.5.1: the device answers command-not-found. The API 
 
 ## Verified on real hardware (EP-133, os 2.5.1)
 
-Probe runs over USB-C, 2026-10-30: a read-only pass, then a write test.
+Probe runs over USB-C, 2026-10-30: a read-only pass, a write test, then a settings dump.
 
 - Identity reply decodes to `TE032AS002` (not AS001) with `base_sku: TE032AS001` — match devices by base_sku.
 - GREET metadata contains `mode`, `os_version`, `serial`, `sku`, `base_sku` as documented.
@@ -264,3 +264,4 @@ Probe runs over USB-C, 2026-10-30: a read-only pass, then a write test.
 - File init, list and paged metadata get work over UMP event lists at the negotiated chunk size.
 - Full write path verified: PUT upload lands with a device-assigned slot name (`032.pcm` for a file sent as `kokoko-test`), GET readback is byte-identical, DELETE removes it. Display names live in metadata `name`; the wire filename is rewritten to `NNN.pcm`.
 - Directories under `/sounds` are rejected by firmware: `can only create files`. Sample organization is a flat pool plus pad assignment via `{"sym": node_id}` metadata.
+- Settings (command 6): the settings dump sent init `[01 <page_size>]`, and the device answered command not found, so get-all and set were not sent.
