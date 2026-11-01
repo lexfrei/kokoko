@@ -26,11 +26,15 @@ struct Probe {
                 let wire = try CoreMIDIWire(pair: pair)
                 var identity: Identity.Reply?
                 for attempt in 1...3 {
-                    if let reply = try? await identifyDevice(on: wire, timeout: .seconds(2)) {
-                        identity = reply
+                    do {
+                        identity = try await identifyDevice(on: wire, timeout: .seconds(2))
+                        break
+                    } catch where isNoIdentityReply(error) {
+                        print("  identity attempt \(attempt) no reply")
+                    } catch {
+                        print("  identity attempt \(attempt) failed: \(error)")
                         break
                     }
-                    print("  identity attempt \(attempt) no reply")
                 }
                 guard let identity else { continue }
                 print("  identity: sku=\(identity.sku) deviceID=\(identity.deviceID)")
