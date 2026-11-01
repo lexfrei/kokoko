@@ -21,7 +21,7 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 
 Checked on an EP-133 with OS 2.5.1: finding the device and reading its info, listing files, reading metadata, and sending, reading back and deleting a sound file. Everything else has not been checked on hardware yet. That includes writing a sound's name and metadata, which adding and renaming rely on, as well as slot moves, previews, the recycle bin, projects, backup and restore, and the EP-1320 and EP-40. [docs/conformance.md](docs/conformance.md) lists the status per protocol message.
 
-The factory sounds on that device report no move and no playback permission ([docs/protocol.md](docs/protocol.md)). [docs/protocol.md](docs/protocol.md) also notes that the settings command answered command-not-found on that firmware; when it does, the settings tab says so.
+The factory sounds on that device report no move and no playback permission ([docs/protocol.md](docs/protocol.md)). On that device the settings command answers command not found, and the settings tab says device settings are not exposed over MIDI on this firmware.
 
 ## Install and run
 
