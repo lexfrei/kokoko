@@ -4,11 +4,13 @@ import KokokoMIDI
 import VirtualEP
 
 extension KokokoCoreChecks {
+    /// The watcher reports changes from every process; other MIDI activity on
+    /// the machine (a parallel check run, say) must not count here.
     private final class Signals: @unchecked Sendable {
         private let lock = NSLock()
-        private var count = 0
-        func bump() { lock.withLock { count += 1 } }
-        var value: Int { lock.withLock { count } }
+        private var objects: [MIDIObjectRef] = []
+        func record(_ object: MIDIObjectRef) { lock.withLock { objects.append(object) } }
+        func count(of own: Set<MIDIObjectRef>) -> Int { lock.withLock { objects.filter(own.contains).count } }
     }
 
     static func hotplugChecks() async {
@@ -26,39 +28,39 @@ extension KokokoCoreChecks {
         func listed() -> Bool { enumerateMIDIPairs().contains { $0.name == vep.name } }
         let signals = Signals()
         do {
-            let watcher = try HotplugWatcher { signals.bump() }
+            let watcher = try HotplugWatcher { signals.record($0) }
             defer { withExtendedLifetime(watcher) {} }
             try vep.start()
             try await Task.sleep(for: .milliseconds(300))
             check(listed(), "vep: a started device is listed")
-            let plugged = signals.value
-            check(plugged > 0, "hotplug: plugging a device in is signalled")
             guard let pair = enumerateMIDIPairs().first(where: { $0.name == vep.name }) else { return }
+            let own: Set<MIDIObjectRef> = [pair.source, pair.destination]
+            check(signals.count(of: own) > 0, "hotplug: plugging a device in is signalled")
             check(pairIsOnline(pair), "hotplug: a plugged-in pair is online")
 
             try await Task.sleep(for: .milliseconds(300))
-            let beforeRename = signals.value
+            let beforeRename = signals.count(of: own)
             MIDIObjectSetStringProperty(pair.destination, kMIDIPropertyName, "\(vep.name) renamed" as CFString)
             try await Task.sleep(for: .milliseconds(300))
-            eq(signals.value, beforeRename, "hotplug: renaming a port is not signalled")
+            eq(signals.count(of: own), beforeRename, "hotplug: renaming a port is not signalled")
             MIDIObjectSetStringProperty(pair.destination, kMIDIPropertyName, vep.name as CFString)
             try await Task.sleep(for: .milliseconds(300))
 
-            let beforeOffline = signals.value
+            let beforeOffline = signals.count(of: own)
             vep.setOffline(true)
             try await Task.sleep(for: .milliseconds(300))
             check(!pairIsOnline(pair), "hotplug: an offline pair is not online")
-            check(signals.value > beforeOffline, "hotplug: going offline is signalled")
-            let beforeOnline = signals.value
+            check(signals.count(of: own) > beforeOffline, "hotplug: going offline is signalled")
+            let beforeOnline = signals.count(of: own)
             vep.setOffline(false)
             try await Task.sleep(for: .milliseconds(300))
             check(pairIsOnline(pair), "hotplug: a pair back online is online")
-            check(signals.value > beforeOnline, "hotplug: coming back online is signalled")
-            let beforeUnplug = signals.value
+            check(signals.count(of: own) > beforeOnline, "hotplug: coming back online is signalled")
+            let beforeUnplug = signals.count(of: own)
             vep.stop()
             try await Task.sleep(for: .milliseconds(300))
             check(!listed(), "vep: a stopped device is no longer listed")
-            check(signals.value > beforeUnplug, "hotplug: unplugging a device is signalled")
+            check(signals.count(of: own) > beforeUnplug, "hotplug: unplugging a device is signalled")
             check(!pairIsOnline(pair), "hotplug: an unplugged pair is no longer online")
             try vep.start()
             try await Task.sleep(for: .milliseconds(300))
