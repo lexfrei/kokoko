@@ -157,6 +157,15 @@ struct ContentView: View {
         if case .connected = state.connection { true } else { false }
     }
 
+    private var devicePhase: DevicePhase {
+        switch state.connection {
+        case .idle, .scanning: .searching
+        case .connecting(let name): .connecting(name)
+        case .connected: .connected
+        case .failed: .failed
+        }
+    }
+
     private func tabButton(_ tab: HeaderTab) -> some View {
         Button(tabTitle(tab.title, selected: state.view == tab)) {
             state.view = tab
@@ -175,7 +184,7 @@ struct ContentView: View {
 
     private var content: some View {
         Group {
-            if let notice = tabNotice(state.view, connected: isConnected) {
+            if let notice = tabNotice(state.view, device: devicePhase) {
                 deviceNotice(notice)
             } else {
                 switch state.view {
@@ -199,14 +208,11 @@ struct ContentView: View {
     private func deviceNotice(_ notice: String) -> some View {
         VStack(spacing: 12) {
             Text(notice)
-            switch state.connection {
-            case .failed:
+            if case .failed = state.connection {
                 Text("connect the device over usb-c")
                 Button("[ retry ]") { Task { await state.scan() } }
                     .buttonStyle(.plain)
                     .disabled(state.deviceBusy)
-            default:
-                Text("scanning for midi devices...")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
