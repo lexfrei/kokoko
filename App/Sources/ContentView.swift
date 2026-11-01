@@ -82,6 +82,9 @@ struct ContentView: View {
         } message: { pending in
             Text(pending.prompt)
         }
+        .sheet(item: $state.metadataEditing) { _ in
+            MetadataSheet(state: state)
+        }
         .confirmationDialog("remove from bin for good?", isPresented: binRemoveBinding,
                             presenting: binToRemove) { entry in
             Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
@@ -242,6 +245,10 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .disabled(state.deviceBusy)
                         .help("change slot number")
+                    Button("[m]") { Task { await state.editMetadata(item) } }
+                        .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
+                        .help("edit metadata")
                     Button("[x]") { Task { await state.delete(item) } }
                         .buttonStyle(.plain)
                         .disabled(state.deviceBusy)
@@ -464,5 +471,47 @@ struct SoundRowDrop: DropDelegate {
 
     func validateDrop(info: DropInfo) -> Bool {
         !state.deviceBusy && info.hasItemsConforming(to: [.text])
+    }
+}
+
+struct MetadataSheet: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        if let editing = state.metadataEditing {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("metadata: \(editing.name)")
+                    .font(.system(.headline, design: .monospaced))
+                Grid(alignment: .leading) {
+                    ForEach(MetadataEditForm.keys, id: \.self) { key in
+                        GridRow {
+                            Text(key)
+                            TextField("", text: field(key))
+                                .frame(minWidth: 120)
+                            Text(editing.form.error(for: key) ?? "")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+                if let note = editing.note {
+                    Text(note)
+                        .foregroundStyle(.red)
+                }
+                HStack {
+                    Button("cancel") { state.metadataEditing = nil }
+                        .disabled(state.deviceBusy)
+                    Button("save") { Task { await state.saveMetadata() } }
+                        .disabled(state.deviceBusy || editing.form.changes == nil)
+                }
+            }
+            .font(.system(.body, design: .monospaced))
+            .padding()
+            .interactiveDismissDisabled(state.deviceBusy)
+        }
+    }
+
+    private func field(_ key: String) -> Binding<String> {
+        Binding(get: { state.metadataEditing?.form.text[key] ?? "" },
+                set: { state.metadataEditing?.form.text[key] = $0 })
     }
 }
