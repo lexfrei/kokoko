@@ -39,7 +39,7 @@ struct ContentView: View {
                 case .backupFolder(let scope):
                     await state.backupToFolder(urls[0], scope: scope)
                 case .restoreFolder:
-                    await state.restoreFromFolder(urls[0])
+                    state.prepareRestore(from: urls[0])
                 }
             }
         }
@@ -92,6 +92,26 @@ struct ContentView: View {
             Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
             Button("cancel", role: .cancel) {}
         }
+        .confirmationDialog(RestoreSummary.title, isPresented: restoreBinding, presenting: state.pendingRestore) { pending in
+            Button("restore", role: .destructive) { Task { await state.restore(pending.backup) } }
+            Button("cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.summary.message)
+        }
+        .confirmationDialog(SwapSummary.title, isPresented: swapBinding, presenting: state.pendingSwap) { pending in
+            Button("swap") { Task { await state.moveOrSwap(id: pending.id, toSlot: pending.target) } }
+            Button("cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.summary.message)
+        }
+    }
+
+    private var restoreBinding: Binding<Bool> {
+        Binding(get: { state.pendingRestore != nil }, set: { if !$0 { state.pendingRestore = nil } })
+    }
+
+    private var swapBinding: Binding<Bool> {
+        Binding(get: { state.pendingSwap != nil }, set: { if !$0 { state.pendingSwap = nil } })
     }
 
     private var unbinnedDeleteBinding: Binding<Bool> {
@@ -455,7 +475,7 @@ struct SoundRowDrop: DropDelegate {
                   text.hasPrefix("node:"),
                   let id = UInt16(text.dropFirst(5)) else { return }
             Task { @MainActor in
-                await state.moveOrSwap(id: id, toSlot: target.id)
+                state.requestSwap(id: id, onto: target)
             }
         }
         return true
