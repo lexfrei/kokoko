@@ -113,6 +113,9 @@ extension KokokoCoreChecks {
                    + "2 project settings from an older backup not applied",
                "project settings: the report names every part")
             eq(RestoreReport().message, nil, "project settings: an empty report has no message")
+            eq(BackupReport().message, nil, "backup report: an empty report has no message")
+            eq(BackupReport(unreadMetadata: ["003.pcm", "/projects/01"]).message,
+               "metadata not read, backed up without it: 003.pcm, /projects/01", "backup report: the message names every node")
         } catch {
             check(false, "project settings checks threw \(error)")
         }

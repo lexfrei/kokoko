@@ -419,6 +419,25 @@ struct E2E {
         let fullBackup = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
         check(!fullBackup.sounds.isEmpty, "backup succeeds once reads are whole")
 
+        // --- backup: metadata that cannot be read is reported, not dropped silently ---
+        check(fullBackup.report.unreadMetadata.isEmpty && fullBackup.report.message == nil,
+              "a backup that read every node's metadata reports nothing")
+        if let unreadSound = try await files.list(nodeID: soundsID).first(where: { $0.isFile }) {
+            let projectsRootID = try await resolve("/projects")
+            let failingGets = [unreadSound.id, projectsRootID].map { Array(GetMetadataRequest(fileID: $0, page: 0).bytes.prefix(4)) }
+            faulty.failAfterSend = { frame in failingGets.contains { frame.payload.starts(with: $0) } }
+            let partial = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0")
+            faulty.failAfterSend = nil
+            check(partial.report.unreadMetadata == [unreadSound.name, "/projects"],
+                  "backup reports the sound and the project node whose metadata could not be read — got \(partial.report.unreadMetadata)")
+            check(partial.sounds.first { $0.nodeID == unreadSound.id }?.metadata == [:],
+                  "backup keeps a sound whose metadata could not be read, without metadata")
+            check(partial.report.message?.contains(unreadSound.name) == true,
+                  "backup report message names the sound — got \(partial.report.message ?? "nil")")
+        } else {
+            check(false, "a sound to back up without metadata")
+        }
+
         // --- backup restore is safe to repeat ---
         func soundCount() async throws -> Int { try await files.list(nodeID: soundsID).count }
         func copies(of pcm: [UInt8]) async throws -> Int {
