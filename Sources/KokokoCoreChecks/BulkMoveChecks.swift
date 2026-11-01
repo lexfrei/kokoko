@@ -50,5 +50,13 @@ extension KokokoCoreChecks {
         } else {
             check(false, "selection follows every sound through a bulk move")
         }
+
+        func pairs(_ steps: [(from: UInt16, to: UInt16)]) -> [[UInt16]] { steps.map { [$0.from, $0.to] } }
+        eq(pairs(planSwap(3, 7, occupied: [3, 7])), [[3, 65000], [7, 3], [65000, 7]],
+           "swap: through the first free temporary slot")
+        eq(pairs(planSwap(3, 7, occupied: [3, 7, 65000, 64999])), [[3, 64998], [7, 3], [64998, 7]],
+           "swap: the temporary slot skips occupied ones")
+        eq(apply(planSwap(3, 7, occupied: [3, 7]), to: [3: "kick", 7: "snare"]), [3: "snare", 7: "kick"],
+           "swap: replayed like the device, the two sounds trade slots")
     }
 }

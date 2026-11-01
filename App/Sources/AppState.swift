@@ -807,10 +807,8 @@ final class AppState: ObservableObject {
         let token = hotplug.currentGeneration()
         do {
             let nodes = try await files.list(nodeID: root)
-            if let occupant = nodes.first(where: { $0.id == target }) {
-                var temp: UInt16 = 65000
-                while nodes.contains(where: { $0.id == temp }) { temp &-= 1 }
-                try await runMoves([(id, temp), (occupant.id, id), (temp, target)],
+            if nodes.contains(where: { $0.id == target }) {
+                try await runMoves(planSwap(id, target, occupied: Set(nodes.map(\.id))),
                                    files: files, root: root)
             } else {
                 try await move(files, id, to: target, root: root)

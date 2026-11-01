@@ -60,3 +60,11 @@ public func rollbackMoves(_ done: [(from: UInt16, to: UInt16)],
     }
     return safe
 }
+
+/// Moves that swap the sounds in slots `a` and `b` through a temporary slot,
+/// the first free one counting down from 65000.
+public func planSwap(_ a: UInt16, _ b: UInt16, occupied: Set<UInt16>) -> [(from: UInt16, to: UInt16)] {
+    var temp: UInt16 = 65000
+    while occupied.contains(temp) { temp &-= 1 }
+    return [(a, temp), (b, a), (temp, b)]
+}
