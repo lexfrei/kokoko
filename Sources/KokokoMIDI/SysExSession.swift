@@ -163,6 +163,12 @@ final class ResumeOnce: @unchecked Sendable {
     }
 }
 
+/// True when identifyDevice gave up because no TE identity reply arrived in time,
+/// as on a port without a TE sampler; any other error is a real failure.
+public func isNoIdentityReply(_ error: any Error) -> Bool {
+    if case WireError.timeout = error { true } else { false }
+}
+
 /// Identify a TE device on a wire: send the universal identity request,
 /// return the parsed reply.
 public func identifyDevice(on wire: any MIDIWire, timeout: Duration = .seconds(5)) async throws -> Identity.Reply {

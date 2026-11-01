@@ -19,5 +19,10 @@ extension KokokoCoreChecks {
         } catch {
             check(false, "identify: a failed send passes its error on — got \(error)")
         }
+
+        check(isNoIdentityReply(WireError.timeout), "identify: a timeout means no sampler answered")
+        check(!isNoIdentityReply(WireError.noDevice), "identify: a failed send is not read as no sampler")
+        check(!isNoIdentityReply(CoreMIDIError.osStatus("MIDISendEventList", -50)),
+              "identify: a CoreMIDI error is not read as no sampler")
     }
 }
