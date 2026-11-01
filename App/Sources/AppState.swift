@@ -65,7 +65,6 @@ final class AppState: ObservableObject {
     @Published var renameText = ""
     @Published var metadataEditing: MetadataEditing?
     @Published var firmwareStatus: FirmwareStatus?
-    var firmwareSuffix: String { KokokoLibrary.firmwareSuffix(firmwareStatus) }
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsStatus: SettingsStatus = .notLoaded

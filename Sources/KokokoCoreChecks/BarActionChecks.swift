@@ -22,7 +22,22 @@ extension KokokoCoreChecks {
         for action in all {
             check(labelHasEveryWord(action.text, action.accessibilityLabel), "bar: \(action.text) is in its label \"\(action.accessibilityLabel)\"")
         }
-        for line in [StatusLine.error("upload: kick.wav: storage full"), .connectionFailed("no device found")] {
+        let connected: [StatusLine] = [
+            .connected(name: "EP-133", serial: "A1B2", os: "2.1.0", firmware: nil),
+            .connected(name: "EP-133", serial: "A1B2", os: "2.1.0", firmware: .current),
+            .connected(name: "EP-133", serial: "A1B2", os: "2.1.0", firmware: .behind(latest: "2.5.1")),
+            .connected(name: "EP-133", serial: "A1B2", os: "2.6.0", firmware: .ahead),
+        ]
+        eq(connected.map(\.text), ["[ EP-133 A1B2 os 2.1.0 ]", "[ EP-133 A1B2 os 2.1.0 ✓ ]",
+                                   "[ EP-133 A1B2 os 2.1.0 → 2.5.1 ]", "[ EP-133 A1B2 os 2.6.0 (newer than the published release) ]"],
+           "status: the connected line keeps its text")
+        eq(connected.map(\.accessibilityLabel), [
+            "Connected: EP-133, serial A1B2, OS 2.1.0",
+            "Connected: EP-133, serial A1B2, OS 2.1.0, up to date",
+            "Connected: EP-133, serial A1B2, OS 2.1.0, update 2.5.1 available",
+            "Connected: EP-133, serial A1B2, OS 2.6.0, newer than the published release",
+        ], "status: the connected line says what its marks mean")
+        for line in [StatusLine.error("upload: kick.wav: storage full"), .connectionFailed("no device found")] + connected {
             check(labelHasEveryWord(line.text, line.accessibilityLabel), "status: \(line.text) is in its label \"\(line.accessibilityLabel)\"")
         }
         eq(BarAction.addSounds.text, "[ + add sounds ]", "bar: add sounds keeps its text")

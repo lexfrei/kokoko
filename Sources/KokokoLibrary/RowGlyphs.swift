@@ -73,14 +73,17 @@ public enum BarAction: CaseIterable, Sendable {
     }
 }
 
-/// The footer's error line and the header's connection failure.
+/// The footer's error line and the header's connection status.
 public enum StatusLine: Sendable {
     case error(String), connectionFailed(String)
+    case connected(name: String, serial: String, os: String, firmware: FirmwareStatus?)
 
     public var text: String {
         switch self {
         case .error(let message): "error: \(message)"
         case .connectionFailed(let reason): "[ !! \(reason) ]"
+        case .connected(let name, let serial, let os, let firmware):
+            "[ \(name) \(serial) os \(os)\(firmwareSuffix(firmware)) ]"
         }
     }
 
@@ -88,6 +91,15 @@ public enum StatusLine: Sendable {
         switch self {
         case .error(let message): "Error: \(message)"
         case .connectionFailed(let reason): "Connection failed: \(reason)"
+        case .connected(let name, let serial, let os, let firmware):
+            "Connected: \(name), serial \(serial), OS \(os)" + {
+                switch firmware {
+                case .current?: ", up to date"
+                case .behind(let latest)?: ", update \(latest) available"
+                case .ahead?: ", newer than the published release"
+                case nil: ""
+                }
+            }()
         }
     }
 }

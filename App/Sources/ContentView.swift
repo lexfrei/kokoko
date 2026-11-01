@@ -143,7 +143,9 @@ struct ContentView: View {
             case .connecting(let name):
                 Text("[ conn \(name) ]").lineLimit(1)
             case .connected(let name, let serial, let os):
-                Text("[ \(name) \(serial) os \(os)\(state.firmwareSuffix) ]").lineLimit(1)
+                let line = StatusLine.connected(name: name, serial: serial, os: os, firmware: state.firmwareStatus)
+                Text(line.text).lineLimit(1)
+                    .accessibilityLabel(line.accessibilityLabel)
             case .failed(let why):
                 FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1)
             }
