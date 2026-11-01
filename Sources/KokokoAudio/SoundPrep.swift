@@ -54,8 +54,11 @@ public func prepareForUpload(fileData: Data, fileName: String) throws -> Prepare
                              metadata: uploadMetadata(info: info, sourceRate: deviceSampleRate))
     }
 
+    // Only the extension is kept: AVAudioFile's result depends on it, and the
+    // caller's name may not be a valid file name.
     let tempURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString + "-" + fileName)
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension((fileName as NSString).pathExtension)
     do {
         try fileData.write(to: tempURL)
         defer { try? FileManager.default.removeItem(at: tempURL) }

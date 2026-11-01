@@ -34,5 +34,14 @@ extension KokokoCoreChecks {
                 eq(error.localizedDescription, want, "sound prep: \(name) gets a readable reason")
             }
         }
+
+        // The temporary copy must not depend on the name being a valid file name.
+        do {
+            _ = try prepareForUpload(fileData: Data("not audio at all here".utf8), fileName: "take 1/junk.mp3")
+            check(false, "sound prep: a name with a slash is still refused as non-audio")
+        } catch {
+            eq(error.localizedDescription, "cannot read audio: not a readable audio file",
+               "sound prep: a name with a slash still reaches the audio reader")
+        }
     }
 }
