@@ -1,6 +1,7 @@
 import SwiftUI
 import KokokoCore
 import KokokoMIDI
+import KokokoLibrary
 
 struct SettingsEntryModel: Identifiable {
     let id: Int
@@ -53,20 +54,6 @@ struct SettingsView: View {
             if state.settingsTree.isEmpty {
                 await state.loadSettings()
             }
-        }
-    }
-}
-
-extension JSONValue {
-    var displayText: String {
-        switch self {
-        case .int(let v): return "\(v)"
-        case .double(let v): return "\(v)"
-        case .string(let v): return v
-        case .bool(let v): return v ? "on" : "off"
-        case .array: return "[…]"
-        case .object: return "{…}"
-        case .null: return "-"
         }
     }
 }
