@@ -563,12 +563,12 @@ final class AppState: ObservableObject {
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             let backup = try BackupStore.read(from: folder)
             progress.update(op, "restore...")
-            let skipped = try await library.restore(backup) { [weak self] name in
+            let report = try await library.restore(backup) { [weak self] name in
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
             }
             progress.update(op, nil)
             await reloadSoundsAndProjects()
-            if let note = RestoreSkip.message(projects: skipped) {
+            if let note = report.message {
                 lastError = appendingError(lastError, "restore: \(note)")
             }
         } catch {

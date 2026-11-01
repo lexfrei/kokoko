@@ -48,6 +48,7 @@ struct KokokoCoreChecks {
         await virtualDeviceChecks()
         await uploadSoundChecks()
         await restoreProjectChecks()
+        await projectSettingsChecks()
         await uploadStepsChecks()
         await restoreStepsChecks()
         await hotplugChecks()

@@ -41,10 +41,10 @@ extension KokokoCoreChecks {
             let backupDir = root.appendingPathComponent("backup")
             try BackupStore.write(DeviceBackup(deviceSKU: "x", osVersion: "y", createdAt: Date(),
                                                sounds: [SoundBackup(nodeID: 4, pcm: [1], metadata: tricky)],
-                                               projectMetadata: [9: tricky]), to: backupDir)
+                                               projectMetadata: ["/projects/09": tricky]), to: backupDir)
             let reread = try BackupStore.read(from: backupDir)
             eq(reread.sounds.first?.metadata, tricky, "backup folder keeps bool, null and fractional sound metadata")
-            eq(reread.projectMetadata[9], tricky, "backup folder keeps bool, null and fractional project metadata")
+            eq(reread.projectMetadata["/projects/09"], tricky, "backup folder keeps bool, null and fractional project metadata")
         } catch {
             check(false, "json value store round trip threw \(error)")
         }
@@ -70,7 +70,7 @@ extension KokokoCoreChecks {
             ("sound", DeviceBackup(deviceSKU: "x", osVersion: "y", createdAt: Date(),
                                    sounds: [SoundBackup(nodeID: 4, pcm: [1], metadata: nan)], projectMetadata: [:])),
             ("project", DeviceBackup(deviceSKU: "x", osVersion: "y", createdAt: Date(),
-                                     sounds: [], projectMetadata: [9: nan])),
+                                     sounds: [], projectMetadata: ["/projects/09": nan])),
         ] {
             let dir = root.appendingPathComponent("nan-\(label)")
             do {
