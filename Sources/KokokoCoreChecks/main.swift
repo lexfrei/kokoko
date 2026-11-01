@@ -51,6 +51,7 @@ struct KokokoCoreChecks {
         await hotplugChecks()
         hotplugPolicyChecks()
         await metadataEditChecks()
+        firmwareVersionChecks()
         do {
             try audioChecks()
         } catch {
