@@ -30,6 +30,9 @@ public struct DeviceBackup: Sendable {
     /// Project metadata entries of an older backup that keyed them by node id;
     /// they are not restored.
     public var legacyProjectSettings: Int
+    /// Project archives the manifest lists or the folder holds that could not
+    /// be read, by project name; they are not restored.
+    public var unreadArchives: [String] = []
     /// What the backup could not capture; not written to the backup folder.
     public var report = BackupReport()
     /// Project archives by project name ("01".."09"), when the scope includes them.
@@ -146,6 +149,9 @@ public actor DeviceLibrary {
     /// on the device is not uploaded. Project metadata goes to the node at the same
     /// path, with "active" pointed at the node at its saved path; metadata whose
     /// node or selection is missing, or whose write fails, is reported, not applied.
+    /// A project whose archive is not restored, because its slot is missing or the
+    /// backup could not read it, gets none of its metadata; it is reported once, in
+    /// `skippedProjects` or `unreadArchives`, not in `unappliedSettings`.
     @discardableResult
     public func restore(_ backup: DeviceBackup,
                         progress: (@Sendable (String) -> Void)? = nil) async throws -> RestoreReport {
@@ -208,13 +214,13 @@ public actor DeviceLibrary {
         if !backup.projectMetadata.isEmpty {
             let tree = try await walk(try await resolve("/projects"), path: "/projects")
             let idOf = Dictionary(tree.map { ($0.path, $0.id) }, uniquingKeysWith: { first, _ in first })
-            // A skipped project is reported once, not once per directory under it.
-            let skippedRoots = skipped.map { "/projects/" + $0 }
+            // A project whose archive is not restored keeps its settings, and is
+            // reported once, not once per directory under it.
+            let notRestored = (skipped + backup.unreadArchives).map { "/projects/" + $0 }
             for (path, saved) in backup.projectMetadata.sorted(by: { $0.key < $1.key }) {
+                if notRestored.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { continue }
                 guard let nodeID = idOf[path] else {
-                    if !skippedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
-                        unapplied.append(path)
-                    }
+                    unapplied.append(path)
                     continue
                 }
                 var meta = saved
@@ -236,7 +242,7 @@ public actor DeviceLibrary {
             }
         }
         return RestoreReport(skippedProjects: skipped, unappliedSettings: unapplied.sorted(),
-                             legacySettings: backup.legacyProjectSettings)
+                             legacySettings: backup.legacyProjectSettings, unreadArchives: backup.unreadArchives)
     }
 
     /// Byte-identical PCM counts as the same sound. A read failure means "not
@@ -382,11 +388,14 @@ public struct RestoreReport: Equatable, Sendable {
     public var skippedProjects: [String]
     public var unappliedSettings: [String]
     public var legacySettings: Int
+    public var unreadArchives: [String]
 
-    public init(skippedProjects: [String] = [], unappliedSettings: [String] = [], legacySettings: Int = 0) {
+    public init(skippedProjects: [String] = [], unappliedSettings: [String] = [], legacySettings: Int = 0,
+                unreadArchives: [String] = []) {
         self.skippedProjects = skippedProjects
         self.unappliedSettings = unappliedSettings
         self.legacySettings = legacySettings
+        self.unreadArchives = unreadArchives
     }
 
     public var message: String? {
@@ -400,6 +409,10 @@ public struct RestoreReport: Equatable, Sendable {
         }
         if legacySettings > 0 {
             parts.append("\(legacySettings) project settings from an older backup not applied")
+        }
+        if !unreadArchives.isEmpty {
+            parts.append(unreadArchives.map { "P\($0)" }.joined(separator: ", ")
+                + " not restored: archive missing or unreadable in the backup")
         }
         return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
@@ -486,20 +499,32 @@ public enum BackupStore {
             }
         }
         var archives: [String: [UInt8]] = [:]
+        var unread: Set<String> = []
         let projectsDir = dir.appendingPathComponent("projects")
         if let names = try? fm.contentsOfDirectory(atPath: projectsDir.path) {
-            for name in names where name.hasSuffix(".tar") {
+            for name in names {
+                // Only the names write() produces; anything else, such as the "._P01.tar"
+                // macOS writes next to a file on a FAT drive, is not an archive of this backup.
+                guard name.hasPrefix("P"), name.hasSuffix(".tar") else { continue }
                 let slot = String(name.dropFirst().dropLast(4))
+                guard !slot.isEmpty, slot.allSatisfy(\.isASCII), slot.allSatisfy(\.isNumber) else { continue }
                 if let data = try? Data(contentsOf: projectsDir.appendingPathComponent(name)) {
                     archives[slot] = Array(data)
+                } else {
+                    unread.insert(slot)
                 }
             }
         }
+        for listed in manifest["projectArchives"] as? [String] ?? [] where archives[listed] == nil {
+            unread.insert(listed)
+        }
         let createdAt = ISO8601DateFormatter().date(from: manifest["createdAt"] as? String ?? "") ?? Date()
-        return DeviceBackup(deviceSKU: manifest["deviceSKU"] as? String ?? "",
-                            osVersion: manifest["osVersion"] as? String ?? "",
-                            createdAt: createdAt,
-                            sounds: sounds, projectMetadata: projectMetadata,
-                            projectArchives: archives, legacyProjectSettings: legacy)
+        var backup = DeviceBackup(deviceSKU: manifest["deviceSKU"] as? String ?? "",
+                                  osVersion: manifest["osVersion"] as? String ?? "",
+                                  createdAt: createdAt,
+                                  sounds: sounds, projectMetadata: projectMetadata,
+                                  projectArchives: archives, legacyProjectSettings: legacy)
+        backup.unreadArchives = unread.sorted()
+        return backup
     }
 }

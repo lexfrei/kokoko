@@ -5,16 +5,22 @@ public struct RestoreSummary: Sendable {
     public let soundCount: Int
     public let projects: [String]
     public let hasProjectSettings: Bool
+    public let unreadArchives: [String]
 
-    public init(soundCount: Int, projects: [String], hasProjectSettings: Bool) {
+    public init(soundCount: Int, projects: [String], hasProjectSettings: Bool, unreadArchives: [String] = []) {
         self.soundCount = soundCount
         self.projects = projects.sorted()
         self.hasProjectSettings = hasProjectSettings
+        self.unreadArchives = unreadArchives.sorted()
     }
 
     public init(_ backup: DeviceBackup) {
+        let unreadRoots = backup.unreadArchives.map { "/projects/" + $0 }
+        let applied = backup.projectMetadata.keys.contains { path in
+            !unreadRoots.contains { path == $0 || path.hasPrefix($0 + "/") }
+        }
         self.init(soundCount: backup.sounds.count, projects: Array(backup.projectArchives.keys),
-                  hasProjectSettings: !backup.projectMetadata.isEmpty)
+                  hasProjectSettings: applied, unreadArchives: backup.unreadArchives)
     }
 
     public static let title = "restore backup?"
@@ -26,12 +32,19 @@ public struct RestoreSummary: Sendable {
             parts.append("A sound whose original slot already holds the same audio keeps that slot and takes the "
                 + "backup's name and settings; any other goes into its original slot when free, or into another free slot.")
         }
+        func list(_ slots: [String]) -> String {
+            let names = slots.map { "P\($0)" }
+            return names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names.last!
+        }
         if !projects.isEmpty {
-            let names = projects.map { "P\($0)" }
-            let list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names.last!
-            parts.append(names.count == 1
-                ? "\(list) is replaced with the backup's archive where that slot exists on the device."
-                : "\(list) are replaced with the backup's archives where those slots exist on the device.")
+            parts.append(projects.count == 1
+                ? "\(list(projects)) is replaced with the backup's archive where that slot exists on the device."
+                : "\(list(projects)) are replaced with the backup's archives where those slots exist on the device.")
+        }
+        if !unreadArchives.isEmpty {
+            parts.append(unreadArchives.count == 1
+                ? "\(list(unreadArchives)) cannot be read from the backup; neither its archive nor its settings are restored."
+                : "\(list(unreadArchives)) cannot be read from the backup; neither their archives nor their settings are restored.")
         }
         if hasProjectSettings {
             parts.append("Project settings from the backup are applied to the matching projects on the device.")
