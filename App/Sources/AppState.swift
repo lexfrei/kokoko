@@ -27,6 +27,11 @@ struct SoundItem: Identifiable, Equatable {
     var id: UInt16 { node.id }
 }
 
+struct PendingRestore {
+    let backup: DeviceBackup
+    let summary: RestoreSummary
+}
+
 struct MetadataEditing: Identifiable {
     let id: UInt16
     let name: String
@@ -72,6 +77,7 @@ final class AppState: ObservableObject {
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
     @Published var binToRemove: BinEntry?
+    @Published var pendingRestore: PendingRestore?
     /// True while a user action talks to the device. Transfers on the wire
     /// are not serialized, and pages from two interleaved operations corrupt
     /// each other, so every such action runs one at a time; the UI disables
@@ -190,6 +196,7 @@ final class AppState: ObservableObject {
     var modalOpen: Bool {
         showImporter || picker != .none || exportDocument != nil || renameItem != nil || renumberItem != nil
             || unbinnedDelete != nil || metadataEditing != nil || binToRemove != nil
+            || pendingRestore != nil
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
@@ -292,6 +299,7 @@ final class AppState: ObservableObject {
         firmwareStatus = nil
         settingsTree = []
         settingsStatus = .notLoaded
+        pendingRestore = nil
     }
 
     private func rescanIfDue() {
@@ -624,16 +632,25 @@ final class AppState: ObservableObject {
         }
     }
 
-    func restoreFromFolder(_ folder: URL) async {
+    /// Reads the backup and asks before anything is written to the device.
+    func prepareRestore(from folder: URL) {
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        do {
+            let backup = try BackupStore.read(from: folder)
+            pendingRestore = PendingRestore(backup: backup, summary: RestoreSummary(backup))
+        } catch {
+            lastError = appendingError(lastError, "restore: \(error.localizedDescription)")
+        }
+    }
+
+    func restore(_ backup: DeviceBackup) async {
         guard enterDevice() else { return }
         defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
         do {
-            let accessing = folder.startAccessingSecurityScopedResource()
-            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
-            let backup = try BackupStore.read(from: folder)
             progress.update(op, "restore...")
             let report = try await library.restore(backup) { [weak self] name in
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
