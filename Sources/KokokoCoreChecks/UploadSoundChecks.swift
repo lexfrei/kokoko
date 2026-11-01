@@ -128,7 +128,7 @@ extension KokokoCoreChecks {
             do {
                 _ = try await library.restore(entry, from: bin)
                 check(false, "restore: a bin sound cut short with a refused delete fails")
-            } catch RecycleBinError.partialSoundMayRemain(let underlying) {
+            } catch RecycleBinError.partialSoundMayRemain(_, let underlying) {
                 check(underlying.contains("16"),
                       "restore: a partial sound that stays is reported with its cause — got \(underlying)")
             }

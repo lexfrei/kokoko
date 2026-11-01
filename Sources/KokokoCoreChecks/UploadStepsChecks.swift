@@ -69,6 +69,7 @@ extension KokokoCoreChecks {
         // id nobody knows, so nothing is deleted and the user is told.
         let lostReplies: [(String, any Error)] = [
             ("lost", SessionError.timeout(command: 2, requestID: 1)),
+            ("lost on the wire", WireError.timeout),
             ("unreadable", FileServiceError.missingResponse),
         ]
         for (label, failure) in lostReplies {
