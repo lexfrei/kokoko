@@ -49,9 +49,9 @@ The code is a Swift package: protocol, transport, audio and library modules unde
 
 ## License
 
-BSD 3-Clause. The wire protocol was documented from observed behavior of published tools; no third-party code or assets are included.
+BSD 3-Clause. The wire protocol was documented from the published ep-sample-tool and apps/update web bundles and from probe runs on an EP-133; no third-party code or assets are included.
 
 ## Notes
 
-- No affiliation with teenage engineering. No assets, names, or code from the original tool; the protocol was documented from its published web bundle.
+- No affiliation with teenage engineering. No assets, names, or code from the original tool.
 - iPadOS has no WebMIDI, which is why this is a native app: CoreMIDI over USB-C talks to the device directly.

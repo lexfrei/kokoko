@@ -1,6 +1,6 @@
 # EP-133/EP-1320/EP-40 SysEx file protocol
 
-Reverse-engineered from the teenage.engineering ep-sample-tool web bundle (`index-C1wBjhTa.js`, sha256 `d032b3a1d9398663f313c54b671e366c5625f3612a2285ceaacad636cb5d7a98`). This document is our own specification of the observed wire behavior.
+Documented from the published teenage.engineering ep-sample-tool web bundle (`index-C1wBjhTa.js`, sha256 `d032b3a1d9398663f313c54b671e366c5625f3612a2285ceaacad636cb5d7a98`), the teenage.engineering/apps/update bundle (DFU and settings), and probe runs on an EP-133 (see "Verified on real hardware"). This document is our own specification of the wire behavior.
 
 ## Transport and discovery
 
