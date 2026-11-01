@@ -24,11 +24,14 @@ struct SettingsView: View {
 
     var body: some View {
         List {
-            if state.settingsUnsupported {
-                Text("not exposed over midi on this firmware")
+            if let placeholder = state.settingsStatus.placeholder(isEmpty: state.settingsTree.isEmpty) {
+                Text(state.settingsStatus == .notLoaded ? state.progressText ?? placeholder : placeholder)
                     .foregroundStyle(.secondary)
-            } else if state.settingsTree.isEmpty {
-                Text(state.progressText ?? "loading...")
+                if state.settingsStatus == .failed {
+                    Button("[ retry ]") { Task { await state.loadSettings() } }
+                        .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
+                }
             }
             ForEach(state.settingsTree) { group in
                 Section(group.title) {
@@ -52,7 +55,7 @@ struct SettingsView: View {
         }
         .task {
             // While the device is busy, the scan that holds it loads the settings itself.
-            if state.settingsTree.isEmpty && !state.deviceBusy {
+            if state.settingsStatus.loadsWhenOpened && !state.deviceBusy {
                 await state.loadSettings()
             }
         }
