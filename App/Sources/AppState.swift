@@ -594,11 +594,12 @@ final class AppState: ObservableObject {
         guard let files else { return }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
+        let token = hotplug.currentGeneration()
         do {
             try await files.setMetadata(fileID: item.node.id, ["name": .string(trimmed)])
             await reload()
         } catch {
-            lastError = "rename: \(error.localizedDescription)"
+            if hotplug.isCurrent(token) { lastError = "rename: \(error.localizedDescription)" }
         }
     }
 
@@ -615,7 +616,7 @@ final class AppState: ObservableObject {
             metadataEditing = MetadataEditing(id: item.node.id, name: item.displayName, generation: token,
                                               form: MetadataEditForm(metadata: metadata))
         } catch {
-            lastError = "metadata: \(error.localizedDescription)"
+            if hotplug.isCurrent(token) { lastError = "metadata: \(error.localizedDescription)" }
         }
     }
 
