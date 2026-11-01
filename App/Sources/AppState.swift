@@ -885,7 +885,12 @@ final class AppState: ObservableObject {
         guard enterDevice() else { return }
         defer { deviceBusy = false }
         guard let files else { return }
-        try? await files.startPlayback(fileID: item.node.id, offset: 0, length: 1000)
+        let token = hotplug.currentGeneration()
+        do {
+            try await files.startPlayback(fileID: item.node.id, offset: 0, length: 1000)
+        } catch {
+            reportOperationError("preview: \(error.localizedDescription)", token: token)
+        }
     }
 
     /// Drag-out provider: downloads the sound on demand and hands over a WAV file.
