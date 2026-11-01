@@ -181,6 +181,12 @@ public final class VirtualEPDevice: @unchecked Sendable {
                     respond(to: frame, status: 3, payload: [])
                     return
                 }
+                // The node can be deleted while its transfer is open.
+                guard nodes[put.nodeID] != nil else {
+                    pendingPut = nil
+                    respond(to: frame, status: 16, payload: [])
+                    return
+                }
                 let chunk = Array(p[4...])
                 if chunk.isEmpty {
                     nodes[put.nodeID]?.complete = true
@@ -407,6 +413,11 @@ public final class VirtualEPDevice: @unchecked Sendable {
                 let page = readU16(p, 3)
                 guard var meta = pendingMeta else {
                     respond(to: frame, status: 3, payload: [])
+                    return
+                }
+                guard nodes[meta.nodeID] != nil else {
+                    pendingMeta = nil
+                    respond(to: frame, status: 16, payload: [])
                     return
                 }
                 let chunk = Array(p[5...])
