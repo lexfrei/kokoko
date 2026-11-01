@@ -10,6 +10,7 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 - Plays a one-second preview of a sound on the device.
 - Downloads a sound as a WAV file, by button or by dragging its row out of the app, and downloads a selection of sounds into a folder.
 - Renames a sound, moves it to another slot, and swaps two sounds by dragging one row onto the other. A selection of sounds can be moved, in slot order, onto the free slots counting up from a chosen number, skipping slots held by other sounds.
+- Edits a sound's root note, bpm, pitch, pan, amplitude, envelope attack and release, loop points and play and time modes from its `[m]` button. Numbers are checked against the ranges in [docs/protocol.md](docs/protocol.md), and only the changed fields are sent.
 - Deletes one sound or a selection and keeps a copy of each in a recycle bin on the Mac or iPad. If deleting into the bin fails, it offers to delete that sound without keeping a copy.
 - Lists the deleted sounds in a bin tab with their original slot, name and time of deletion. A sound can be put back, into its original slot if that slot is free and into another one otherwise, or removed from the bin for good.
 - Backs up the sounds, the projects, or both into a folder: sounds from the sounds tab, projects from the projects tab, both from the settings tab. A restore, started from any of these tabs, puts back the sounds from the chosen backup folder and its projects into the project slots that already exist on the device.

@@ -34,6 +34,14 @@ struct SoundItem: Identifiable, Equatable {
     var id: UInt16 { node.id }
 }
 
+struct MetadataEditing: Identifiable {
+    let id: UInt16
+    let name: String
+    let generation: Int
+    var form: MetadataEditForm
+    var note: String?
+}
+
 enum PendingPicker: Equatable {
     case none
     case downloadFolder([UInt16])
@@ -62,6 +70,7 @@ final class AppState: ObservableObject {
     @Published var renumberItem: SoundItem?
     @Published var renameItem: SoundItem?
     @Published var renameText = ""
+    @Published var metadataEditing: MetadataEditing?
     @Published var firmwareNote: String?
 
     /// Short suffix for the header: " ✓" when current, " → x.y.z" when behind.
@@ -232,6 +241,7 @@ final class AppState: ObservableObject {
         unbinnedDelete = nil
         renameItem = nil
         renumberItem = nil
+        metadataEditing = nil
         picker = .none
         firmwareNote = nil
         settingsTree = []
@@ -590,6 +600,47 @@ final class AppState: ObservableObject {
         } catch {
             lastError = "rename: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - metadata
+
+    func editMetadata(_ item: SoundItem) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
+        guard let files else { return }
+        let token = hotplug.currentGeneration()
+        do {
+            let metadata = try await files.getMetadata(fileID: item.node.id)
+            guard hotplug.isCurrent(token) else { return }
+            metadataEditing = MetadataEditing(id: item.node.id, name: item.displayName, generation: token,
+                                              form: MetadataEditForm(metadata: metadata))
+        } catch {
+            lastError = "metadata: \(error.localizedDescription)"
+        }
+    }
+
+    func saveMetadata() async {
+        guard let editing = metadataEditing, let changes = editing.form.changes else { return }
+        guard hotplug.isCurrent(editing.generation) else {
+            metadataEditing = nil
+            lastError = "metadata: the device changed, nothing was written"
+            return
+        }
+        guard !changes.isEmpty else {
+            metadataEditing = nil
+            return
+        }
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
+        guard let files else { return }
+        let result = await KokokoLibrary.saveMetadata(files: files, fileID: editing.id, changes: changes)
+        guard hotplug.isCurrent(editing.generation), metadataEditing?.id == editing.id else { return }
+        guard let message = result.message else {
+            metadataEditing = nil
+            return
+        }
+        if let current = result.current { metadataEditing?.form = MetadataEditForm(metadata: current) }
+        metadataEditing?.note = message
     }
 
     // MARK: - renumber
