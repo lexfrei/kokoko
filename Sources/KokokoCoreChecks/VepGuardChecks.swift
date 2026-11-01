@@ -4,6 +4,13 @@ import KokokoLibrary
 import KokokoMIDI
 import VirtualEP
 
+private final class StopFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func set() { lock.withLock { done = true } }
+    var value: Bool { lock.withLock { done } }
+}
+
 private actor AddedEvents {
     var ids: Set<UInt16> = []
     func record(_ id: UInt16) { ids.insert(id) }
@@ -78,5 +85,48 @@ extension KokokoCoreChecks {
         } catch {
             check(false, "vep guard checks threw \(error)")
         }
+    }
+
+    /// Stops a device while replies are still going out, several times over.
+    static func vepStopChecks() async {
+        for round in 1...3 {
+            let vep = VirtualEPDevice(name: "kokoko-vep-stop-\(getpid())-\(round)")
+            do {
+                try vep.start()
+                try await Task.sleep(for: .milliseconds(300))
+                guard let pair = enumerateMIDIPairs().first(where: { $0.name == vep.name }) else {
+                    check(false, "vep stop: device enumerated")
+                    return
+                }
+                let wire = try CoreMIDIWire(pair: pair)
+                let identity = try await identifyDevice(on: wire)
+                let session = SysExSession(wire: wire, identityCode: identity.deviceID)
+                let load = Task {
+                    while !Task.isCancelled {
+                        await withTaskGroup(of: Void.self) { group in
+                            for _ in 0..<20 {
+                                group.addTask { _ = try? await session.call(command: TECommand.echo, payload: [1], timeout: .milliseconds(300)) }
+                            }
+                        }
+                    }
+                }
+                defer { load.cancel() }
+                try await Task.sleep(for: .milliseconds(50))
+                let stopped = StopFlag()
+                Thread { vep.stop(); stopped.set() }.start()
+                let waitStart = ContinuousClock.now
+                while !stopped.value && ContinuousClock.now - waitStart < .seconds(5) {
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                guard stopped.value else {
+                    check(false, "vep: stop() returns while replies are going out (stuck in round \(round))")
+                    return
+                }
+            } catch {
+                check(false, "vep stop checks threw \(error)")
+                return
+            }
+        }
+        check(true, "vep: stop() returns while replies are going out")
     }
 }

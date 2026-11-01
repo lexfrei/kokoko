@@ -32,6 +32,7 @@ struct KokokoCoreChecks {
         await identifyChecks()
         await sessionCloseChecks()
         await vepGuardChecks()
+        await vepStopChecks()
         umpChecks()
         wireErrorChecks()
         errorDescriptionChecks()
