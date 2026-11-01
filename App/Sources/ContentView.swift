@@ -65,7 +65,7 @@ struct ContentView: View {
             }
             Button("cancel", role: .cancel) {}
         }
-        .alert("renumber", isPresented: renumberBinding) {
+        .alert("move to slot", isPresented: renumberBinding) {
             TextField("slot number", text: $renumberText)
                 .frame(minWidth: 120)
             Button("move") {
@@ -239,7 +239,7 @@ struct ContentView: View {
                         }
                     }
                     rowButton(.rename, help: "rename") { state.renameText = item.displayName; state.renameItem = item }
-                    rowButton(.renumber, help: "change slot number") { state.renumberItem = item }
+                    rowButton(.renumber, help: "move to another slot") { state.renumberItem = item }
                     rowButton(.metadata, help: "edit metadata") { Task { await state.editMetadata(item) } }
                     rowButton(.delete, help: "delete from device") { Task { await state.delete(item) } }
                 }

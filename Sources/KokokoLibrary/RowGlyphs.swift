@@ -21,7 +21,7 @@ public enum RowAction: CaseIterable, Sendable {
         case .play: "Play preview"
         case .download: "Download"
         case .rename: "Rename"
-        case .renumber: "Change slot"
+        case .renumber: "Move to slot"
         case .metadata: "Edit metadata"
         case .delete: "Delete"
         case .restore: "Restore to the device"

@@ -735,7 +735,7 @@ final class AppState: ObservableObject {
             try await move(files, item.node.id, to: target, root: root)
             await reload()
         } catch {
-            reportOperationError("renumber: \(error.localizedDescription)", token: token)
+            reportOperationError("move to slot: \(error.localizedDescription)", token: token)
         }
     }
 

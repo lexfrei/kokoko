@@ -4,7 +4,7 @@ extension KokokoCoreChecks {
     static func rowGlyphChecks() {
         let expected: [(RowAction, String, String)] = [
             (.play, "[>]", "Play preview"), (.download, "[v]", "Download"), (.rename, "[r]", "Rename"),
-            (.renumber, "[#]", "Change slot"), (.metadata, "[m]", "Edit metadata"), (.delete, "[x]", "Delete"),
+            (.renumber, "[#]", "Move to slot"), (.metadata, "[m]", "Edit metadata"), (.delete, "[x]", "Delete"),
             (.restore, "[restore]", "Restore to the device"), (.removeFromBin, "[x]", "Remove from bin"),
             (.downloadArchive, "[v tar]", "Download tar archive"),
         ]
