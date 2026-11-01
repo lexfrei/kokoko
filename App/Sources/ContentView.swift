@@ -21,6 +21,9 @@ struct ContentView: View {
             footer
         }
         .font(.system(.body, design: .monospaced))
+        // On macOS the rows of a List kept the proportional font with only the line
+        // above; the design has to be set on its own as well.
+        .fontDesign(.monospaced)
         .frame(minWidth: 420, minHeight: 480)
         .fileImporter(isPresented: anyPickerBinding,
                       allowedContentTypes: state.picker == .none ? [.audio] : [.folder],
