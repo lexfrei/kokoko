@@ -133,26 +133,34 @@ struct ContentView: View {
             Text("kokoko")
                 .font(.system(.title2, design: .monospaced))
             if case .connected = state.connection {
-                Button("[ sounds ]") { state.view = .sounds }
+                Button(tabTitle("sounds", selected: state.view == .sounds)) { state.view = .sounds }
                     .buttonStyle(.plain)
                     .foregroundStyle(state.view == .sounds ? .primary : .secondary)
-                Button("[ projects ]") {
+                    .accessibilityLabel("Sounds")
+                    .accessibilityAddTraits(state.view == .sounds ? .isSelected : [])
+                Button(tabTitle("projects", selected: state.view == .projects)) {
                     state.view = .projects
                     Task { await state.refreshProjects() }
                 }
                 .buttonStyle(.plain)
                 .disabled(state.deviceBusy)
                 .foregroundStyle(state.view == .projects ? .primary : .secondary)
-                Button("[ settings ]") { state.view = .settings }
+                .accessibilityLabel("Projects")
+                .accessibilityAddTraits(state.view == .projects ? .isSelected : [])
+                Button(tabTitle("settings", selected: state.view == .settings)) { state.view = .settings }
                     .buttonStyle(.plain)
                     .disabled(state.deviceBusy)
                     .foregroundStyle(state.view == .settings ? .primary : .secondary)
-                Button("[ bin ]") {
+                    .accessibilityLabel("Settings")
+                    .accessibilityAddTraits(state.view == .settings ? .isSelected : [])
+                Button(tabTitle("bin", selected: state.view == .bin)) {
                     state.view = .bin
                     state.loadBin()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(state.view == .bin ? .primary : .secondary)
+                .accessibilityLabel("Bin")
+                .accessibilityAddTraits(state.view == .bin ? .isSelected : [])
             }
             Spacer()
             switch state.connection {
@@ -225,11 +233,8 @@ struct ContentView: View {
                     Spacer()
                     Text(formatSize(item.node.size))
                         .foregroundStyle(.secondary)
-                    Button("[>]") { Task { await state.audition(item) } }
-                        .buttonStyle(.plain)
-                        .disabled(state.deviceBusy)
-                        .help("play 1s preview on device")
-                    Button("[v]") {
+                    rowButton(.play, help: "play 1s preview on device") { Task { await state.audition(item) } }
+                    rowButton(.download, help: "download as wav") {
                         Task {
                             if let result = await state.download(item) {
                                 state.exportName = result.name
@@ -237,25 +242,10 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(state.deviceBusy)
-                    .help("download as wav")
-                    Button("[r]") { state.renameText = item.displayName; state.renameItem = item }
-                        .buttonStyle(.plain)
-                        .disabled(state.deviceBusy)
-                        .help("rename")
-                    Button("[#]") { state.renumberItem = item }
-                        .buttonStyle(.plain)
-                        .disabled(state.deviceBusy)
-                        .help("change slot number")
-                    Button("[m]") { Task { await state.editMetadata(item) } }
-                        .buttonStyle(.plain)
-                        .disabled(state.deviceBusy)
-                        .help("edit metadata")
-                    Button("[x]") { Task { await state.delete(item) } }
-                        .buttonStyle(.plain)
-                        .disabled(state.deviceBusy)
-                        .help("delete from device")
+                    rowButton(.rename, help: "rename") { state.renameText = item.displayName; state.renameItem = item }
+                    rowButton(.renumber, help: "change slot number") { state.renumberItem = item }
+                    rowButton(.metadata, help: "edit metadata") { Task { await state.editMetadata(item) } }
+                    rowButton(.delete, help: "delete from device") { Task { await state.delete(item) } }
                 }
                 .tag(item.id)
                 .onDrag { state.dragProvider(for: item) }
@@ -334,14 +324,10 @@ struct ContentView: View {
                             Text(binRowLabel(slot: entry.originalSlot, name: entry.name,
                                              deletedAt: entry.deletedAt))
                             Spacer()
-                            Button("[restore]") { Task { await state.restoreFromBin(entry) } }
-                                .buttonStyle(.plain)
-                                .disabled(state.deviceBusy)
-                                .help("put back on the device")
-                            Button("[x]") { binToRemove = entry }
-                                .buttonStyle(.plain)
-                                .disabled(state.deviceBusy)
-                                .help("remove from the bin for good")
+                            rowButton(.restore, help: "put back on the device") {
+                                Task { await state.restoreFromBin(entry) }
+                            }
+                            rowButton(.removeFromBin, help: "remove from the bin for good") { binToRemove = entry }
                         }
                     }
                 }
@@ -377,7 +363,7 @@ struct ContentView: View {
                 HStack {
                     Text("P\(project.name)")
                     Spacer()
-                    Button("[v tar]") {
+                    rowButton(.downloadArchive, help: "download project archive") {
                         Task {
                             if let result = await state.downloadProject(project) {
                                 state.exportName = result.name
@@ -386,9 +372,6 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(state.deviceBusy)
-                    .help("download project archive")
                 }
             }
         }
@@ -443,6 +426,29 @@ struct ContentView: View {
         }
         return true
     }
+
+    /// A row action: its glyph on screen, its name for VoiceOver, and a hit area at
+    /// least 28 pt wide (the HIG minimum; wider would crowd a row's name out on iPhone)
+    /// and as tall as the HIG default for the platform. The frame and shape sit inside
+    /// the label: placed outside the Button, a plain-style button on macOS was measured
+    /// still taking clicks only on the glyph.
+    private func rowButton(_ action: RowAction, help: String, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Text(action.glyph)
+                .frame(minWidth: 28, minHeight: Self.minHitHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(state.deviceBusy)
+        .help(help)
+        .accessibilityLabel(action.accessibilityLabel)
+    }
+
+    #if os(macOS)
+    private static let minHitHeight: CGFloat = 28
+    #else
+    private static let minHitHeight: CGFloat = 44
+    #endif
 
     private func formatSize(_ size: UInt32) -> String {
         if size > 1024 * 1024 {
