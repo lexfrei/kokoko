@@ -12,11 +12,13 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 - Renames a sound, moves it to another slot, and swaps two sounds by dragging one row onto the other. A selection of sounds can be moved, in slot order, onto the free slots counting up from a chosen number, skipping slots held by other sounds.
 - Edits a sound's root note, bpm, pitch, pan, amplitude, envelope attack and release, loop points and play and time modes from its `[m]` button. Numbers are checked against the ranges in [docs/protocol.md](docs/protocol.md), and only the changed fields are sent.
 - Deletes one sound or a selection and keeps a copy of each in a recycle bin on the Mac or iPad. If deleting into the bin fails, it offers to delete that sound without keeping a copy.
-- Lists the deleted sounds in a bin tab with their original slot, name and time of deletion. A sound can be put back, into its original slot if that slot is free and into another one otherwise, or removed from the bin for good.
-- Backs up the sounds, the projects, or both into a folder: sounds from the sounds tab, projects from the projects tab, both from the settings tab. A restore, started from any of these tabs, puts back the sounds from the chosen backup folder and its projects into the project slots that already exist on the device.
+- Lists the deleted sounds in a bin tab with their original slot, name and time of deletion. A sound can be put back, into its original slot if that slot is free and into another one otherwise, or removed from the bin for good. The bin tab works without a device; putting a sound back needs one connected.
+- Backs up the sounds, the projects, or both into a folder, from the buttons on the sounds, projects and settings tabs or from the File menu. A restore, started from those tabs or the menu, puts back the sounds from the chosen backup folder and its projects into the project slots that already exist on the device.
 - Lists the projects, downloads one as a `.tar` archive, and uploads archives named like `P01.tar` by dropping them onto the project list, into a slot that already exists on the device.
 - Shows the device settings where the firmware exposes them.
-- Puts these actions in the menu bar as well: File has Add Sounds (⌘O), downloading the selected sounds, and the three backups and the restore, which work from any tab; View switches tabs (⌘1 to ⌘4), refreshes the open tab (⌘R) and scans for devices again.
+- Keeps every tab visible, with or without a device, and says on each device tab whether it is scanning, connecting or not connected. The full text of an error opens from the footer.
+- Gives every bracketed button a spoken name for VoiceOver, such as "Delete selected" for `[ x ]`, and marks the selected tab with `*` as well as with color.
+- Puts these actions in the menu bar as well: File has Add Sounds (⌘O), downloading the selected sounds, and the three backups and the restore, which work from any tab; View switches tabs (⌘1 to ⌘4), refreshes the open tab (⌘R) and scans for devices again. On a Mac the app has a single window, and closing it quits the app.
 
 ## Status and limits
 
