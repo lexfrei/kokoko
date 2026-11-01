@@ -153,6 +153,8 @@ final class AppState: ObservableObject {
     private var session: SysExSession?
     private var hotplug = HotplugPolicy(debounce: 1)
     private var hotplugWatcher: HotplugWatcher?
+    /// The session the running scan opened; an unplug closes it like the connected one.
+    private var scanning: (pair: MIDIEndpointPair, session: SysExSession)?
     private var connectedPair: MIDIEndpointPair?
     private var files: DeviceFileService?
     private var library: DeviceLibrary?
@@ -211,6 +213,10 @@ final class AppState: ObservableObject {
     }
 
     private func devicesChanged() {
+        if let scanning, !pairIsOnline(scanning.pair) {
+            let session = scanning.session
+            Task { await session.close() }
+        }
         let online = connectedPair.map(pairIsOnline) ?? false
         if hotplug.changed(now: clockSeconds, pairOnline: online) == .disconnect {
             let reason = connectedPair.map { "\($0.name) disconnected" } ?? "device disconnected"
@@ -280,6 +286,8 @@ final class AppState: ObservableObject {
                     continue
                 }
                 let session = SysExSession(wire: wire, identityCode: reply.deviceID)
+                scanning = (pair, session)
+                defer { scanning = nil }
                 let meta = try await session.greet()
                 let service = DeviceFileService(session: session)
                 try await service.initialize()
