@@ -90,22 +90,29 @@ struct Probe {
                             print("  write-test: dir create failed: \(error)")
                         }
                     }
-                    if CommandLine.arguments.contains("--settings-dump") {
-                        let settings = SettingsService(session: session)
-                        try await settings.initialize()
-                        let all = try await settings.getAll()
-                        let data = try JSONSerialization.data(
-                            withJSONObject: all.mapValues(\.anyValue),
-                            options: [.prettyPrinted, .sortedKeys])
-                        let out = "/tmp/kokoko-settings-dump.json"
-                        try data.write(to: URL(fileURLWithPath: out))
-                        print("  settings dumped to \(out) (\(data.count) bytes)")
-                    }
                     if CommandLine.arguments.contains("--download-smallest"),
                        let smallest = nodes.filter({ $0.isFile }).min(by: { $0.size < $1.size }) {
                         let got = try await files.get(fileID: smallest.id)
                         let expected = Int(smallest.size)
                         print("  download \(got.name): \(got.data.count)b (expected \(expected)) \(got.data.count == expected ? "MATCH" : "MISMATCH")")
+                    }
+                }
+                if CommandLine.arguments.contains("--settings-dump") {
+                    do {
+                        let settings = SettingsService(session: session)
+                        try await settings.initialize()
+                        let object = try await settings.getAll().mapValues(\.anyValue)
+                        // JSONSerialization raises an uncatchable exception on NaN or infinity.
+                        guard JSONSerialization.isValidJSONObject(object) else {
+                            throw SettingsError.unserializableValue
+                        }
+                        let data = try JSONSerialization.data(withJSONObject: object,
+                                                              options: [.prettyPrinted, .sortedKeys])
+                        let out = "/tmp/kokoko-settings-dump.json"
+                        try data.write(to: URL(fileURLWithPath: out))
+                        print("  settings dumped to \(out) (\(data.count) bytes)")
+                    } catch {
+                        print("  settings: \(error.localizedDescription)")
                     }
                 }
             } catch {
