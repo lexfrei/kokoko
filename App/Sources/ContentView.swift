@@ -312,7 +312,7 @@ struct ContentView: View {
                             Text(binRowLabel(slot: entry.originalSlot, name: entry.name,
                                              deletedAt: entry.deletedAt))
                             Spacer()
-                            rowButton(.restore, help: "put back on the device", needsDevice: true) {
+                            rowButton(.restore, help: "restore to the device", needsDevice: true) {
                                 Task { await state.restoreFromBin(entry) }
                             }
                             rowButton(.removeFromBin, help: "remove from the bin for good") { state.binToRemove = entry }

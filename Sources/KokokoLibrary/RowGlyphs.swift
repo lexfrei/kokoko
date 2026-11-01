@@ -24,9 +24,9 @@ public enum RowAction: CaseIterable, Sendable {
         case .renumber: "Change slot"
         case .metadata: "Edit metadata"
         case .delete: "Delete"
-        case .restore: "Put back on the device"
+        case .restore: "Restore to the device"
         case .removeFromBin: "Remove from bin"
-        case .downloadArchive: "Download archive"
+        case .downloadArchive: "Download tar archive"
         }
     }
 }
