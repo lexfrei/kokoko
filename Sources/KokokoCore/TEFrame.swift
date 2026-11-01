@@ -28,8 +28,9 @@ public enum TEStatus: Equatable, Sendable {
     case badRequest
     case specificError(UInt8)
     case specificSuccess(UInt8)
+    case unknown(UInt8)
 
-    public init?(_ byte: UInt8) {
+    public init(_ byte: UInt8) {
         switch byte {
         case 0: self = .ok
         case 1: self = .error
@@ -37,7 +38,7 @@ public enum TEStatus: Equatable, Sendable {
         case 3: self = .badRequest
         case 16...63: self = .specificError(byte)
         case 64...127: self = .specificSuccess(byte)
-        default: return nil
+        default: self = .unknown(byte)
         }
     }
 

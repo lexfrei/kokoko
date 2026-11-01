@@ -28,6 +28,7 @@ struct KokokoCoreChecks {
         fileMessages()
         namesAndCRC()
         await sessionChecks()
+        await statusChecks()
         umpChecks()
         wireErrorChecks()
         errorDescriptionChecks()
