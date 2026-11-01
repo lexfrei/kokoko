@@ -270,8 +270,11 @@ final class AppState: ObservableObject {
             do {
                 connection = .connecting(pair.name)
                 let wire = try CoreMIDIWire(pair: pair)
-                // No identity reply: not a sampler, skipped without a failure.
-                guard let reply = try? await identifyDevice(on: wire) else {
+                let reply: Identity.Reply
+                do {
+                    reply = try await identifyDevice(on: wire)
+                } catch where isNoIdentityReply(error) {
+                    // No identity reply: not a sampler, skipped without a failure.
                     continue
                 }
                 let session = SysExSession(wire: wire, identityCode: reply.deviceID)
