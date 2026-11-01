@@ -51,7 +51,8 @@ struct SettingsView: View {
             }
         }
         .task {
-            if state.settingsTree.isEmpty {
+            // While the device is busy, the scan that holds it loads the settings itself.
+            if state.settingsTree.isEmpty && !state.deviceBusy {
                 await state.loadSettings()
             }
         }

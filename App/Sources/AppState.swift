@@ -15,13 +15,6 @@ enum ConnectionState: Equatable {
     case failed(String)
 }
 
-enum AppView {
-    case sounds
-    case projects
-    case settings
-    case bin
-}
-
 struct ProjectItem: Identifiable, Equatable {
     let id: UInt16
     let name: String
@@ -76,7 +69,7 @@ final class AppState: ObservableObject {
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsUnsupported = false
-    @Published var view: AppView = .sounds
+    @Published var view: HeaderTab = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
     /// True while a user action talks to the device. Transfers on the wire
@@ -304,7 +297,19 @@ final class AppState: ObservableObject {
                                         osVersion: meta.osVersion)
                 Task { await self.checkFirmware(baseSKU: meta.baseSKU.isEmpty ? meta.sku : meta.baseSKU,
                                                 current: meta.osVersion, token: token) }
-                await reload()
+                // The tab on screen may have been opened before the device was there.
+                switch view {
+                case .projects: await reloadSoundsAndProjects()
+                case .settings:
+                    await reload()
+                    // A failed settings read replaces lastError; keep a sounds failure next to it.
+                    let soundsError = lastError
+                    await fetchSettings()
+                    if let soundsError, let settingsError = lastError, settingsError != soundsError {
+                        lastError = appendingError(soundsError, settingsError)
+                    }
+                case .sounds, .bin: await reload()
+                }
                 return
             } catch {
                 failures.append("\(pair.name): \(error.localizedDescription)")
@@ -830,6 +835,11 @@ final class AppState: ObservableObject {
     func loadSettings() async {
         guard enterDevice() else { return }
         defer { deviceBusy = false }
+        await fetchSettings()
+    }
+
+    /// The caller holds the device.
+    private func fetchSettings() async {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let settings else { return }

@@ -132,35 +132,8 @@ struct ContentView: View {
         HStack {
             Text("kokoko")
                 .font(.system(.title2, design: .monospaced))
-            if case .connected = state.connection {
-                Button(tabTitle("sounds", selected: state.view == .sounds)) { state.view = .sounds }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(state.view == .sounds ? .primary : .secondary)
-                    .accessibilityLabel("Sounds")
-                    .accessibilityAddTraits(state.view == .sounds ? .isSelected : [])
-                Button(tabTitle("projects", selected: state.view == .projects)) {
-                    state.view = .projects
-                    Task { await state.refreshProjects() }
-                }
-                .buttonStyle(.plain)
-                .disabled(state.deviceBusy)
-                .foregroundStyle(state.view == .projects ? .primary : .secondary)
-                .accessibilityLabel("Projects")
-                .accessibilityAddTraits(state.view == .projects ? .isSelected : [])
-                Button(tabTitle("settings", selected: state.view == .settings)) { state.view = .settings }
-                    .buttonStyle(.plain)
-                    .disabled(state.deviceBusy)
-                    .foregroundStyle(state.view == .settings ? .primary : .secondary)
-                    .accessibilityLabel("Settings")
-                    .accessibilityAddTraits(state.view == .settings ? .isSelected : [])
-                Button(tabTitle("bin", selected: state.view == .bin)) {
-                    state.view = .bin
-                    state.loadBin()
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(state.view == .bin ? .primary : .secondary)
-                .accessibilityLabel("Bin")
-                .accessibilityAddTraits(state.view == .bin ? .isSelected : [])
+            ForEach(HeaderTab.allCases, id: \.self) { tab in
+                tabButton(tab)
             }
             Spacer()
             switch state.connection {
@@ -180,36 +153,63 @@ struct ContentView: View {
         .padding()
     }
 
+    private var isConnected: Bool {
+        if case .connected = state.connection { true } else { false }
+    }
+
+    private func tabButton(_ tab: HeaderTab) -> some View {
+        Button(tabTitle(tab.title, selected: state.view == tab)) {
+            state.view = tab
+            switch tab {
+            case .projects where isConnected: Task { await state.refreshProjects() }
+            case .bin: state.loadBin()
+            default: break
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!tab.isEnabled(deviceBusy: state.deviceBusy))
+        .foregroundStyle(state.view == tab ? .primary : .secondary)
+        .accessibilityLabel(tab.title.capitalized)
+        .accessibilityAddTraits(state.view == tab ? .isSelected : [])
+    }
+
     private var content: some View {
         Group {
-            switch state.connection {
-            case .connected:
-                if state.view == .projects {
+            if let notice = tabNotice(state.view, connected: isConnected) {
+                deviceNotice(notice)
+            } else {
+                switch state.view {
+                case .projects:
                     projectList
-                } else if state.view == .settings {
+                case .settings:
                     VStack(spacing: 0) {
                         backupRow(.everything, label: "[ backup all ]")
                         Divider()
                         SettingsView(state: state)
                     }
-                } else if state.view == .bin {
+                case .bin:
                     binList
-                } else {
+                case .sounds:
                     soundList
                 }
-            case .failed:
-                VStack(spacing: 12) {
-                    Text("connect the device over usb-c")
-                    Button("[ retry ]") { Task { await state.scan() } }
-                        .buttonStyle(.plain)
-                        .disabled(state.deviceBusy)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            default:
-                Text("scanning for midi devices...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+
+    private func deviceNotice(_ notice: String) -> some View {
+        VStack(spacing: 12) {
+            Text(notice)
+            switch state.connection {
+            case .failed:
+                Text("connect the device over usb-c")
+                Button("[ retry ]") { Task { await state.scan() } }
+                    .buttonStyle(.plain)
+                    .disabled(state.deviceBusy)
+            default:
+                Text("scanning for midi devices...")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var soundList: some View {
@@ -324,7 +324,7 @@ struct ContentView: View {
                             Text(binRowLabel(slot: entry.originalSlot, name: entry.name,
                                              deletedAt: entry.deletedAt))
                             Spacer()
-                            rowButton(.restore, help: "put back on the device") {
+                            rowButton(.restore, help: "put back on the device", needsDevice: true) {
                                 Task { await state.restoreFromBin(entry) }
                             }
                             rowButton(.removeFromBin, help: "remove from the bin for good") { binToRemove = entry }
@@ -432,14 +432,15 @@ struct ContentView: View {
     /// and as tall as the HIG default for the platform. The frame and shape sit inside
     /// the label: placed outside the Button, a plain-style button on macOS was measured
     /// still taking clicks only on the glyph.
-    private func rowButton(_ action: RowAction, help: String, perform: @escaping () -> Void) -> some View {
+    private func rowButton(_ action: RowAction, help: String, needsDevice: Bool = false,
+                           perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
             Text(action.glyph)
                 .frame(minWidth: 28, minHeight: Self.minHitHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(state.deviceBusy)
+        .disabled(state.deviceBusy || (needsDevice && !isConnected))
         .help(help)
         .accessibilityLabel(action.accessibilityLabel)
     }
