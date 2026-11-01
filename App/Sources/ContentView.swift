@@ -422,7 +422,7 @@ struct ContentView: View {
                            perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
             Text(action.glyph)
-                .frame(minWidth: 28, minHeight: Self.minHitHeight)
+                .frame(minWidth: 28, minHeight: minHitHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -430,12 +430,6 @@ struct ContentView: View {
         .help(help)
         .accessibilityLabel(action.accessibilityLabel)
     }
-
-    #if os(macOS)
-    private static let minHitHeight: CGFloat = 28
-    #else
-    private static let minHitHeight: CGFloat = 44
-    #endif
 
     private func formatSize(_ size: UInt32) -> String {
         if size > 1024 * 1024 {
@@ -561,7 +555,17 @@ private struct FullTextButton: View {
 
 @MainActor
 func barButton(_ action: BarAction, perform: @escaping () -> Void) -> some View {
-    Button(action.text, action: perform)
-        .buttonStyle(.plain)
-        .accessibilityLabel(action.accessibilityLabel)
+    Button(action: perform) {
+        Text(action.text)
+            .frame(minWidth: 28, minHeight: minHitHeight)
+            .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(action.accessibilityLabel)
 }
+
+#if os(macOS)
+private let minHitHeight: CGFloat = 28
+#else
+private let minHitHeight: CGFloat = 44
+#endif
