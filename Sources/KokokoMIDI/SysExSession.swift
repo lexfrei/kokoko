@@ -13,7 +13,6 @@ extension SessionError: LocalizedError {
         case .timeout(let command, _):
             return "device did not answer command \(command) in time"
         case .deviceError(let status, let message):
-            // Named statuses carry no number: an unknown status byte arrives here as .error.
             let name = switch status {
             case .ok: "ok"
             case .error: "error"
@@ -21,6 +20,7 @@ extension SessionError: LocalizedError {
             case .badRequest: "bad request"
             case .specificError(let byte): "command-specific error \(byte)"
             case .specificSuccess(let byte): "command-specific success \(byte)"
+            case .unknown(let byte): "unknown status \(byte)"
             }
             let text = "device answered \(name)"
             guard let message, !message.isEmpty else { return text }
