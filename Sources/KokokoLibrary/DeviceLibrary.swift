@@ -30,8 +30,9 @@ public struct DeviceBackup: Sendable {
     /// Project metadata entries of an older backup that keyed them by node id;
     /// they are not restored.
     public var legacyProjectSettings: Int
-    /// Project archives the manifest lists or the folder holds that could not
-    /// be read, by project name; they are not restored.
+    /// Project archives the manifest lists or the folder holds that are missing,
+    /// cannot be read, or are not a valid tar archive, by project name; they are
+    /// not restored.
     public var unreadArchives: [String] = []
     /// What the backup could not capture; not written to the backup folder.
     public var report = BackupReport()
@@ -150,7 +151,7 @@ public actor DeviceLibrary {
     /// path, with "active" pointed at the node at its saved path; metadata whose
     /// node or selection is missing, or whose write fails, is reported, not applied.
     /// A project whose archive is not restored, because its slot is missing or the
-    /// backup could not read it, gets none of its metadata; it is reported once, in
+    /// backup's archive is missing or damaged, gets none of its metadata; it is reported once, in
     /// `skippedProjects` or `unreadArchives`, not in `unappliedSettings`.
     @discardableResult
     public func restore(_ backup: DeviceBackup,
@@ -412,7 +413,7 @@ public struct RestoreReport: Equatable, Sendable {
         }
         if !unreadArchives.isEmpty {
             parts.append(unreadArchives.map { "P\($0)" }.joined(separator: ", ")
-                + " not restored: archive missing or unreadable in the backup")
+                + " not restored: archive missing or damaged in the backup")
         }
         return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
@@ -503,12 +504,9 @@ public enum BackupStore {
         let projectsDir = dir.appendingPathComponent("projects")
         if let names = try? fm.contentsOfDirectory(atPath: projectsDir.path) {
             for name in names {
-                // Only the names write() produces; anything else, such as the "._P01.tar"
-                // macOS writes next to a file on a FAT drive, is not an archive of this backup.
-                guard name.hasPrefix("P"), name.hasSuffix(".tar") else { continue }
-                let slot = String(name.dropFirst().dropLast(4))
-                guard !slot.isEmpty, slot.allSatisfy(\.isASCII), slot.allSatisfy(\.isNumber) else { continue }
-                if let data = try? Data(contentsOf: projectsDir.appendingPathComponent(name)) {
+                guard let slot = projectSlot(backupArchiveName: name) else { continue }
+                if let data = try? Data(contentsOf: projectsDir.appendingPathComponent(name)),
+                   isValidProjectArchive(Array(data)) {
                     archives[slot] = Array(data)
                 } else {
                     unread.insert(slot)
@@ -527,4 +525,47 @@ public enum BackupStore {
         backup.unreadArchives = unread.sorted()
         return backup
     }
+}
+
+/// Whether `bytes` look like a tar archive: not empty, whole 512-byte blocks,
+/// and either a first header whose checksum matches or the two zero end blocks
+/// of an archive with no members. Says nothing about the contents.
+public func isValidProjectArchive(_ bytes: [UInt8]) -> Bool {
+    guard !bytes.isEmpty, bytes.count % 512 == 0 else { return false }
+    // An archive with no members is just the two zero blocks that end every tar.
+    if bytes[0..<512].allSatisfy({ $0 == 0 }) {
+        return bytes.count >= 1024 && bytes[512..<1024].allSatisfy { $0 == 0 }
+    }
+    let field = bytes[148..<156].drop { $0 == 0x20 }.prefix { $0 != 0 && $0 != 0x20 }
+    guard let stored = Int(String(decoding: field, as: UTF8.self), radix: 8) else { return false }
+    var unsigned = 0
+    var signed = 0
+    for (index, byte) in bytes[0..<512].enumerated() {
+        let value = (148..<156).contains(index) ? 0x20 : byte
+        unsigned += Int(value)
+        signed += Int(Int8(bitPattern: value))
+    }
+    // Old tar tools summed signed bytes; POSIX tar sums unsigned ones.
+    return stored == unsigned || stored == signed
+}
+
+/// The project slot named by a backup's archive file: exactly "P", ASCII digits
+/// and ".tar", the names `BackupStore.write` produces.
+public func projectSlot(backupArchiveName name: String) -> String? {
+    guard name.hasPrefix("P"), name.hasSuffix(".tar") else { return nil }
+    return asciiDigits(name.dropFirst().dropLast(4))
+}
+
+/// The project slot named by an archive dropped on the project list: any name
+/// ending in "P", two ASCII digits and ".tar", since other tools put a prefix
+/// before it. A "._" file is the metadata copy macOS writes on a FAT drive.
+public func projectSlot(droppedArchiveName name: String) -> String? {
+    guard !name.hasPrefix("._"), name.hasSuffix(".tar") else { return nil }
+    let stem = name.dropLast(4)
+    guard stem.count >= 3, stem.dropLast(2).last == "P" else { return nil }
+    return asciiDigits(stem.suffix(2))
+}
+
+private func asciiDigits(_ text: Substring) -> String? {
+    !text.isEmpty && text.allSatisfy({ $0.isASCII && $0.isNumber }) ? String(text) : nil
 }

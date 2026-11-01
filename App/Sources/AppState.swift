@@ -888,12 +888,13 @@ final class AppState: ObservableObject {
                              op: ProgressLine.Operation) async throws {
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        guard let match = url.lastPathComponent.range(of: #"P(\d{2})\.tar$"#,
-                                                      options: .regularExpression) else {
+        guard let slot = projectSlot(droppedArchiveName: url.lastPathComponent) else {
             throw ProjectUploadError(errorDescription: "project archive must be named like P01.tar")
         }
-        let slot = String(url.lastPathComponent[match].dropFirst().dropLast(4))
         let data = Array(try Data(contentsOf: url))
+        guard isValidProjectArchive(data) else {
+            throw ProjectUploadError(errorDescription: "\(url.lastPathComponent) is not a valid project archive")
+        }
         let projectsRoot = try await resolve("/projects")
         guard let parent = try await files.list(nodeID: projectsRoot)
             .first(where: { $0.name == slot }) else {

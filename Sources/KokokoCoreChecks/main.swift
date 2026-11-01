@@ -69,6 +69,8 @@ struct KokokoCoreChecks {
         errorColorChecks()
         appCommandChecks()
         backupArchiveChecks()
+        projectArchiveValidationChecks()
+        archiveNameChecks()
         confirmationChecks()
         do {
             try audioChecks()

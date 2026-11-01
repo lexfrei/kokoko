@@ -43,8 +43,8 @@ public struct RestoreSummary: Sendable {
         }
         if !unreadArchives.isEmpty {
             parts.append(unreadArchives.count == 1
-                ? "\(list(unreadArchives)) cannot be read from the backup; neither its archive nor its settings are restored."
-                : "\(list(unreadArchives)) cannot be read from the backup; neither their archives nor their settings are restored.")
+                ? "\(list(unreadArchives)) is missing or damaged in the backup; neither its archive nor its settings are restored."
+                : "\(list(unreadArchives)) are missing or damaged in the backup; neither their archives nor their settings are restored.")
         }
         if hasProjectSettings {
             parts.append("Project settings from the backup are applied to the matching projects on the device.")
