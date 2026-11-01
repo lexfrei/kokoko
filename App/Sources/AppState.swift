@@ -71,18 +71,8 @@ final class AppState: ObservableObject {
     @Published var renameItem: SoundItem?
     @Published var renameText = ""
     @Published var metadataEditing: MetadataEditing?
-    @Published var firmwareNote: String?
-
-    /// Short suffix for the header: " ✓" when current, " → x.y.z" when behind.
-    var firmwareSuffix: String {
-        guard let note = firmwareNote else { return "" }
-        if let arrow = note.range(of: " → ") {
-            return " " + note[arrow.lowerBound...].trimmingCharacters(in: .whitespaces)
-                .replacingOccurrences(of: "→ ", with: "→ ")
-                .description
-        }
-        return " ✓"
-    }
+    @Published var firmwareStatus: FirmwareStatus?
+    var firmwareSuffix: String { KokokoLibrary.firmwareSuffix(firmwareStatus) }
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsUnsupported = false
@@ -249,7 +239,7 @@ final class AppState: ObservableObject {
         renumberItem = nil
         metadataEditing = nil
         picker = .none
-        firmwareNote = nil
+        firmwareStatus = nil
         settingsTree = []
         settingsUnsupported = false
     }
@@ -871,11 +861,10 @@ final class AppState: ObservableObject {
             let (data, _) = try await URLSession.shared.data(from: url)
             let registry = try JSONDecoder().decode(Registry.self, from: data)
             guard let latest = registry.devices.first(where: { $0.sku == baseSKU }) else { return }
-            let latestVersion = latest.version.split(separator: "+").first.map(String.init) ?? latest.version
             guard hotplug.isCurrent(token) else { return }
-            firmwareNote = current == latestVersion ? "fw \(current) ✓" : "fw \(current) → \(latestVersion)"
+            firmwareStatus = KokokoLibrary.firmwareStatus(device: current, published: latest.version)
         } catch {
-            if hotplug.isCurrent(token) { firmwareNote = nil }
+            if hotplug.isCurrent(token) { firmwareStatus = nil }
         }
     }
 
