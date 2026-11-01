@@ -195,7 +195,7 @@ final class AppState: ObservableObject {
     func watchDevices() {
         guard hotplugWatcher == nil else { return }
         do {
-            hotplugWatcher = try HotplugWatcher { [weak self] in
+            hotplugWatcher = try HotplugWatcher { [weak self] _ in
                 Task { @MainActor in self?.devicesChanged() }
             }
         } catch {

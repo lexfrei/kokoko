@@ -2,21 +2,29 @@ import CoreMIDI
 import Foundation
 
 /// Calls `onChange` whenever CoreMIDI reports that devices or endpoints were
-/// added, removed, or went offline or online. It says only that something
-/// changed: callers re-read the device list to learn what.
+/// added, removed, or went offline or online, anywhere on the system, with the
+/// object the notification names. Callers re-read the device list to learn
+/// what changed.
 public final class HotplugWatcher: @unchecked Sendable {
     private var client = MIDIClientRef()
 
-    public init(onChange: @escaping @Sendable () -> Void) throws {
+    public init(onChange: @escaping @Sendable (MIDIObjectRef) -> Void) throws {
         let status = MIDIClientCreateWithBlock("kokoko-hotplug" as CFString, &client) { notification in
             let id = notification.pointee.messageID
+            let raw = UnsafeRawPointer(notification)
             var property: String?
-            if id == .msgPropertyChanged {
-                property = UnsafeRawPointer(notification)
-                    .assumingMemoryBound(to: MIDIObjectPropertyChangeNotification.self).pointee
-                    .propertyName.takeUnretainedValue() as String
+            var object = MIDIObjectRef()
+            switch id {
+            case .msgPropertyChanged:
+                let change = raw.assumingMemoryBound(to: MIDIObjectPropertyChangeNotification.self).pointee
+                property = change.propertyName.takeUnretainedValue() as String
+                object = change.object
+            case .msgObjectAdded, .msgObjectRemoved:
+                object = raw.assumingMemoryBound(to: MIDIObjectAddRemoveNotification.self).pointee.child
+            default:
+                break
             }
-            if isDeviceChange(id, property: property) { onChange() }
+            if isDeviceChange(id, property: property) { onChange(object) }
         }
         guard status == noErr else { throw CoreMIDIError.osStatus("MIDIClientCreateWithBlock", status) }
     }
