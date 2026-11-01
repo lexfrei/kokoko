@@ -25,6 +25,8 @@ public final class VirtualEPDevice: @unchecked Sendable {
     private var client = MIDIClientRef()
     private var source = MIDIEndpointRef()
     private var destination = MIDIEndpointRef()
+    // stop() runs on the caller's thread while replies are sent from CoreMIDI's.
+    private let endpointLock = NSLock()
     private let assembler = UMPAssembler()
 
     private var nodes: [UInt16: VNode] = [:]
@@ -100,8 +102,10 @@ public final class VirtualEPDevice: @unchecked Sendable {
         }
         guard status == noErr else { throw CoreMIDIError.osStatus("MIDIDestinationCreate", status) }
 
-        status = MIDISourceCreate(client, name as CFString, &source)
+        var newSource = MIDIEndpointRef()
+        status = MIDISourceCreate(client, name as CFString, &newSource)
         guard status == noErr else { throw CoreMIDIError.osStatus("MIDISourceCreate", status) }
+        endpointLock.withLock { source = newSource }
 
         assembler.onMessage = { [weak self] message in
             self?.handle(message)
@@ -112,19 +116,24 @@ public final class VirtualEPDevice: @unchecked Sendable {
     /// unplugged but still listed would be.
     public func setOffline(_ offline: Bool) {
         let value: Int32 = offline ? 1 : 0
-        MIDIObjectSetIntegerProperty(source, kMIDIPropertyOffline, value)
-        MIDIObjectSetIntegerProperty(destination, kMIDIPropertyOffline, value)
+        endpointLock.withLock {
+            MIDIObjectSetIntegerProperty(source, kMIDIPropertyOffline, value)
+            MIDIObjectSetIntegerProperty(destination, kMIDIPropertyOffline, value)
+        }
     }
 
     /// Removes the device from the system, as an unplug would. The file
     /// contents stay, and start() publishes the device again.
     public func stop() {
-        if source != 0 { MIDIEndpointDispose(source) }
-        if destination != 0 { MIDIEndpointDispose(destination) }
-        if client != 0 { MIDIClientDispose(client) }
-        source = 0
-        destination = 0
-        client = 0
+        let (oldSource, oldDestination, oldClient) = endpointLock.withLock {
+            defer { (source, destination, client) = (0, 0, 0) }
+            return (source, destination, client)
+        }
+        // Disposed outside the lock: disposing the destination waits for a receive
+        // callback still running, and that callback may be waiting for the lock in sendRaw.
+        if oldSource != 0 { MIDIEndpointDispose(oldSource) }
+        if oldDestination != 0 { MIDIEndpointDispose(oldDestination) }
+        if oldClient != 0 { MIDIClientDispose(oldClient) }
     }
 
     private func handle(_ message: [UInt8]) {
@@ -179,6 +188,12 @@ public final class VirtualEPDevice: @unchecked Sendable {
                 let page = readU16(p, 2)
                 guard var put = pendingPut else {
                     respond(to: frame, status: 3, payload: [])
+                    return
+                }
+                // The node can be deleted while its transfer is open.
+                guard nodes[put.nodeID] != nil else {
+                    pendingPut = nil
+                    respond(to: frame, status: 16, payload: [])
                     return
                 }
                 let chunk = Array(p[4...])
@@ -386,7 +401,12 @@ public final class VirtualEPDevice: @unchecked Sendable {
                 return
             }
             let dict = nodes[fileID]?.metadata.mapValues(\.anyValue) ?? [:]
-            let data = (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+            // try? cannot catch the exception JSONSerialization raises on NaN or infinity.
+            guard JSONSerialization.isValidJSONObject(dict),
+                  let data = try? JSONSerialization.data(withJSONObject: dict) else {
+                respond(to: frame, status: 16, payload: [])
+                return
+            }
             respond(to: frame, status: 0,
                     payload: [0, 0] + Array(data) + [0])
         case 4: // set paged
@@ -402,6 +422,11 @@ public final class VirtualEPDevice: @unchecked Sendable {
                 let page = readU16(p, 3)
                 guard var meta = pendingMeta else {
                     respond(to: frame, status: 3, payload: [])
+                    return
+                }
+                guard nodes[meta.nodeID] != nil else {
+                    pendingMeta = nil
+                    respond(to: frame, status: 16, payload: [])
                     return
                 }
                 let chunk = Array(p[5...])
@@ -458,7 +483,10 @@ public final class VirtualEPDevice: @unchecked Sendable {
         words.withUnsafeBufferPointer { buffer in
             _ = MIDIEventListAdd(eventList, listSize, packet, 0, words.count, buffer.baseAddress!)
         }
-        MIDIReceivedEventList(source, eventList)
+        endpointLock.withLock {
+            // A reply to a request that arrived just before stop() has nowhere to go.
+            if source != 0 { MIDIReceivedEventList(source, eventList) }
+        }
         raw.deallocate()
     }
 }
