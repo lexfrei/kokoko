@@ -225,6 +225,8 @@ final class AppState: ObservableObject {
     }
 
     private func forgetDevice() {
+        // Operations still running on the old session fail when it closes, not after their timeouts.
+        if let old = session { Task { await old.close() } }
         connectedPair = nil
         session = nil
         files = nil

@@ -5,6 +5,8 @@ public enum SessionError: Error {
     case timeout(command: UInt8, requestID: UInt16)
     case deviceError(TEStatus, message: String?)
     case notAGreetReply
+    case disconnected
+    case closed
 }
 
 extension SessionError: LocalizedError {
@@ -27,6 +29,8 @@ extension SessionError: LocalizedError {
             return "\(text): \(message)"
         case .notAGreetReply:
             return "device sent an unreadable greet reply"
+        case .disconnected, .closed:
+            return "device disconnected"
         }
     }
 }
@@ -62,6 +66,7 @@ public actor SysExSession {
     /// Send a command and wait for the matching response.
     public func call(command: UInt8, payload: [UInt8] = [],
                      timeout: Duration = .seconds(20)) async throws -> TEFrame {
+        guard !closed else { throw SessionError.closed }
         let id = nextRequestID()
         let frame = TEFrame(identityCode: identityCode, requestID: id, command: command, payload: payload)
         return try await withCheckedThrowingContinuation { continuation in
@@ -85,6 +90,18 @@ public actor SysExSession {
     }
 
     private var pendingTimeoutTasks: [UInt16: Task<Void, Never>] = [:]
+
+    private var closed = false
+
+    /// Fails every pending call with `SessionError.disconnected` and refuses every
+    /// later call with `SessionError.closed` before sending it, so callers of a
+    /// gone device do not wait out their timeouts.
+    public func close() {
+        closed = true
+        for id in Array(pending.keys) {
+            failPending(id: id, with: SessionError.disconnected)
+        }
+    }
 
     private func failPending(id: UInt16, with error: Error) {
         if let continuation = pending.removeValue(forKey: id) {

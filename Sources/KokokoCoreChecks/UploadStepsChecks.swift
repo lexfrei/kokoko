@@ -83,6 +83,7 @@ extension KokokoCoreChecks {
             ("lost", SessionError.timeout(command: 2, requestID: 1)),
             ("lost on the wire", WireError.timeout),
             ("unreadable", FileServiceError.missingResponse),
+            ("cut off by a disconnect", SessionError.disconnected),
         ]
         for (label, failure) in lostReplies {
             let unknown = Deleted()
