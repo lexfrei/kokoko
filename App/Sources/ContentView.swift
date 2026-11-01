@@ -58,7 +58,7 @@ struct ContentView: View {
         .alert("rename", isPresented: renameBinding) {
             TextField("name", text: $state.renameText)
                 .frame(minWidth: 160)
-            Button("ok") {
+            Button("rename") {
                 if let item = state.renameItem {
                     Task { await state.rename(item, to: state.renameText) }
                 }
@@ -68,7 +68,7 @@ struct ContentView: View {
         .alert("renumber", isPresented: renumberBinding) {
             TextField("slot number", text: $renumberText)
                 .frame(minWidth: 120)
-            Button("ok") {
+            Button("move") {
                 if let item = state.renumberItem, let target = UInt16(renumberText) {
                     Task { await state.renumber(item, to: target) }
                 }
