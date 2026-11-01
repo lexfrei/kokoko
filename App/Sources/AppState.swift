@@ -362,7 +362,7 @@ final class AppState: ObservableObject {
                 progress.update(op, nil)
             } catch {
                 progress.update(op, nil)
-                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                failures.append("\(url.lastPathComponent): \(readFailureText(error))")
             }
         }
         // After the reload, whose success path clears lastError; appended so
@@ -773,7 +773,7 @@ final class AppState: ObservableObject {
             do {
                 try await sendProject(url: url, files: files, op: op)
             } catch {
-                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                failures.append("\(url.lastPathComponent): \(readFailureText(error))")
             }
             progress.update(op, nil)
         }

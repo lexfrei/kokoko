@@ -11,6 +11,18 @@ extension KokokoCoreChecks {
     private struct Refused: LocalizedError { var errorDescription: String? { "refused" } }
 
     static func uploadStepsChecks() async {
+        // The app names the file itself; the read error's own text names it again.
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("missing-take-\(UUID().uuidString).wav")
+        do {
+            _ = try Data(contentsOf: missing)
+            check(false, "upload: a missing file cannot be read")
+        } catch {
+            let text = readFailureText(error)
+            check(!text.contains("missing-take") && !text.isEmpty,
+                  "upload: a failed read is described without the file name — got \(text)")
+        }
+        eq(readFailureText(Refused()), "refused", "upload: an error without a failure reason keeps its full text")
+
         // A transfer cut short after init: the named node is removed.
         let deleted = Deleted()
         do {
