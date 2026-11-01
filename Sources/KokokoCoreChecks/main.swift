@@ -58,6 +58,7 @@ struct KokokoCoreChecks {
         firmwareVersionChecks()
         settingsDisplayChecks()
         settingsValueChecks()
+        soundPrepTextChecks()
         do {
             try audioChecks()
         } catch {

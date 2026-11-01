@@ -59,15 +59,15 @@ public func prepareForUpload(fileData: Data, fileName: String) throws -> Prepare
     do {
         try fileData.write(to: tempURL)
         defer { try? FileManager.default.removeItem(at: tempURL) }
-        return try convertWithAVFoundation(url: tempURL, fileName: fileName)
+        return try convertWithAVFoundation(url: tempURL)
     } catch let error as SoundPrepError {
         throw error
     } catch {
-        throw SoundPrepError.unreadable("\(fileName): \(error.localizedDescription)")
+        throw SoundPrepError.unreadable(error.localizedDescription)
     }
 }
 
-private func convertWithAVFoundation(url: URL, fileName: String) throws -> PreparedSound {
+private func convertWithAVFoundation(url: URL) throws -> PreparedSound {
     let source = try AVAudioFile(forReading: url)
     let sourceFormat = source.processingFormat
     let length = Double(source.length) / sourceFormat.sampleRate
@@ -81,21 +81,21 @@ private func convertWithAVFoundation(url: URL, fileName: String) throws -> Prepa
                                            sampleRate: Double(deviceSampleRate),
                                            channels: AVAudioChannelCount(channels),
                                            interleaved: true) else {
-        throw SoundPrepError.unreadable("no device format for \(fileName)")
+        throw SoundPrepError.unreadable("no device format")
     }
     let frameCapacity = AVAudioFrameCount(source.length)
     guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCapacity) else {
-        throw SoundPrepError.unreadable(fileName)
+        throw SoundPrepError.unreadable("no audio buffer")
     }
     try source.read(into: sourceBuffer)
 
     guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-        throw SoundPrepError.unreadable("no converter for \(fileName)")
+        throw SoundPrepError.unreadable("no converter")
     }
     let ratio = Double(deviceSampleRate) / sourceFormat.sampleRate
     let outCapacity = AVAudioFrameCount(Double(sourceBuffer.frameLength) * ratio + 64)
     guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outCapacity) else {
-        throw SoundPrepError.unreadable(fileName)
+        throw SoundPrepError.unreadable("no audio buffer")
     }
     var error: NSError?
     var consumed = false
@@ -108,7 +108,7 @@ private func convertWithAVFoundation(url: URL, fileName: String) throws -> Prepa
         status.pointee = .haveData
         return sourceBuffer
     }
-    if let error { throw SoundPrepError.unreadable("\(fileName): \(error)") }
+    if let error { throw SoundPrepError.unreadable(error.localizedDescription) }
 
     let byteCount = Int(outBuffer.frameLength) * 2 * channels
     let pcm: [UInt8]
