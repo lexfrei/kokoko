@@ -10,7 +10,6 @@ struct ContentView: View {
     // need Xcode's SwiftUIMacros plugin; this stays typecheckable with CLT.
     @ObservedObject var state: AppState
     @State private var renumberText = ""
-    @State private var binToRemove: BinEntry?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -89,7 +88,7 @@ struct ContentView: View {
             MetadataSheet(state: state)
         }
         .confirmationDialog("remove from bin for good?", isPresented: binRemoveBinding,
-                            presenting: binToRemove) { entry in
+                            presenting: state.binToRemove) { entry in
             Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
             Button("cancel", role: .cancel) {}
         }
@@ -100,7 +99,7 @@ struct ContentView: View {
     }
 
     private var binRemoveBinding: Binding<Bool> {
-        Binding(get: { binToRemove != nil }, set: { if !$0 { binToRemove = nil } })
+        Binding(get: { state.binToRemove != nil }, set: { if !$0 { state.binToRemove = nil } })
     }
 
     private var renameBinding: Binding<Bool> {
@@ -152,9 +151,7 @@ struct ContentView: View {
         .padding()
     }
 
-    private var isConnected: Bool {
-        if case .connected = state.connection { true } else { false }
-    }
+    private var isConnected: Bool { state.isConnected }
 
     private var devicePhase: DevicePhase {
         switch state.connection {
@@ -166,14 +163,7 @@ struct ContentView: View {
     }
 
     private func tabButton(_ tab: HeaderTab) -> some View {
-        Button(tabTitle(tab.title, selected: state.view == tab)) {
-            state.view = tab
-            switch tab {
-            case .projects where isConnected: Task { await state.refreshProjects() }
-            case .bin: state.loadBin()
-            default: break
-            }
-        }
+        Button(tabTitle(tab.title, selected: state.view == tab)) { state.open(tab) }
         .buttonStyle(.plain)
         .disabled(!tab.isEnabled(deviceBusy: state.deviceBusy))
         .foregroundStyle(state.view == tab ? .primary : .secondary)
@@ -267,6 +257,9 @@ struct ContentView: View {
                 await state.upload(urls: urls)
             })
         }
+        #if os(macOS)
+        .onDeleteCommand(perform: state.isEnabled(.deleteSelected) ? { state.perform(.deleteSelected) } : nil)
+        #endif
     }
 
     private var footer: some View {
@@ -332,7 +325,7 @@ struct ContentView: View {
                             rowButton(.restore, help: "put back on the device", needsDevice: true) {
                                 Task { await state.restoreFromBin(entry) }
                             }
-                            rowButton(.removeFromBin, help: "remove from the bin for good") { binToRemove = entry }
+                            rowButton(.removeFromBin, help: "remove from the bin for good") { state.binToRemove = entry }
                         }
                     }
                 }

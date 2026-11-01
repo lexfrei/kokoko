@@ -72,6 +72,7 @@ final class AppState: ObservableObject {
     @Published var view: HeaderTab = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
+    @Published var binToRemove: BinEntry?
     /// True while a user action talks to the device. Transfers on the wire
     /// are not serialized, and pages from two interleaved operations corrupt
     /// each other, so every such action runs one at a time; the UI disables
@@ -171,6 +172,55 @@ final class AppState: ObservableObject {
         }
         deviceBusy = true
         return true
+    }
+
+    var isConnected: Bool {
+        if case .connected = connection { true } else { false }
+    }
+
+    func open(_ tab: HeaderTab) {
+        view = tab
+        switch tab {
+        case .projects where isConnected: Task { await refreshProjects() }
+        case .bin: loadBin()
+        default: break
+        }
+    }
+
+    /// A file panel, alert, dialog or sheet is up over the window.
+    var modalOpen: Bool {
+        showImporter || picker != .none || exportDocument != nil || renameItem != nil || renumberItem != nil
+            || unbinnedDelete != nil || metadataEditing != nil || binToRemove != nil
+    }
+
+    func isEnabled(_ command: AppCommand) -> Bool {
+        command.isEnabled(tab: view, connected: isConnected, busy: deviceBusy, selection: selection.count,
+                          modalOpen: modalOpen)
+    }
+
+    func perform(_ command: AppCommand) {
+        guard isEnabled(command) else { return }
+        if let tab = command.selectsTab { open(tab) }
+        switch command {
+        case .addSounds: showImporter = true
+        case .downloadSelected: picker = .downloadFolder(Array(selection))
+        case .deleteSelected:
+            let ids = selection
+            Task { await deleteMany(ids) }
+        case .backupSounds: picker = .backupFolder(.sounds)
+        case .backupProjects: picker = .backupFolder(.projects)
+        case .backupAll: picker = .backupFolder(.everything)
+        case .restoreBackup: picker = .restoreFolder
+        case .showSounds, .showProjects, .showSettings, .showBin: break
+        case .refresh:
+            switch view {
+            case .sounds: Task { await refreshSounds() }
+            case .projects: Task { await refreshProjects() }
+            case .settings: Task { await loadSettings() }
+            case .bin: loadBin()
+            }
+        case .scan: Task { await scan() }
+        }
     }
 
     func refreshSounds() async {
