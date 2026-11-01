@@ -283,7 +283,8 @@ public actor DeviceLibrary {
         var out: [(String, [UInt8])] = []
         for (index, id) in ids.enumerated() {
             progress?(index, ids.count)
-            let meta = (try? await files.getMetadata(fileID: id)) ?? [:]
+            // Without the format the WAV header would be a guess, so the read must succeed.
+            let meta = try await files.getMetadata(fileID: id)
             let channels = meta["channels"]?.intValue ?? 1
             let rate = meta["samplerate"]?.intValue ?? deviceSampleRate
             let name = meta["name"]?.stringValue ?? "sound \(id)"

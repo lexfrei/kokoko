@@ -381,7 +381,8 @@ final class AppState: ObservableObject {
         let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv \(item.displayName)")
-            let meta = (try? await files.getMetadata(fileID: item.node.id)) ?? [:]
+            // Without the format the WAV header would be a guess, so the read must succeed.
+            let meta = try await files.getMetadata(fileID: item.node.id)
             let channels = meta["channels"]?.intValue ?? 1
             let rate = meta["samplerate"]?.intValue ?? deviceSampleRate
             let result = try await files.get(fileID: item.node.id) { done, total in

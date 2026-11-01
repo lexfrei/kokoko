@@ -438,6 +438,19 @@ struct E2E {
             check(false, "a sound to back up without metadata")
         }
 
+        // --- download: a sound whose format cannot be read is not written with a guessed one ---
+        if let unknownFormat = try await files.list(nodeID: soundsID).first(where: { $0.isFile }) {
+            let failingGet = Array(GetMetadataRequest(fileID: unknownFormat.id, page: 0).bytes.prefix(4))
+            faulty.failAfterSend = { $0.payload.starts(with: failingGet) }
+            let wavs = try? await faultyLibrary.downloadMany([unknownFormat.id])
+            faulty.failAfterSend = nil
+            check(wavs == nil, "download fails when the sound's format metadata cannot be read")
+            let whole = try await faultyLibrary.downloadMany([unknownFormat.id])
+            check(whole.count == 1, "download succeeds once the format metadata can be read")
+        } else {
+            check(false, "a sound to download without format metadata")
+        }
+
         // --- backup restore is safe to repeat ---
         func soundCount() async throws -> Int { try await files.list(nodeID: soundsID).count }
         func copies(of pcm: [UInt8]) async throws -> Int {
