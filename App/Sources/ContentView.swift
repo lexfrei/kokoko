@@ -276,7 +276,7 @@ struct ContentView: View {
                 Text(progress)
             }
             if let error = state.lastError {
-                Text("err: \(error)").foregroundStyle(.red).lineLimit(1)
+                Text("err: \(error)").foregroundStyle(Color.errorText).lineLimit(1)
                     .help(error)
             }
             Spacer()
@@ -505,13 +505,13 @@ struct MetadataSheet: View {
                             TextField("", text: field(key))
                                 .frame(minWidth: 120)
                             Text(editing.form.error(for: key) ?? "")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(Color.errorText)
                         }
                     }
                 }
                 if let note = editing.note {
                     Text(note)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.errorText)
                 }
                 HStack {
                     Button("cancel") { state.metadataEditing = nil }
@@ -530,4 +530,24 @@ struct MetadataSheet: View {
         Binding(get: { state.metadataEditing?.form.text[key] ?? "" },
                 set: { state.metadataEditing?.form.text[key] = $0 })
     }
+}
+
+extension Color {
+    static let errorText: Color = {
+        func color(_ rgb: Int) -> (Double, Double, Double) {
+            (Double((rgb >> 16) & 0xFF) / 255, Double((rgb >> 8) & 0xFF) / 255, Double(rgb & 0xFF) / 255)
+        }
+        let (light, dark) = (color(ErrorColor.light), color(ErrorColor.dark))
+        #if os(macOS)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            let (r, g, b) = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+        })
+        #else
+        return Color(uiColor: UIColor { traits in
+            let (r, g, b) = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: r, green: g, blue: b, alpha: 1)
+        })
+        #endif
+    }()
 }
