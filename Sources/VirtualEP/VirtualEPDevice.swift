@@ -386,7 +386,12 @@ public final class VirtualEPDevice: @unchecked Sendable {
                 return
             }
             let dict = nodes[fileID]?.metadata.mapValues(\.anyValue) ?? [:]
-            let data = (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+            // try? cannot catch the exception JSONSerialization raises on NaN or infinity.
+            guard JSONSerialization.isValidJSONObject(dict),
+                  let data = try? JSONSerialization.data(withJSONObject: dict) else {
+                respond(to: frame, status: 16, payload: [])
+                return
+            }
             respond(to: frame, status: 0,
                     payload: [0, 0] + Array(data) + [0])
         case 4: // set paged
