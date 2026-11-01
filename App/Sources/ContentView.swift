@@ -145,7 +145,7 @@ struct ContentView: View {
             case .connected(let name, let serial, let os):
                 Text("[ \(name) \(serial) os \(os)\(state.firmwareSuffix) ]").lineLimit(1)
             case .failed(let why):
-                FullTextButton(label: "[ !! \(why) ]", text: why, lineLimit: 1)
+                FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1)
             }
         }
         .padding()
@@ -181,7 +181,7 @@ struct ContentView: View {
                     projectList
                 case .settings:
                     VStack(spacing: 0) {
-                        backupRow(.everything, label: "[ backup all ]")
+                        backupRow(.everything, button: .backupAll)
                         Divider()
                         SettingsView(state: state)
                     }
@@ -199,8 +199,7 @@ struct ContentView: View {
             Text(notice)
             if case .failed = state.connection {
                 Text("connect the device over usb-c")
-                Button("[ retry ]") { Task { await state.scan() } }
-                    .buttonStyle(.plain)
+                barButton(.retry) { Task { await state.scan() } }
                     .disabled(state.deviceBusy)
             }
         }
@@ -268,7 +267,7 @@ struct ContentView: View {
                 Text(progress)
             }
             if let error = state.lastError {
-                FullTextButton(label: "err: \(error)", text: error, lineLimit: 2)
+                FullTextButton(line: .error(error), text: error, lineLimit: 2)
                     .foregroundStyle(Color.errorText)
             }
             Spacer()
@@ -277,33 +276,24 @@ struct ContentView: View {
                     Text("sel \(state.selection.count)")
                     TextField("to #", text: $state.bulkMoveStart)
                         .frame(width: 56)
-                    Button("[ move ]") {
+                    barButton(.moveSelection) {
                         if let start = UInt16(state.bulkMoveStart) {
                             Task { await state.moveSelection(startingAt: start) }
                         }
                     }
-                    .buttonStyle(.plain)
                     .disabled(state.deviceBusy)
-                    Button("[ v to folder ]") {
-                        state.picker = .downloadFolder(Array(state.selection))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(state.deviceBusy)
-                    Button("[ x ]") { Task { await state.deleteMany(state.selection) } }
-                        .buttonStyle(.plain)
+                    barButton(.downloadSelection) { state.picker = .downloadFolder(Array(state.selection)) }
+                        .disabled(state.deviceBusy)
+                    barButton(.deleteSelection) { Task { await state.deleteMany(state.selection) } }
                         .disabled(state.deviceBusy)
                 }
-                Button("[ + add sounds ]") { state.showImporter = true }
-                    .buttonStyle(.plain)
+                barButton(.addSounds) { state.showImporter = true }
                     .disabled(state.deviceBusy)
-                Button("[ backup sounds ]") { state.picker = .backupFolder(.sounds) }
-                    .buttonStyle(.plain)
+                barButton(.backupSounds) { state.picker = .backupFolder(.sounds) }
                     .disabled(state.deviceBusy)
-                Button("[ restore backup ]") { state.picker = .restoreFolder }
-                    .buttonStyle(.plain)
+                barButton(.restoreBackup) { state.picker = .restoreFolder }
                     .disabled(state.deviceBusy)
-                Button("[ refresh ]") { Task { await state.refreshSounds() } }
-                    .buttonStyle(.plain)
+                barButton(.refresh) { Task { await state.refreshSounds() } }
                     .disabled(state.deviceBusy)
             }
         }
@@ -333,13 +323,11 @@ struct ContentView: View {
         }
     }
 
-    private func backupRow(_ scope: DeviceLibrary.Scope, label: String) -> some View {
+    private func backupRow(_ scope: DeviceLibrary.Scope, button: BarAction) -> some View {
         HStack {
-            Button(label) { state.picker = .backupFolder(scope) }
-                .buttonStyle(.plain)
+            barButton(button) { state.picker = .backupFolder(scope) }
                 .disabled(state.deviceBusy)
-            Button("[ restore backup ]") { state.picker = .restoreFolder }
-                .buttonStyle(.plain)
+            barButton(.restoreBackup) { state.picker = .restoreFolder }
                 .disabled(state.deviceBusy)
             Spacer()
         }
@@ -349,7 +337,7 @@ struct ContentView: View {
 
     private var projectList: some View {
         VStack(spacing: 0) {
-            backupRow(.projects, label: "[ backup projects ]")
+            backupRow(.projects, button: .backupProjects)
             Divider()
             projectRows
         }
@@ -547,16 +535,17 @@ extension Color {
 /// A truncated line that opens its full text in a popover. `.help` alone
 /// needs a pointer to hover, which a touch screen does not have.
 private struct FullTextButton: View {
-    let label: String
+    let line: StatusLine
     let text: String
     let lineLimit: Int
     @State private var shown = false
 
     var body: some View {
         Button { shown = true } label: {
-            Text(label).lineLimit(lineLimit)
+            Text(line.text).lineLimit(lineLimit)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(line.accessibilityLabel)
         .help(text)
         .popover(isPresented: $shown) {
             ScrollView {
@@ -568,4 +557,11 @@ private struct FullTextButton: View {
             .frame(idealWidth: 420, maxHeight: 320)
         }
     }
+}
+
+@MainActor
+func barButton(_ action: BarAction, perform: @escaping () -> Void) -> some View {
+    Button(action.text, action: perform)
+        .buttonStyle(.plain)
+        .accessibilityLabel(action.accessibilityLabel)
 }

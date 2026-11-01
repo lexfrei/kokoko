@@ -36,3 +36,58 @@ public enum RowAction: CaseIterable, Sendable {
 public func tabTitle(_ name: String, selected: Bool) -> String {
     selected ? "[*\(name)*]" : "[ \(name) ]"
 }
+
+/// A bracketed text button outside the rows.
+public enum BarAction: CaseIterable, Sendable {
+    case retry, moveSelection, downloadSelection, deleteSelection
+    case addSounds, backupSounds, backupProjects, backupAll, restoreBackup, refresh
+
+    public var text: String {
+        switch self {
+        case .retry: "[ retry ]"
+        case .moveSelection: "[ move ]"
+        case .downloadSelection: "[ v to folder ]"
+        case .deleteSelection: "[ x ]"
+        case .addSounds: "[ + add sounds ]"
+        case .backupSounds: "[ back up sounds ]"
+        case .backupProjects: "[ back up projects ]"
+        case .backupAll: "[ back up all ]"
+        case .restoreBackup: "[ restore backup ]"
+        case .refresh: "[ refresh ]"
+        }
+    }
+
+    public var accessibilityLabel: String {
+        switch self {
+        case .retry: "Retry"
+        case .moveSelection: "Move to slot"
+        case .downloadSelection: "Download to folder"
+        case .deleteSelection: "Delete selected"
+        case .addSounds: "Add sounds"
+        case .backupSounds: "Back up sounds"
+        case .backupProjects: "Back up projects"
+        case .backupAll: "Back up all"
+        case .restoreBackup: "Restore backup"
+        case .refresh: "Refresh"
+        }
+    }
+}
+
+/// The footer's error line and the header's connection failure.
+public enum StatusLine: Sendable {
+    case error(String), connectionFailed(String)
+
+    public var text: String {
+        switch self {
+        case .error(let message): "error: \(message)"
+        case .connectionFailed(let reason): "[ !! \(reason) ]"
+        }
+    }
+
+    public var accessibilityLabel: String {
+        switch self {
+        case .error(let message): "Error: \(message)"
+        case .connectionFailed(let reason): "Connection failed: \(reason)"
+        }
+    }
+}
