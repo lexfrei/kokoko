@@ -170,6 +170,12 @@ final class AppState: ObservableObject {
     private var soundsRootID: UInt16?
     private var deviceMeta = GreetMetadata()
 
+    /// Dropped once the device has left since `token`, so the disconnect
+    /// reason is not overwritten.
+    private func reportOperationError(_ text: String, token: Int) {
+        if hotplug.isCurrent(token) { lastError = text }
+    }
+
     /// Claims the device for one user action; false while another runs.
     /// A refusal is reported, since a drag to Finder or a drop that slipped
     /// past the disabled controls would otherwise fail without a word.
@@ -326,7 +332,7 @@ final class AppState: ObservableObject {
             lastError = nil
             return true
         } catch {
-            if hotplug.isCurrent(token) { lastError = "list failed: \(error.localizedDescription)" }
+            reportOperationError("list failed: \(error.localizedDescription)", token: token)
             return false
         }
     }
@@ -382,6 +388,7 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return nil }
+        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv \(item.displayName)")
             let meta = (try? await files.getMetadata(fileID: item.node.id)) ?? [:]
@@ -397,7 +404,7 @@ final class AppState: ObservableObject {
                     makeWAV(pcm: result.data, channels: channels, sampleRate: rate))
         } catch {
             progress.update(op, nil)
-            lastError = "download: \(error.localizedDescription)"
+            reportOperationError("download: \(error.localizedDescription)", token: token)
             return nil
         }
     }
@@ -408,6 +415,7 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
+        let token = hotplug.currentGeneration()
         do {
             let accessing = folder.startAccessingSecurityScopedResource()
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
@@ -420,7 +428,7 @@ final class AppState: ObservableObject {
             progress.update(op, nil)
         } catch {
             progress.update(op, nil)
-            lastError = "batch download: \(error.localizedDescription)"
+            reportOperationError("batch download: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -532,6 +540,7 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
+        let token = hotplug.currentGeneration()
         do {
             let accessing = folder.startAccessingSecurityScopedResource()
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
@@ -549,7 +558,7 @@ final class AppState: ObservableObject {
             progress.update(op, nil)
         } catch {
             progress.update(op, nil)
-            lastError = "backup: \(error.localizedDescription)"
+            reportOperationError("backup: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -599,7 +608,7 @@ final class AppState: ObservableObject {
             try await files.setMetadata(fileID: item.node.id, ["name": .string(trimmed)])
             await reload()
         } catch {
-            if hotplug.isCurrent(token) { lastError = "rename: \(error.localizedDescription)" }
+            reportOperationError("rename: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -616,7 +625,7 @@ final class AppState: ObservableObject {
             metadataEditing = MetadataEditing(id: item.node.id, name: item.displayName, generation: token,
                                               form: MetadataEditForm(metadata: metadata))
         } catch {
-            if hotplug.isCurrent(token) { lastError = "metadata: \(error.localizedDescription)" }
+            reportOperationError("metadata: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -651,16 +660,17 @@ final class AppState: ObservableObject {
         guard enterDevice() else { return }
         defer { deviceBusy = false }
         guard let files, let root = soundsRootID else { return }
+        let token = hotplug.currentGeneration()
         do {
             let nodes = try await files.list(nodeID: root)
             if nodes.contains(where: { $0.id == target }) {
-                lastError = "slot \(target) is occupied"
+                reportOperationError("slot \(target) is occupied", token: token)
                 return
             }
             try await move(files, item.node.id, to: target, root: root)
             await reload()
         } catch {
-            lastError = "renumber: \(error.localizedDescription)"
+            reportOperationError("renumber: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -673,11 +683,12 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
+        let token = hotplug.currentGeneration()
         do {
             let nodes = try await files.list(nodeID: root)
             guard let plan = planBulkMove(selected: Array(selection),
                                           occupied: Set(nodes.map(\.id)), start: start) else {
-                lastError = "bulk move: not enough free slots from \(start)"
+                reportOperationError("bulk move: not enough free slots from \(start)", token: token)
                 return
             }
             try await runMoves(plan, files: files, root: root, op: op)
@@ -686,7 +697,7 @@ final class AppState: ObservableObject {
         } catch {
             progress.update(op, nil)
             await reload()
-            lastError = "bulk move: \(error.localizedDescription)"
+            reportOperationError("bulk move: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -695,6 +706,7 @@ final class AppState: ObservableObject {
         guard enterDevice() else { return }
         defer { deviceBusy = false }
         guard let files, let root = soundsRootID, id != target else { return }
+        let token = hotplug.currentGeneration()
         do {
             let nodes = try await files.list(nodeID: root)
             if let occupant = nodes.first(where: { $0.id == target }) {
@@ -708,7 +720,7 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             await reload()
-            lastError = "move: \(error.localizedDescription)"
+            reportOperationError("move: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -724,7 +736,7 @@ final class AppState: ObservableObject {
             projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
             lastError = nil
         } catch {
-            if hotplug.isCurrent(token) { lastError = "projects: \(error.localizedDescription)" }
+            reportOperationError("projects: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -735,6 +747,7 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return nil }
+        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv P\(project.name)")
             let result = try await files.get(fileID: project.id)
@@ -742,7 +755,7 @@ final class AppState: ObservableObject {
             return ("P\(project.name).tar", result.data)
         } catch {
             progress.update(op, nil)
-            lastError = "project download: \(error.localizedDescription)"
+            reportOperationError("project download: \(error.localizedDescription)", token: token)
             return nil
         }
     }
@@ -821,7 +834,7 @@ final class AppState: ObservableObject {
             if hotplug.isCurrent(token) { settingsUnsupported = true }
         } catch {
             progress.update(op, nil)
-            if hotplug.isCurrent(token) { lastError = "settings: \(error.localizedDescription)" }
+            reportOperationError("settings: \(error.localizedDescription)", token: token)
         }
     }
 
