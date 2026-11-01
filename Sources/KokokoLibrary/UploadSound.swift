@@ -117,3 +117,9 @@ package func restoreSoundSteps(slot: UInt16,
     }
     return id
 }
+
+/// Foundation's description of a failed file read names the file, which the
+/// caller already shows; the failure reason alone does not.
+public func readFailureText(_ error: any Error) -> String {
+    (error as NSError).localizedFailureReason ?? error.localizedDescription
+}

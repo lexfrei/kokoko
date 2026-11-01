@@ -54,8 +54,11 @@ public func prepareForUpload(fileData: Data, fileName: String) throws -> Prepare
                              metadata: uploadMetadata(info: info, sourceRate: deviceSampleRate))
     }
 
+    // Only the extension is kept: AVAudioFile's result depends on it, and the
+    // caller's name may not be a valid file name.
     let tempURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString + "-" + fileName)
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension((fileName as NSString).pathExtension)
     do {
         try fileData.write(to: tempURL)
         defer { try? FileManager.default.removeItem(at: tempURL) }
@@ -63,7 +66,18 @@ public func prepareForUpload(fileData: Data, fileName: String) throws -> Prepare
     } catch let error as SoundPrepError {
         throw error
     } catch {
-        throw SoundPrepError.unreadable(error.localizedDescription)
+        throw SoundPrepError.unreadable(readableReason(error))
+    }
+}
+
+/// AVAudioFile reports these AudioFile codes with no readable text of its own.
+package func readableReason(_ error: any Error) -> String {
+    let error = error as NSError
+    guard error.domain == "com.apple.coreaudio.avfaudio" else { return error.localizedDescription }
+    switch OSStatus(truncatingIfNeeded: error.code) {
+    // Junk named .wav gives the second code, so neither code says which format failed.
+    case kAudioFileInvalidFileError, kAudioFileUnsupportedFileTypeError: return "not a readable audio file"
+    default: return error.localizedDescription
     }
 }
 
