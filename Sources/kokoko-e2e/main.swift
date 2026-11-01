@@ -313,6 +313,8 @@ struct E2E {
             check(afterInit.isSuperset(of: beforeInit) && afterInit.count == beforeInit.count + 1,
                   "bin restore with a failed init deletes nothing and leaves the node it cannot name — \(beforeInit.count) vs \(afterInit.count)")
             for orphan in afterInit.subtracting(beforeInit) { try await files.delete(fileID: orphan) }
+        } else {
+            check(false, "bin entry for slot \(victim) missing")
         }
 
         let folder = try await files.put(parentID: soundsID, name: "folder", data: [], isDirectory: true)
