@@ -8,8 +8,9 @@ extension RecycleBinError: LocalizedError {
         case .incompleteCopy(let slot, let expected, let got):
             return "slot " + String(format: "%03d", slot)
                 + " read back \(got) of \(expected) bytes, so no copy was kept"
-        case .partialSoundMayRemain(let underlying):
-            return "upload failed (\(underlying)); a partial sound may remain on the device"
+        case .partialSoundMayRemain(let slot, let underlying):
+            let place = slot.map { "in slot " + String(format: "%03d", $0) } ?? "on the device"
+            return "\(underlying); an incomplete sound may remain \(place)"
         }
     }
 }

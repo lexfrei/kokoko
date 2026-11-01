@@ -31,8 +31,8 @@ extension KokokoCoreChecks {
               "bin errors: a short read names the slot and both sizes — got \(short)")
         let stray = RecycleBinError.notASound(42).localizedDescription
         check(stray.contains("042"), "bin errors: a stale slot is named — got \(stray)")
-        let partial = RecycleBinError.partialSoundMayRemain(underlying: "timeout").localizedDescription
-        check(partial.contains("timeout") && partial.contains("partial"),
-              "bin errors: a failed restore says a partial sound may remain — got \(partial)")
+        let partial = RecycleBinError.partialSoundMayRemain(slot: nil, underlying: "timeout").localizedDescription
+        check(partial.contains("timeout") && partial.contains("may remain"),
+              "bin errors: a failed restore says an incomplete sound may remain — got \(partial)")
     }
 }

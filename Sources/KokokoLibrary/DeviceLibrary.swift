@@ -137,22 +137,10 @@ public actor DeviceLibrary {
                 }
                 let taken = listed[sound.nodeID] != nil || placed.contains(sound.nodeID)
                 let targetID = taken ? 0 : sound.nodeID
-                let newID: UInt16
-                do {
-                    newID = try await files.put(parentID: soundsRoot,
-                                                name: sound.metadata["name"]?.stringValue
-                                                    ?? "sound \(sound.nodeID)",
-                                                data: sound.pcm, fileID: targetID)
-                } catch {
-                    // Once init has named the node it is known to be ours; before
-                    // that, only an explicit slot is.
-                    if case FileServiceError.putIncomplete(let partial, _) = error {
-                        await removeIfListed(partial, in: soundsRoot)
-                    } else if targetID != 0 {
-                        await removeIfListed(targetID, in: soundsRoot)
-                    }
-                    throw error
-                }
+                let newID = try await restoreSound(sound.pcm,
+                                                   name: sound.metadata["name"]?.stringValue
+                                                       ?? "sound \(sound.nodeID)",
+                                                   metadata: sound.metadata, in: soundsRoot, slot: targetID)
                 // An assigned slot may equal a later sound's original id; without this
                 // that sound is put explicitly into the occupied slot over this one.
                 placed.insert(newID)
@@ -162,12 +150,6 @@ public actor DeviceLibrary {
                     movedTo[sound.nodeID] = newID
                 }
                 restoredIDs.insert(sound.nodeID)
-                do {
-                    try await files.setMetadata(fileID: newID, sound.metadata)
-                } catch {
-                    try? await files.delete(fileID: newID)
-                    throw error
-                }
             }
         }
         var skipped: [String] = []
@@ -203,10 +185,22 @@ public actor DeviceLibrary {
         return (try? await files.get(fileID: id).data) == pcm
     }
 
-    private func removeIfListed(_ id: UInt16, in parent: UInt16) async {
-        if let nodes = try? await files.list(nodeID: parent), nodes.contains(where: { $0.id == id }) {
-            try? await files.delete(fileID: id)
-        }
+    /// True when `id` is not under `parent` afterwards.
+    private func removeIfListed(_ id: UInt16, in parent: UInt16) async -> Bool {
+        guard let nodes = try? await files.list(nodeID: parent) else { return false }
+        guard nodes.contains(where: { $0.id == id }) else { return true }
+        return (try? await files.delete(fileID: id)) != nil
+    }
+
+    private func restoreSound(_ pcm: [UInt8], name: String, metadata: [String: JSONValue],
+                              in parent: UInt16, slot: UInt16) async throws -> UInt16 {
+        let files = files
+        return try await restoreSoundSteps(
+            slot: slot,
+            put: { try await files.put(parentID: parent, name: name, data: pcm, fileID: slot) },
+            setMetadata: { try await files.setMetadata(fileID: $0, metadata) },
+            delete: { try await files.delete(fileID: $0) },
+            removeIfListed: { await self.removeIfListed($0, in: parent) })
     }
 
     public func resolve(_ path: String) async throws -> UInt16 {
@@ -299,31 +293,8 @@ public actor DeviceLibrary {
             return sound.nodeID
         }
         let slot: UInt16 = sizes[sound.nodeID] == nil ? sound.nodeID : 0
-        let newID: UInt16
-        do {
-            newID = try await files.put(parentID: soundsRoot, name: entry.name, data: sound.pcm,
-                                        fileID: slot)
-        } catch {
-            if case FileServiceError.putIncomplete(let partial, _) = error {
-                let removed = (try? await files.delete(fileID: partial)) != nil
-                if !removed && slot == 0 {
-                    throw RecycleBinError.partialSoundMayRemain(underlying: error.localizedDescription)
-                }
-                throw error
-            }
-            guard slot != 0 else {
-                throw RecycleBinError.partialSoundMayRemain(underlying: error.localizedDescription)
-            }
-            // Without this a retry finds the original slot taken by the partial copy.
-            await removeIfListed(slot, in: soundsRoot)
-            throw error
-        }
-        do {
-            try await files.setMetadata(fileID: newID, sound.metadata)
-        } catch {
-            try? await files.delete(fileID: newID)
-            throw error
-        }
+        let newID = try await restoreSound(sound.pcm, name: entry.name, metadata: sound.metadata,
+                                           in: soundsRoot, slot: slot)
         // The sound is back; a stale entry is better than reporting a failure.
         try? bin.remove(entry)
         return newID

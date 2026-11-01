@@ -49,6 +49,7 @@ struct KokokoCoreChecks {
         await uploadSoundChecks()
         await restoreProjectChecks()
         await uploadStepsChecks()
+        await restoreStepsChecks()
         await hotplugChecks()
         hotplugPolicyChecks()
         await metadataEditChecks()
