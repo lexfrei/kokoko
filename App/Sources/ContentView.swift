@@ -98,10 +98,20 @@ struct ContentView: View {
         } message: { pending in
             Text(pending.summary.message)
         }
+        .confirmationDialog(SwapSummary.title, isPresented: swapBinding, presenting: state.pendingSwap) { pending in
+            Button("swap") { Task { await state.moveOrSwap(id: pending.id, toSlot: pending.target) } }
+            Button("cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.summary.message)
+        }
     }
 
     private var restoreBinding: Binding<Bool> {
         Binding(get: { state.pendingRestore != nil }, set: { if !$0 { state.pendingRestore = nil } })
+    }
+
+    private var swapBinding: Binding<Bool> {
+        Binding(get: { state.pendingSwap != nil }, set: { if !$0 { state.pendingSwap = nil } })
     }
 
     private var unbinnedDeleteBinding: Binding<Bool> {
@@ -465,7 +475,7 @@ struct SoundRowDrop: DropDelegate {
                   text.hasPrefix("node:"),
                   let id = UInt16(text.dropFirst(5)) else { return }
             Task { @MainActor in
-                await state.moveOrSwap(id: id, toSlot: target.id)
+                state.requestSwap(id: id, onto: target)
             }
         }
         return true

@@ -39,3 +39,22 @@ public struct RestoreSummary: Sendable {
         return parts.isEmpty ? "nothing in this backup is written to the device." : parts.joined(separator: " ")
     }
 }
+
+/// The confirmation shown before a dropped row swaps two sounds.
+public struct SwapSummary: Sendable {
+    public let dragged: (slot: UInt16, name: String)
+    public let target: (slot: UInt16, name: String)
+
+    public init(dragged: (slot: UInt16, name: String), target: (slot: UInt16, name: String)) {
+        self.dragged = dragged
+        self.target = target
+    }
+
+    public static let title = "swap these sounds?"
+
+    public var message: String {
+        func slot(_ id: UInt16) -> String { String(format: "%03d", id) }
+        return "\(slot(dragged.slot)) \(dragged.name) moves to slot \(slot(target.slot)) and "
+            + "\(slot(target.slot)) \(target.name) to slot \(slot(dragged.slot))."
+    }
+}

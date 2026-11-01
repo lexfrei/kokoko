@@ -32,6 +32,12 @@ struct PendingRestore {
     let summary: RestoreSummary
 }
 
+struct PendingSwap {
+    let id: UInt16
+    let target: UInt16
+    let summary: SwapSummary
+}
+
 struct MetadataEditing: Identifiable {
     let id: UInt16
     let name: String
@@ -78,6 +84,7 @@ final class AppState: ObservableObject {
     @Published var binEntries: [BinEntry] = []
     @Published var binToRemove: BinEntry?
     @Published var pendingRestore: PendingRestore?
+    @Published var pendingSwap: PendingSwap?
     /// True while a user action talks to the device. Transfers on the wire
     /// are not serialized, and pages from two interleaved operations corrupt
     /// each other, so every such action runs one at a time; the UI disables
@@ -196,7 +203,7 @@ final class AppState: ObservableObject {
     var modalOpen: Bool {
         showImporter || picker != .none || exportDocument != nil || renameItem != nil || renumberItem != nil
             || unbinnedDelete != nil || metadataEditing != nil || binToRemove != nil
-            || pendingRestore != nil
+            || pendingRestore != nil || pendingSwap != nil
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
@@ -300,6 +307,7 @@ final class AppState: ObservableObject {
         settingsTree = []
         settingsStatus = .notLoaded
         pendingRestore = nil
+        pendingSwap = nil
     }
 
     private func rescanIfDue() {
@@ -781,6 +789,14 @@ final class AppState: ObservableObject {
             await reload()
             reportOperationError("bulk move: \(error.localizedDescription)", token: token)
         }
+    }
+
+    /// A row is listed only for an occupied slot, so a drop onto one asks before swapping.
+    func requestSwap(id: UInt16, onto target: SoundItem) {
+        guard id != target.id else { return }
+        let name = sounds.first { $0.id == id }?.displayName ?? "sound"
+        pendingSwap = PendingSwap(id: id, target: target.id,
+                                  summary: SwapSummary(dragged: (id, name), target: (target.id, target.displayName)))
     }
 
     /// Drag reorder: move to the target slot; swap with the occupant if taken.

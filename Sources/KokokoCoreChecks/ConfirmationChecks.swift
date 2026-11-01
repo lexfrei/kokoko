@@ -43,5 +43,8 @@ extension KokokoCoreChecks {
                                         projectMetadata: ["/projects/01": ["bpm": .int(120)]])
         check(RestoreSummary(settingsOnly).message.hasPrefix("Project settings"),
               "restore: a backup with only project settings is not called empty")
+        eq(SwapSummary(dragged: (3, "kick"), target: (7, "snare")).message,
+           "003 kick moves to slot 007 and 007 snare to slot 003.",
+           "swap: names both sounds and where each goes")
     }
 }
