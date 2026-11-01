@@ -56,6 +56,7 @@ struct KokokoCoreChecks {
         await metadataEditChecks()
         firmwareVersionChecks()
         settingsDisplayChecks()
+        settingsValueChecks()
         do {
             try audioChecks()
         } catch {

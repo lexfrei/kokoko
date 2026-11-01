@@ -3,12 +3,14 @@ import KokokoCore
 
 public enum SettingsError: Error {
     case invalidJSON(String)
+    case unserializableValue
 }
 
 extension SettingsError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidJSON(let text): "device sent invalid settings JSON: \(text.prefix(200))"
+        case .unserializableValue: "setting value has a number JSON cannot carry"
         }
     }
 }
@@ -57,10 +59,20 @@ public actor SettingsService {
 
     /// Set one setting by numeric id. Enable only after the schema is verified.
     public func set(id: UInt16, value: JSONValue) async throws {
-        let json = try JSONSerialization.data(withJSONObject: value.anyValue)
+        let json = try Self.valueJSON(value)
         var payload: [UInt8] = [3, UInt8(id >> 8), UInt8(id & 0xFF)]
         payload.append(contentsOf: json)
         payload.append(0)
         _ = try await session.call(command: 6, payload: payload)
+    }
+
+    /// JSONSerialization raises an uncatchable exception on NaN or infinity, and on
+    /// a scalar without .fragmentsAllowed, so the value is checked first: wrapped in
+    /// an array, isValidJSONObject accepts a scalar and still rejects those numbers.
+    package static func valueJSON(_ value: JSONValue) throws -> [UInt8] {
+        guard JSONSerialization.isValidJSONObject([value.anyValue]) else {
+            throw SettingsError.unserializableValue
+        }
+        return Array(try JSONSerialization.data(withJSONObject: value.anyValue, options: .fragmentsAllowed))
     }
 }
