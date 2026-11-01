@@ -63,7 +63,18 @@ public func prepareForUpload(fileData: Data, fileName: String) throws -> Prepare
     } catch let error as SoundPrepError {
         throw error
     } catch {
-        throw SoundPrepError.unreadable(error.localizedDescription)
+        throw SoundPrepError.unreadable(readableReason(error))
+    }
+}
+
+/// AVAudioFile reports these AudioFile codes with no readable text of its own.
+package func readableReason(_ error: any Error) -> String {
+    let error = error as NSError
+    guard error.domain == "com.apple.coreaudio.avfaudio" else { return error.localizedDescription }
+    switch OSStatus(truncatingIfNeeded: error.code) {
+    // Junk named .wav gives the second code, so neither code says which format failed.
+    case kAudioFileInvalidFileError, kAudioFileUnsupportedFileTypeError: return "not a readable audio file"
+    default: return error.localizedDescription
     }
 }
 
