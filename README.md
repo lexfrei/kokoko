@@ -16,6 +16,7 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 - Backs up the sounds, the projects, or both into a folder: sounds from the sounds tab, projects from the projects tab, both from the settings tab. A restore, started from any of these tabs, puts back the sounds from the chosen backup folder and its projects into the project slots that already exist on the device.
 - Lists the projects, downloads one as a `.tar` archive, and uploads archives named like `P01.tar` by dropping them onto the project list, into a slot that already exists on the device.
 - Shows the device settings where the firmware exposes them.
+- Puts these actions in the menu bar as well: File has Add Sounds (⌘O), downloading the selected sounds, and the three backups and the restore, which work from any tab; View switches tabs (⌘1 to ⌘4), refreshes the open tab (⌘R) and scans for devices again.
 
 ## Status and limits
 
