@@ -65,7 +65,6 @@ final class AppState: ObservableObject {
     @Published var renameText = ""
     @Published var metadataEditing: MetadataEditing?
     @Published var firmwareStatus: FirmwareStatus?
-    var firmwareSuffix: String { KokokoLibrary.firmwareSuffix(firmwareStatus) }
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsStatus: SettingsStatus = .notLoaded
@@ -736,7 +735,7 @@ final class AppState: ObservableObject {
             try await move(files, item.node.id, to: target, root: root)
             await reload()
         } catch {
-            reportOperationError("renumber: \(error.localizedDescription)", token: token)
+            reportOperationError("move to slot: \(error.localizedDescription)", token: token)
         }
     }
 

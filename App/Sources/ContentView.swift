@@ -65,7 +65,7 @@ struct ContentView: View {
             }
             Button("cancel", role: .cancel) {}
         }
-        .alert("renumber", isPresented: renumberBinding) {
+        .alert("move to slot", isPresented: renumberBinding) {
             TextField("slot number", text: $renumberText)
                 .frame(minWidth: 120)
             Button("move") {
@@ -143,7 +143,9 @@ struct ContentView: View {
             case .connecting(let name):
                 Text("[ conn \(name) ]").lineLimit(1)
             case .connected(let name, let serial, let os):
-                Text("[ \(name) \(serial) os \(os)\(state.firmwareSuffix) ]").lineLimit(1)
+                let line = StatusLine.connected(name: name, serial: serial, os: os, firmware: state.firmwareStatus)
+                Text(line.text).lineLimit(1)
+                    .accessibilityLabel(line.accessibilityLabel)
             case .failed(let why):
                 FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1)
             }
@@ -237,7 +239,7 @@ struct ContentView: View {
                         }
                     }
                     rowButton(.rename, help: "rename") { state.renameText = item.displayName; state.renameItem = item }
-                    rowButton(.renumber, help: "change slot number") { state.renumberItem = item }
+                    rowButton(.renumber, help: "move to another slot") { state.renumberItem = item }
                     rowButton(.metadata, help: "edit metadata") { Task { await state.editMetadata(item) } }
                     rowButton(.delete, help: "delete from device") { Task { await state.delete(item) } }
                 }
@@ -312,7 +314,7 @@ struct ContentView: View {
                             Text(binRowLabel(slot: entry.originalSlot, name: entry.name,
                                              deletedAt: entry.deletedAt))
                             Spacer()
-                            rowButton(.restore, help: "put back on the device", needsDevice: true) {
+                            rowButton(.restore, help: "restore to the device", needsDevice: true) {
                                 Task { await state.restoreFromBin(entry) }
                             }
                             rowButton(.removeFromBin, help: "remove from the bin for good") { state.binToRemove = entry }
@@ -422,7 +424,7 @@ struct ContentView: View {
                            perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
             Text(action.glyph)
-                .frame(minWidth: 28, minHeight: Self.minHitHeight)
+                .frame(minWidth: 28, minHeight: minHitHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -430,12 +432,6 @@ struct ContentView: View {
         .help(help)
         .accessibilityLabel(action.accessibilityLabel)
     }
-
-    #if os(macOS)
-    private static let minHitHeight: CGFloat = 28
-    #else
-    private static let minHitHeight: CGFloat = 44
-    #endif
 
     private func formatSize(_ size: UInt32) -> String {
         if size > 1024 * 1024 {
@@ -561,7 +557,17 @@ private struct FullTextButton: View {
 
 @MainActor
 func barButton(_ action: BarAction, perform: @escaping () -> Void) -> some View {
-    Button(action.text, action: perform)
-        .buttonStyle(.plain)
-        .accessibilityLabel(action.accessibilityLabel)
+    Button(action: perform) {
+        Text(action.text)
+            .frame(minWidth: 28, minHeight: minHitHeight)
+            .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(action.accessibilityLabel)
 }
+
+#if os(macOS)
+private let minHitHeight: CGFloat = 28
+#else
+private let minHitHeight: CGFloat = 44
+#endif
