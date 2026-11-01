@@ -146,8 +146,7 @@ struct ContentView: View {
             case .connected(let name, let serial, let os):
                 Text("[ \(name) \(serial) os \(os)\(state.firmwareSuffix) ]").lineLimit(1)
             case .failed(let why):
-                Text("[ !! \(why) ]").lineLimit(1)
-                    .help(why)
+                FullTextButton(label: "[ !! \(why) ]", text: why, lineLimit: 1)
             }
         }
         .padding()
@@ -276,8 +275,8 @@ struct ContentView: View {
                 Text(progress)
             }
             if let error = state.lastError {
-                Text("err: \(error)").foregroundStyle(Color.errorText).lineLimit(1)
-                    .help(error)
+                FullTextButton(label: "err: \(error)", text: error, lineLimit: 2)
+                    .foregroundStyle(Color.errorText)
             }
             Spacer()
             if case .connected = state.connection, state.view == .sounds {
@@ -550,4 +549,30 @@ extension Color {
         })
         #endif
     }()
+}
+
+/// A truncated line that opens its full text in a popover. `.help` alone
+/// needs a pointer to hover, which a touch screen does not have.
+private struct FullTextButton: View {
+    let label: String
+    let text: String
+    let lineLimit: Int
+    @State private var shown = false
+
+    var body: some View {
+        Button { shown = true } label: {
+            Text(label).lineLimit(lineLimit)
+        }
+        .buttonStyle(.plain)
+        .help(text)
+        .popover(isPresented: $shown) {
+            ScrollView {
+                Text(text)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .frame(idealWidth: 420, maxHeight: 320)
+        }
+    }
 }
