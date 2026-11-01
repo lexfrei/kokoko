@@ -21,7 +21,13 @@ struct Explore {
         }
         var files: DeviceFileService?
         for pair in pairs {
-            guard let wire = try? CoreMIDIWire(pair: pair) else { continue }
+            let wire: CoreMIDIWire
+            do {
+                wire = try CoreMIDIWire(pair: pair)
+            } catch {
+                print("\(pair.name): cannot open: \(error)")
+                continue
+            }
             let identity: Identity.Reply
             do {
                 identity = try await identifyDevice(on: wire, timeout: .seconds(2))
@@ -33,7 +39,13 @@ struct Explore {
             }
             let session = SysExSession(wire: wire, identityCode: identity.deviceID)
             session0 = session
-            guard let meta = try? await session.greet() else { continue }
+            let meta: GreetMetadata
+            do {
+                meta = try await session.greet()
+            } catch {
+                print("\(pair.name): greet failed: \(error)")
+                continue
+            }
             print("device: \(meta.sku) base=\(meta.baseSKU) os=\(meta.osVersion) mode=\(meta.mode)")
             let service = DeviceFileService(session: session)
             try await service.initialize()
