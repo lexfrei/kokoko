@@ -53,6 +53,40 @@ extension KokokoCoreChecks {
             check(false, "upload steps: a refused init passes its error on — got \(error)")
         }
 
+        // Init answered with a refusal: the refusal is passed on as it is.
+        let refusedByDevice = Deleted()
+        do {
+            _ = try await uploadSoundSteps(put: { throw SessionError.deviceError(.badRequest, message: nil) },
+                                           setMetadata: { _ in }, delete: { await refusedByDevice.add($0) })
+            check(false, "upload steps: an init the device refuses fails")
+        } catch SessionError.deviceError {
+            check(await refusedByDevice.ids.isEmpty, "upload steps: an init the device refuses deletes nothing")
+        } catch {
+            check(false, "upload steps: an init the device refuses passes the refusal on — got \(error)")
+        }
+
+        // Init sent but its reply lost or unreadable: a node may exist under an
+        // id nobody knows, so nothing is deleted and the user is told.
+        let lostReplies: [(String, any Error)] = [
+            ("lost", SessionError.timeout(command: 2, requestID: 1)),
+            ("unreadable", FileServiceError.missingResponse),
+        ]
+        for (label, failure) in lostReplies {
+            let unknown = Deleted()
+            do {
+                _ = try await uploadSoundSteps(put: { throw failure }, setMetadata: { _ in },
+                                               delete: { await unknown.add($0) })
+                check(false, "upload steps: an init whose reply is \(label) fails")
+            } catch let error as UploadSoundError {
+                check(await unknown.ids.isEmpty, "upload steps: an init whose reply is \(label) deletes nothing")
+                eq(error.localizedDescription,
+                   "upload failed (\(failure.localizedDescription)), a partial sound may remain on the device",
+                   "upload steps: an init whose reply is \(label) says a partial sound may remain")
+            } catch {
+                check(false, "upload steps: an init whose reply is \(label) reports an upload error — got \(error)")
+            }
+        }
+
         // Metadata refused and the removal fails.
         do {
             _ = try await uploadSoundSteps(put: { 9 }, setMetadata: { _ in throw Refused() },

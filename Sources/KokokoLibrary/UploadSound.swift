@@ -9,6 +9,9 @@ public enum UploadSoundError: LocalizedError {
     /// The audio transfer stopped after init named `slot`; `removed` says
     /// whether that partial node was deleted again.
     case putIncomplete(slot: UInt16, reason: String, removed: Bool)
+    /// No init reply was read, so whether a node exists, and under which id,
+    /// is unknown.
+    case initUnconfirmed(reason: String)
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +25,8 @@ public enum UploadSoundError: LocalizedError {
             return removed
                 ? "upload failed (\(reason)), partial sound in slot \(slotText) removed"
                 : "upload failed (\(reason)), a partial sound may remain in slot \(slotText)"
+        case .initUnconfirmed(let reason):
+            return "upload failed (\(reason)), a partial sound may remain on the device"
         }
     }
 }
@@ -52,6 +57,11 @@ package func uploadSoundSteps(put: @Sendable () async throws -> UInt16,
     } catch FileServiceError.putIncomplete(let partial, let reason) {
         let removed = (try? await delete(partial)) != nil
         throw UploadSoundError.putIncomplete(slot: partial, reason: reason, removed: removed)
+    } catch let error as SessionError {
+        guard case .timeout = error else { throw error }
+        throw UploadSoundError.initUnconfirmed(reason: error.localizedDescription)
+    } catch FileServiceError.missingResponse {
+        throw UploadSoundError.initUnconfirmed(reason: FileServiceError.missingResponse.localizedDescription)
     }
     do {
         try await setMetadata(slot)
