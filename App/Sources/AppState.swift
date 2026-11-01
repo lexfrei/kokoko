@@ -68,7 +68,7 @@ final class AppState: ObservableObject {
     var firmwareSuffix: String { KokokoLibrary.firmwareSuffix(firmwareStatus) }
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
-    @Published var settingsUnsupported = false
+    @Published var settingsStatus: SettingsStatus = .notLoaded
     @Published var view: HeaderTab = .sounds
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
@@ -242,7 +242,7 @@ final class AppState: ObservableObject {
         picker = .none
         firmwareStatus = nil
         settingsTree = []
-        settingsUnsupported = false
+        settingsStatus = .notLoaded
     }
 
     private func rescanIfDue() {
@@ -844,17 +844,22 @@ final class AppState: ObservableObject {
         defer { progress.end(op) }
         guard let settings else { return }
         let token = hotplug.currentGeneration()
+        settingsStatus = .notLoaded
         do {
             progress.update(op, "settings...")
             try await settings.initialize()
             let all = try await settings.getAll()
-            if hotplug.isCurrent(token) { settingsTree = Self.parseSettingsTree(all) }
+            if hotplug.isCurrent(token) {
+                settingsTree = Self.parseSettingsTree(all)
+                settingsStatus = .loaded
+            }
             progress.update(op, nil)
         } catch SessionError.deviceError(.commandNotFound, _) {
             progress.update(op, nil)
-            if hotplug.isCurrent(token) { settingsUnsupported = true }
+            if hotplug.isCurrent(token) { settingsStatus = .unsupported }
         } catch {
             progress.update(op, nil)
+            if hotplug.isCurrent(token) { settingsStatus = .failed }
             reportOperationError("settings: \(error.localizedDescription)", token: token)
         }
     }

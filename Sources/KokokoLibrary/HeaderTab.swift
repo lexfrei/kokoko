@@ -21,7 +21,20 @@ public enum HeaderTab: CaseIterable, Sendable {
     }
 }
 
+public enum DevicePhase: Equatable, Sendable {
+    case searching
+    case connecting(String)
+    case connected
+    case failed
+}
+
 /// What a tab shows instead of its content, or nil when it can show its content.
-public func tabNotice(_ tab: HeaderTab, connected: Bool) -> String? {
-    tab.needsDevice && !connected ? "device not connected" : nil
+public func tabNotice(_ tab: HeaderTab, device: DevicePhase) -> String? {
+    guard tab.needsDevice else { return nil }
+    switch device {
+    case .connected: return nil
+    case .failed: return "device not connected"
+    case .searching: return "scanning for midi devices..."
+    case .connecting(let name): return "connecting to \(name)..."
+    }
 }

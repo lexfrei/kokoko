@@ -146,8 +146,7 @@ struct ContentView: View {
             case .connected(let name, let serial, let os):
                 Text("[ \(name) \(serial) os \(os)\(state.firmwareSuffix) ]").lineLimit(1)
             case .failed(let why):
-                Text("[ !! \(why) ]").lineLimit(1)
-                    .help(why)
+                FullTextButton(label: "[ !! \(why) ]", text: why, lineLimit: 1)
             }
         }
         .padding()
@@ -155,6 +154,15 @@ struct ContentView: View {
 
     private var isConnected: Bool {
         if case .connected = state.connection { true } else { false }
+    }
+
+    private var devicePhase: DevicePhase {
+        switch state.connection {
+        case .idle, .scanning: .searching
+        case .connecting(let name): .connecting(name)
+        case .connected: .connected
+        case .failed: .failed
+        }
     }
 
     private func tabButton(_ tab: HeaderTab) -> some View {
@@ -175,7 +183,7 @@ struct ContentView: View {
 
     private var content: some View {
         Group {
-            if let notice = tabNotice(state.view, connected: isConnected) {
+            if let notice = tabNotice(state.view, device: devicePhase) {
                 deviceNotice(notice)
             } else {
                 switch state.view {
@@ -199,14 +207,11 @@ struct ContentView: View {
     private func deviceNotice(_ notice: String) -> some View {
         VStack(spacing: 12) {
             Text(notice)
-            switch state.connection {
-            case .failed:
+            if case .failed = state.connection {
                 Text("connect the device over usb-c")
                 Button("[ retry ]") { Task { await state.scan() } }
                     .buttonStyle(.plain)
                     .disabled(state.deviceBusy)
-            default:
-                Text("scanning for midi devices...")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -270,8 +275,8 @@ struct ContentView: View {
                 Text(progress)
             }
             if let error = state.lastError {
-                Text("err: \(error)").foregroundStyle(.red).lineLimit(1)
-                    .help(error)
+                FullTextButton(label: "err: \(error)", text: error, lineLimit: 2)
+                    .foregroundStyle(Color.errorText)
             }
             Spacer()
             if case .connected = state.connection, state.view == .sounds {
@@ -499,13 +504,13 @@ struct MetadataSheet: View {
                             TextField("", text: field(key))
                                 .frame(minWidth: 120)
                             Text(editing.form.error(for: key) ?? "")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(Color.errorText)
                         }
                     }
                 }
                 if let note = editing.note {
                     Text(note)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.errorText)
                 }
                 HStack {
                     Button("cancel") { state.metadataEditing = nil }
@@ -523,5 +528,51 @@ struct MetadataSheet: View {
     private func field(_ key: String) -> Binding<String> {
         Binding(get: { state.metadataEditing?.form.text[key] ?? "" },
                 set: { state.metadataEditing?.form.text[key] = $0 })
+    }
+}
+
+extension Color {
+    static let errorText: Color = {
+        func color(_ rgb: Int) -> (Double, Double, Double) {
+            (Double((rgb >> 16) & 0xFF) / 255, Double((rgb >> 8) & 0xFF) / 255, Double(rgb & 0xFF) / 255)
+        }
+        let (light, dark) = (color(ErrorColor.light), color(ErrorColor.dark))
+        #if os(macOS)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            let (r, g, b) = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+        })
+        #else
+        return Color(uiColor: UIColor { traits in
+            let (r, g, b) = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: r, green: g, blue: b, alpha: 1)
+        })
+        #endif
+    }()
+}
+
+/// A truncated line that opens its full text in a popover. `.help` alone
+/// needs a pointer to hover, which a touch screen does not have.
+private struct FullTextButton: View {
+    let label: String
+    let text: String
+    let lineLimit: Int
+    @State private var shown = false
+
+    var body: some View {
+        Button { shown = true } label: {
+            Text(label).lineLimit(lineLimit)
+        }
+        .buttonStyle(.plain)
+        .help(text)
+        .popover(isPresented: $shown) {
+            ScrollView {
+                Text(text)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .frame(idealWidth: 420, maxHeight: 320)
+        }
     }
 }
