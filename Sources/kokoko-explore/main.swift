@@ -69,7 +69,12 @@ struct Explore {
         // --- playback one short sound (audible!) ---
         if let first = sounds.first(where: { $0.isFile }) {
             print("playing 1s of \(first.name)...")
-            try? await files.startPlayback(fileID: first.id, offset: 0, length: 1000)
+            do {
+                try await files.startPlayback(fileID: first.id, offset: 0, length: 1000)
+                print("  playback started")
+            } catch {
+                print("  playback: \(error.localizedDescription)")
+            }
             try await Task.sleep(for: .milliseconds(1300))
         }
 
