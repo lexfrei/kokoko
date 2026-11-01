@@ -127,7 +127,8 @@ struct E2E {
         let library = DeviceLibrary(files: files)
         let backup = try await library.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0")
         check(backup.sounds.count == 2, "backup captured 2 sounds — got \(backup.sounds.count)")
-        check(backup.projectMetadata.isEmpty == false, "backup captured project metadata")
+        check(backup.projectMetadata["/projects"]?["active"] == nil,
+              "backup leaves out the projects selection, which names no node in the tree")
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try BackupStore.write(backup, to: dir)
@@ -529,9 +530,13 @@ struct E2E {
             return ids
         }
         func restoreWithPads(_ sounds: [SoundBackup], _ pads: [UInt16: Int]) async throws {
+            let names = Dictionary(uniqueKeysWithValues: try await files.list(nodeID: projectsID).map { ($0.id, $0.name) })
+            let byPath = Dictionary(uniqueKeysWithValues: pads.compactMap { id, sym in
+                names[id].map { ("/projects/\($0)", ["sym": JSONValue.int(sym)]) }
+            })
             try await library.restore(DeviceBackup(
                 deviceSKU: "TE032AS001", osVersion: "2.1.0", createdAt: Date(), sounds: sounds,
-                projectMetadata: pads.mapValues { ["sym": .int($0)] }, projectArchives: ["99": [1, 2, 3]]))
+                projectMetadata: byPath, projectArchives: ["99": [1, 2, 3]]))
         }
 
         let padOwner = try await files.list(nodeID: soundsID).map(\.id).sorted()[0]

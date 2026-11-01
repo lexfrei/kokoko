@@ -22,20 +22,27 @@ public struct DeviceBackup: Sendable {
     public var osVersion: String
     public var createdAt: Date
     public var sounds: [SoundBackup]
-    /// Node metadata keyed by node id, for every non-sound node (projects tree).
-    public var projectMetadata: [UInt16: [String: JSONValue]]
+    /// Metadata of the directories in the projects tree, keyed by path
+    /// ("/projects", "/projects/01/groups"). Node ids differ between devices, so an
+    /// "active" selection is kept as the path of the node it selects, and left out
+    /// when it selects no node in the tree.
+    public var projectMetadata: [String: [String: JSONValue]]
+    /// Project metadata entries of an older backup that keyed them by node id;
+    /// they are not restored.
+    public var legacyProjectSettings: Int
     /// Project archives by project name ("01".."09"), when the scope includes them.
     public var projectArchives: [String: [UInt8]]
 
     public init(deviceSKU: String, osVersion: String, createdAt: Date,
-                sounds: [SoundBackup], projectMetadata: [UInt16: [String: JSONValue]],
-                projectArchives: [String: [UInt8]] = [:]) {
+                sounds: [SoundBackup], projectMetadata: [String: [String: JSONValue]],
+                projectArchives: [String: [UInt8]] = [:], legacyProjectSettings: Int = 0) {
         self.deviceSKU = deviceSKU
         self.osVersion = osVersion
         self.createdAt = createdAt
         self.sounds = sounds
         self.projectMetadata = projectMetadata
         self.projectArchives = projectArchives
+        self.legacyProjectSettings = legacyProjectSettings
     }
 }
 
@@ -72,11 +79,21 @@ public actor DeviceLibrary {
             }
         }
 
-        var projectMetadata: [UInt16: [String: JSONValue]] = [:]
+        var projectMetadata: [String: [String: JSONValue]] = [:]
         var archives: [String: [UInt8]] = [:]
         if scope != .sounds {
             let projectsRoot = try await resolve("/projects")
-            try await collectMetadata(nodeID: projectsRoot, into: &projectMetadata)
+            let tree = try await walk(projectsRoot, path: "/projects")
+            let pathOf = Dictionary(tree.map { ($0.id, $0.path) }, uniquingKeysWith: { first, _ in first })
+            for node in tree where !node.isFile {
+                guard var meta = try? await files.getMetadata(fileID: node.id) else { continue }
+                // A selection that names no node in the tree has nothing to point at elsewhere.
+                if let active = meta.removeValue(forKey: "active"),
+                   let target = active.intValue.flatMap(UInt16.init(exactly:)).flatMap({ pathOf[$0] }) {
+                    meta["active"] = .string(target)
+                }
+                if !meta.isEmpty { projectMetadata[node.path] = meta }
+            }
             for project in try await files.list(nodeID: projectsRoot) {
                 progress?("P\(project.name)")
                 let archive = try await files.get(fileID: project.id)
@@ -89,14 +106,18 @@ public actor DeviceLibrary {
                             projectArchives: archives)
     }
 
-    private func collectMetadata(nodeID: UInt16,
-                                 into map: inout [UInt16: [String: JSONValue]]) async throws {
-        if let meta = try? await files.getMetadata(fileID: nodeID), !meta.isEmpty {
-            map[nodeID] = meta
+    /// Every node under the directory `id`, with its path, `id` itself first.
+    private func walk(_ id: UInt16, path: String) async throws -> [(path: String, id: UInt16, isFile: Bool)] {
+        var nodes = [(path: path, id: id, isFile: false)]
+        for child in try await files.list(nodeID: id) {
+            let childPath = path + "/" + child.name
+            if child.isFile {
+                nodes.append((path: childPath, id: child.id, isFile: true))
+            } else {
+                nodes += try await walk(child.id, path: childPath)
+            }
         }
-        for child in try await files.list(nodeID: nodeID) where !child.isFile {
-            try await collectMetadata(nodeID: child.id, into: &map)
-        }
+        return nodes
     }
 
     /// Recreate sounds in their original slots, or in a device-assigned slot when
@@ -108,10 +129,12 @@ public actor DeviceLibrary {
     /// (active selections, pad assignments). A pad's "sym" that names a sound which
     /// moved is pointed at the slot it landed in; references inside the project
     /// archives themselves are not rewritten. An archive whose project slot is not
-    /// on the device is not uploaded; the names of those archives are returned.
+    /// on the device is not uploaded. Project metadata goes to the node at the same
+    /// path, with "active" pointed at the node at its saved path; metadata whose
+    /// node or selection is missing, or whose write fails, is reported, not applied.
     @discardableResult
     public func restore(_ backup: DeviceBackup,
-                        progress: (@Sendable (String) -> Void)? = nil) async throws -> [String] {
+                        progress: (@Sendable (String) -> Void)? = nil) async throws -> RestoreReport {
         // Original id → the slot a sound actually landed in, for sounds that moved.
         var movedTo: [UInt16: UInt16] = [:]
         if !backup.sounds.isEmpty {
@@ -166,16 +189,40 @@ public actor DeviceLibrary {
                                         fileID: slot.id, capabilities: [FileCapability.read],
                                         timeout: .seconds(60))
             }
-            for (nodeID, meta) in backup.projectMetadata {
-                var meta = meta
+        }
+        var unapplied: [String] = []
+        if !backup.projectMetadata.isEmpty {
+            let tree = try await walk(try await resolve("/projects"), path: "/projects")
+            let idOf = Dictionary(tree.map { ($0.path, $0.id) }, uniquingKeysWith: { first, _ in first })
+            // A skipped project is reported once, not once per directory under it.
+            let skippedRoots = skipped.map { "/projects/" + $0 }
+            for (path, saved) in backup.projectMetadata.sorted(by: { $0.key < $1.key }) {
+                guard let nodeID = idOf[path] else {
+                    if !skippedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+                        unapplied.append(path)
+                    }
+                    continue
+                }
+                var meta = saved
+                if let active = meta.removeValue(forKey: "active") {
+                    if case .string(let target) = active, let selected = idOf[target] {
+                        meta["active"] = .int(Int(selected))
+                    } else {
+                        unapplied.append("\(path) active")
+                    }
+                }
                 if let sym = meta["sym"]?.intValue, let original = UInt16(exactly: sym),
                    let landed = movedTo[original] {
                     meta["sym"] = .int(Int(landed))
                 }
-                try? await files.setMetadata(fileID: nodeID, meta)
+                guard !meta.isEmpty else { continue }
+                if (try? await files.setMetadata(fileID: nodeID, meta)) == nil {
+                    unapplied.append(path)
+                }
             }
         }
-        return skipped
+        return RestoreReport(skippedProjects: skipped, unappliedSettings: unapplied.sorted(),
+                             legacySettings: backup.legacyProjectSettings)
     }
 
     /// Byte-identical PCM counts as the same sound. A read failure means "not
@@ -303,10 +350,30 @@ public actor DeviceLibrary {
 
 // MARK: - Backup folder serialization
 
-public enum RestoreSkip {
-    public static func message(projects: [String]) -> String? {
-        guard !projects.isEmpty else { return nil }
-        return projects.map { "P\($0)" }.joined(separator: ", ") + " skipped: no such project slot on the device"
+public struct RestoreReport: Equatable, Sendable {
+    public var skippedProjects: [String]
+    public var unappliedSettings: [String]
+    public var legacySettings: Int
+
+    public init(skippedProjects: [String] = [], unappliedSettings: [String] = [], legacySettings: Int = 0) {
+        self.skippedProjects = skippedProjects
+        self.unappliedSettings = unappliedSettings
+        self.legacySettings = legacySettings
+    }
+
+    public var message: String? {
+        var parts: [String] = []
+        if !skippedProjects.isEmpty {
+            parts.append(skippedProjects.map { "P\($0)" }.joined(separator: ", ")
+                + " skipped: no such project slot on the device")
+        }
+        if !unappliedSettings.isEmpty {
+            parts.append("settings not applied: " + unappliedSettings.joined(separator: ", "))
+        }
+        if legacySettings > 0 {
+            parts.append("\(legacySettings) project settings from an older backup not applied")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 }
 
@@ -321,7 +388,7 @@ public enum BackupStore {
             "soundCount": backup.sounds.count,
         ]
         manifest["projectMetadata"] = Dictionary(uniqueKeysWithValues:
-            backup.projectMetadata.map { (String($0.key), $0.value.mapValues(\.anyValue)) })
+            backup.projectMetadata.map { ($0.key, $0.value.mapValues(\.anyValue)) })
         if !backup.projectArchives.isEmpty {
             manifest["projectArchives"] = backup.projectArchives.keys.sorted()
         }
@@ -376,11 +443,17 @@ public enum BackupStore {
             }
             sounds.append(SoundBackup(nodeID: nodeID, pcm: Array(pcm), metadata: metadata))
         }
-        var projectMetadata: [UInt16: [String: JSONValue]] = [:]
+        var projectMetadata: [String: [String: JSONValue]] = [:]
+        var legacy = 0
         if let raw = manifest["projectMetadata"] as? [String: Any] {
             for (key, value) in raw {
-                if let id = UInt16(key), let dict = value as? [String: Any] {
-                    projectMetadata[id] = dict.compactMapValues { JSONValue(any: $0) }
+                // Older backups keyed this by node id, which means nothing on another device.
+                guard key.hasPrefix("/") else {
+                    legacy += 1
+                    continue
+                }
+                if let dict = value as? [String: Any] {
+                    projectMetadata[key] = dict.compactMapValues { JSONValue(any: $0) }
                 }
             }
         }
@@ -399,6 +472,6 @@ public enum BackupStore {
                             osVersion: manifest["osVersion"] as? String ?? "",
                             createdAt: createdAt,
                             sounds: sounds, projectMetadata: projectMetadata,
-                            projectArchives: archives)
+                            projectArchives: archives, legacyProjectSettings: legacy)
     }
 }

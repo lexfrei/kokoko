@@ -24,21 +24,21 @@ extension KokokoCoreChecks {
             let slot01 = try await files.put(parentID: projectsRoot, name: "01", data: [0])
 
             let archive = [UInt8](repeating: 7, count: 300)
-            let skipped = try await library.restore(DeviceBackup(
+            let report = try await library.restore(DeviceBackup(
                 deviceSKU: "", osVersion: "", createdAt: Date(), sounds: [], projectMetadata: [:],
                 projectArchives: ["01": archive, "07": archive, "09": archive]))
-            eq(skipped, ["07", "09"], "restore projects: archives without a slot on the device are reported")
+            eq(report.skippedProjects, ["07", "09"], "restore projects: archives without a slot on the device are reported")
             check(try await files.get(fileID: slot01).data == archive,
                   "restore projects: an archive with a slot is still written")
             eq(try await files.list(nodeID: projectsRoot).map(\.name), ["01"],
                "restore projects: no slot is created for a skipped archive")
             eq(try await library.restore(DeviceBackup(
                 deviceSKU: "", osVersion: "", createdAt: Date(), sounds: [], projectMetadata: [:],
-                projectArchives: ["01": archive])), [],
+                projectArchives: ["01": archive])).skippedProjects, [],
                "restore projects: nothing is reported when every archive has a slot")
-            eq(RestoreSkip.message(projects: ["07", "09"]), "P07, P09 skipped: no such project slot on the device",
+            eq(RestoreReport(skippedProjects: ["07", "09"]).message, "P07, P09 skipped: no such project slot on the device",
                "restore projects: the message names every skipped project")
-            eq(RestoreSkip.message(projects: []), nil, "restore projects: no message when nothing was skipped")
+            eq(RestoreReport().message, nil, "restore projects: no message when nothing was skipped")
         } catch {
             check(false, "restore project checks threw \(error)")
         }
