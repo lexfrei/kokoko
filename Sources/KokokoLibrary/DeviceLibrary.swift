@@ -488,8 +488,12 @@ public enum BackupStore {
         var archives: [String: [UInt8]] = [:]
         let projectsDir = dir.appendingPathComponent("projects")
         if let names = try? fm.contentsOfDirectory(atPath: projectsDir.path) {
-            for name in names where name.hasSuffix(".tar") {
+            for name in names {
+                // Only the names write() produces; anything else, such as the "._P01.tar"
+                // macOS writes next to a file on a FAT drive, is not an archive of this backup.
+                guard name.hasPrefix("P"), name.hasSuffix(".tar") else { continue }
                 let slot = String(name.dropFirst().dropLast(4))
+                guard !slot.isEmpty, slot.allSatisfy(\.isASCII), slot.allSatisfy(\.isNumber) else { continue }
                 if let data = try? Data(contentsOf: projectsDir.appendingPathComponent(name)) {
                     archives[slot] = Array(data)
                 }

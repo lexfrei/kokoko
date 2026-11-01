@@ -68,6 +68,7 @@ struct KokokoCoreChecks {
         headerTabChecks()
         errorColorChecks()
         appCommandChecks()
+        backupArchiveChecks()
         confirmationChecks()
         do {
             try audioChecks()
