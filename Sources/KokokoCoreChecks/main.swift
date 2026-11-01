@@ -50,6 +50,7 @@ struct KokokoCoreChecks {
         await uploadStepsChecks()
         await hotplugChecks()
         hotplugPolicyChecks()
+        await metadataEditChecks()
         do {
             try audioChecks()
         } catch {
