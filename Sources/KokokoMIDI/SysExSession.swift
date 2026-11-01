@@ -183,7 +183,15 @@ public func identifyDevice(on wire: any MIDIWire, timeout: Duration = .seconds(5
             }
         }
         Task {
-            try? await wire.send(Identity.requestBytes)
+            do {
+                try await wire.send(Identity.requestBytes)
+            } catch {
+                if once.claim() {
+                    timeoutTask.cancel()
+                    wire.setMessageHandler(nil)
+                    continuation.resume(throwing: error)
+                }
+            }
         }
     }
 }
