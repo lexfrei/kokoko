@@ -107,9 +107,11 @@ public actor DeviceLibrary {
     /// Upload project archives back into their slots; reapply project metadata
     /// (active selections, pad assignments). A pad's "sym" that names a sound which
     /// moved is pointed at the slot it landed in; references inside the project
-    /// archives themselves are not rewritten.
+    /// archives themselves are not rewritten. An archive whose project slot is not
+    /// on the device is not uploaded; the names of those archives are returned.
+    @discardableResult
     public func restore(_ backup: DeviceBackup,
-                        progress: (@Sendable (String) -> Void)? = nil) async throws {
+                        progress: (@Sendable (String) -> Void)? = nil) async throws -> [String] {
         // Original id → the slot a sound actually landed in, for sounds that moved.
         var movedTo: [UInt16: UInt16] = [:]
         if !backup.sounds.isEmpty {
@@ -168,11 +170,15 @@ public actor DeviceLibrary {
                 }
             }
         }
+        var skipped: [String] = []
         if !backup.projectArchives.isEmpty {
             let projectsRoot = try await resolve("/projects")
             let slots = try await files.list(nodeID: projectsRoot)
-            for (name, archive) in backup.projectArchives {
-                guard let slot = slots.first(where: { $0.name == name }) else { continue }
+            for (name, archive) in backup.projectArchives.sorted(by: { $0.key < $1.key }) {
+                guard let slot = slots.first(where: { $0.name == name }) else {
+                    skipped.append(name)
+                    continue
+                }
                 progress?("P\(name)")
                 _ = try await files.put(parentID: projectsRoot, name: name, data: archive,
                                         fileID: slot.id, capabilities: [FileCapability.read],
@@ -187,6 +193,7 @@ public actor DeviceLibrary {
                 try? await files.setMetadata(fileID: nodeID, meta)
             }
         }
+        return skipped
     }
 
     /// Byte-identical PCM counts as the same sound. A read failure means "not
@@ -324,6 +331,13 @@ public actor DeviceLibrary {
 }
 
 // MARK: - Backup folder serialization
+
+public enum RestoreSkip {
+    public static func message(projects: [String]) -> String? {
+        guard !projects.isEmpty else { return nil }
+        return projects.map { "P\($0)" }.joined(separator: ", ") + " skipped: no such project slot on the device"
+    }
+}
 
 public enum BackupStore {
     /// Write a backup as a directory: manifest.json + sounds/NNN.pcm + .json sidecars.
