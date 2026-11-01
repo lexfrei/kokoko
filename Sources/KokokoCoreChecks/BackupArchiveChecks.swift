@@ -67,6 +67,25 @@ extension KokokoCoreChecks {
         check(isValidProjectArchive(otherData), "archive: only the first header is checked, not the contents")
     }
 
+    static func archiveNameChecks() {
+        let backupNames: [(String, String?)] = [
+            ("P01.tar", "01"), ("P123.tar", "123"), ("P1.tar", "1"),
+            ("x-P01.tar", nil), ("._P01.tar", nil), ("X01.tar", nil), ("P0x.tar", nil), ("P.tar", nil),
+            ("P\u{0661}\u{0662}.tar", nil), ("P01.TAR", nil), ("p01.tar", nil),
+        ]
+        for (name, slot) in backupNames {
+            eq(projectSlot(backupArchiveName: name), slot, "archive name: backup file \(name)")
+        }
+        let droppedNames: [(String, String?)] = [
+            ("P01.tar", "01"), ("my song P07.tar", "07"), ("backup-P09.tar", "09"),
+            ("._P01.tar", nil), ("._backup-P01.tar", nil), ("P1.tar", nil), ("P123.tar", nil),
+            ("P\u{0661}\u{0662}.tar", nil), ("P01.tar.zip", nil), ("notes.tar", nil),
+        ]
+        for (name, slot) in droppedNames {
+            eq(projectSlot(droppedArchiveName: name), slot, "archive name: dropped file \(name)")
+        }
+    }
+
     static func backupArchiveChecks() {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("kokoko-archives-\(UUID().uuidString)")

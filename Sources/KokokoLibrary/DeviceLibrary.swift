@@ -504,11 +504,7 @@ public enum BackupStore {
         let projectsDir = dir.appendingPathComponent("projects")
         if let names = try? fm.contentsOfDirectory(atPath: projectsDir.path) {
             for name in names {
-                // Only the names write() produces; anything else, such as the "._P01.tar"
-                // macOS writes next to a file on a FAT drive, is not an archive of this backup.
-                guard name.hasPrefix("P"), name.hasSuffix(".tar") else { continue }
-                let slot = String(name.dropFirst().dropLast(4))
-                guard !slot.isEmpty, slot.allSatisfy(\.isASCII), slot.allSatisfy(\.isNumber) else { continue }
+                guard let slot = projectSlot(backupArchiveName: name) else { continue }
                 if let data = try? Data(contentsOf: projectsDir.appendingPathComponent(name)),
                    isValidProjectArchive(Array(data)) {
                     archives[slot] = Array(data)
@@ -551,4 +547,25 @@ public func isValidProjectArchive(_ bytes: [UInt8]) -> Bool {
     }
     // Old tar tools summed signed bytes; POSIX tar sums unsigned ones.
     return stored == unsigned || stored == signed
+}
+
+/// The project slot named by a backup's archive file: exactly "P", ASCII digits
+/// and ".tar", the names `BackupStore.write` produces.
+public func projectSlot(backupArchiveName name: String) -> String? {
+    guard name.hasPrefix("P"), name.hasSuffix(".tar") else { return nil }
+    return asciiDigits(name.dropFirst().dropLast(4))
+}
+
+/// The project slot named by an archive dropped on the project list: any name
+/// ending in "P", two ASCII digits and ".tar", since other tools put a prefix
+/// before it. A "._" file is the metadata copy macOS writes on a FAT drive.
+public func projectSlot(droppedArchiveName name: String) -> String? {
+    guard !name.hasPrefix("._"), name.hasSuffix(".tar") else { return nil }
+    let stem = name.dropLast(4)
+    guard stem.count >= 3, stem.dropLast(2).last == "P" else { return nil }
+    return asciiDigits(stem.suffix(2))
+}
+
+private func asciiDigits(_ text: Substring) -> String? {
+    !text.isEmpty && text.allSatisfy({ $0.isASCII && $0.isNumber }) ? String(text) : nil
 }
