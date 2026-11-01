@@ -72,9 +72,10 @@ package func uploadSoundSteps(put: @Sendable () async throws -> UInt16,
 
 /// A put init that was sent but whose reply never arrived or could not be read:
 /// the device may have created a node under an id the caller does not know.
+/// A disconnect counts too: a call that close() failed may already have reached the device.
 func initReplyLost(_ error: any Error) -> Bool {
     switch error {
-    case SessionError.timeout, WireError.timeout, FileServiceError.missingResponse: true
+    case SessionError.timeout, SessionError.disconnected, WireError.timeout, FileServiceError.missingResponse: true
     default: false
     }
 }
