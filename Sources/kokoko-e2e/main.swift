@@ -741,8 +741,56 @@ struct E2E {
             check(countAfterBadPut == countBeforeBadPut, "unserializable metadata is refused on upload before anything is sent")
         }
 
+        // --- moves: a single move, a swap and a bulk move, as the app sends them ---
+        func data(_ id: UInt16) async -> [UInt8]? { try? await files.get(fileID: id).data }
+        func run(_ plan: [(from: UInt16, to: UInt16)]) async throws {
+            for step in plan { try await files.move(fileID: step.from, toParent: soundsID, newFileID: step.to) }
+        }
+        for (slot, byte) in [(200, 1), (220, 2), (221, 3), (230, 4), (232, 5)] as [(UInt16, UInt8)] {
+            _ = try await files.put(parentID: soundsID, name: "mv\(slot)", data: [byte, byte], fileID: slot)
+        }
+        do {
+            try await run([(200, 210)])
+            let ids = Set(try await files.list(nodeID: soundsID).map(\.id))
+            let moved = await data(210)
+            check(ids.contains(210) && !ids.contains(200) && moved == [1, 1],
+                  "a move puts the sound in the new slot and frees the old one")
+        } catch {
+            check(false, "a move puts the sound in the new slot and frees the old one — threw \(error)")
+        }
+        do {
+            try await run(planSwap(220, 221, occupied: Set(try await files.list(nodeID: soundsID).map(\.id))))
+            let swappedLow = await data(220), swappedHigh = await data(221)
+            check(swappedLow == [3, 3] && swappedHigh == [2, 2], "a swap trades the two sounds' slots")
+        } catch {
+            check(false, "a swap trades the two sounds' slots — threw \(error)")
+        }
+        do {
+            let occupied = Set(try await files.list(nodeID: soundsID).map(\.id))
+            if let plan = planBulkMove(selected: [232, 230], occupied: occupied, start: 240) {
+                try await run(plan)
+                let first = await data(240), second = await data(241)
+                check(first == [4, 4] && second == [5, 5], "a bulk move puts the selection on consecutive slots in order")
+            } else {
+                check(false, "a bulk move puts the selection on consecutive slots in order — no plan")
+            }
+        } catch {
+            check(false, "a bulk move puts the selection on consecutive slots in order — threw \(error)")
+        }
+        do {
+            try await files.move(fileID: 210, toParent: soundsID, newFileID: 220)
+            check(false, "a move onto a taken slot is refused")
+        } catch SessionError.deviceError(let status, _) {
+            let keptMoved = await data(210), keptTarget = await data(220)
+            check(status == .specificError(16) && keptMoved == [1, 1] && keptTarget == [3, 3],
+                  "a move onto a taken slot is refused and changes nothing")
+        } catch {
+            check(false, "a move onto a taken slot is refused and changes nothing — threw \(error)")
+        }
+
         eventsTask.cancel()
         let seen = await eventsTask.value
+        check(seen.contains(.moved(oldNodeID: 200, parentID: soundsID, newNodeID: 210)), "moved event seen")
         check(seen.contains { if case .addedUpdated = $0 { true } else { false } },
               "added event seen")
         check(seen.contains { if case .deleted = $0 { true } else { false } },
