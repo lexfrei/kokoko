@@ -28,8 +28,7 @@ struct SettingsView: View {
                 Text(state.settingsStatus == .notLoaded ? state.progressText ?? placeholder : placeholder)
                     .foregroundStyle(.secondary)
                 if state.settingsStatus == .failed {
-                    Button("[ retry ]") { Task { await state.loadSettings() } }
-                        .buttonStyle(.plain)
+                    barButton(.retry) { Task { await state.loadSettings() } }
                         .disabled(state.deviceBusy)
                 }
             }

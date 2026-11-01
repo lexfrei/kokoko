@@ -64,6 +64,7 @@ struct KokokoCoreChecks {
         settingsValueChecks()
         soundPrepTextChecks()
         rowGlyphChecks()
+        barActionChecks()
         headerTabChecks()
         errorColorChecks()
         appCommandChecks()
