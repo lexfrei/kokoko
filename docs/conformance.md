@@ -36,7 +36,7 @@ Paths are relative to `Sources/`.
 | 7 METADATA get, paged | `KokokoCore/FileMessages.swift` `GetMetadataRequest`, `GetMetadataResponse`; `KokokoMIDI/DeviceFileService.swift` `getMetadata` | yes, `handleMetadata` | checks "get metadata request", "get metadata fragment", "vep: metadata get of a missing node answers status 16"; e2e "metadata samplerate" | verified |
 | 7 METADATA set, paged | `KokokoCore/FileMessages.swift` `SetMetadataPagedInitRequest`, `SetMetadataPagedDataRequest`; `KokokoMIDI/DeviceFileService.swift` `setMetadata` | yes, `handleMetadata` | checks "paged metadata init", "paged metadata data", "vep: paged metadata set of a missing node answers status 16" | unverified |
 | 11 INFO | `KokokoCore/FileMessages.swift` `FileInfoRequest`, `FileInfoResponse`; `KokokoMIDI/DeviceFileService.swift` `info` | yes, `handleFile` | checks "info request", "info name", "vep: info of a missing node answers status 16" | unverified |
-| 12 MOVE | `KokokoCore/FileMessages.swift` `MoveRequest`, `MoveResponse`; `KokokoMIDI/DeviceFileService.swift` `move` | yes, `handleFile`; keeps the node id, emits no event | checks "move request", "move new", "vep: move of a missing node answers status 16", "vep: move into a missing parent answers status 16", "vep: move into an existing parent is accepted" | unverified |
+| 12 MOVE | `KokokoCore/FileMessages.swift` `MoveRequest`, `MoveResponse`; `KokokoMIDI/DeviceFileService.swift` `move` | yes, `handleFile`; gives the node `new_file_id` (0 keeps its id) and emits FILE_MOVED; refuses a `new_file_id` that is taken with status 16, a simulator choice since the device's answer is unknown; refuses to move the root | checks "move request", "move new", "vep: move of a missing node answers status 16", "vep: move into a missing parent answers status 16", "vep: move into an existing parent is accepted", "vep: move of the root answers status 16", "vep: a move with a new id re-keys the node", "vep: a new node never takes the id a moved node holds", "vep: a moved directory keeps its children"; e2e "a move puts the sound in the new slot and frees the old one", "a swap trades the two sounds' slots", "a bulk move puts the selection on consecutive slots in order", "a move onto a taken slot is refused and changes nothing" | unverified |
 
 ## File events
 
@@ -46,7 +46,7 @@ Paths are relative to `Sources/`.
 | 8 FILE_ADDED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | emitted after a PUT completes, `emitEvent` | checks "event added"; e2e "added event seen" | unverified |
 | 9 FILE_UPDATED | `KokokoCore/FileMessages.swift` `FileEvent.parse`, same branch as 8 | not emitted | none | unverified |
 | 10 FILE_DELETED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | emitted after a DELETE the simulator accepts, `emitEvent` | checks "event deleted", "session event deleted node", "vep: no delete event for a missing node", "vep: no delete event for a refused delete"; e2e "deleted event seen" | unverified |
-| 13 FILE_MOVED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | not emitted | checks "event moved" | unverified |
+| 13 FILE_MOVED | `KokokoCore/FileMessages.swift` `FileEvent.parse` | emitted after a move the simulator accepts, `emitEvent` | checks "event moved", "vep: an accepted move emits a moved event"; e2e "moved event seen" | unverified |
 
 ## Command 6: SETTINGS
 

@@ -83,6 +83,7 @@ public final class VirtualEPDevice: @unchecked Sendable {
 
     @discardableResult
     private func allocNode(parentID: UInt16, name: String, flags: UInt8) -> UInt16 {
+        while nodes[nextID] != nil { nextID += 1 }
         let id = nextID
         nodes[id] = VNode(id: id, parentID: parentID, name: name, flags: flags)
         nextID += 1
@@ -314,15 +315,26 @@ public final class VirtualEPDevice: @unchecked Sendable {
             let fileID = readU16(p, 1)
             let parent = readU16(p, 3)
             let newID = readU16(p, 5)
-            guard nodes[fileID] != nil, nodes[parent] != nil else {
+            let target = newID == 0 ? fileID : newID
+            // What the device does with a new id that is already taken is not
+            // known; the simulator refuses it rather than overwrite that node.
+            guard fileID != 0, var node = nodes[fileID], nodes[parent] != nil,
+                  target == fileID || nodes[target] == nil else {
                 respond(to: frame, status: 16, payload: [])
                 return
             }
-            nodes[fileID]?.parentID = parent
-            respond(to: frame, status: 0,
-                    payload: [UInt8(fileID >> 8), UInt8(fileID & 0xFF),
-                              UInt8(parent >> 8), UInt8(parent & 0xFF),
-                              UInt8(newID >> 8), UInt8(newID & 0xFF)])
+            nodes.removeValue(forKey: fileID)
+            node.id = target
+            node.parentID = parent
+            nodes[target] = node
+            for (id, child) in nodes where child.parentID == fileID && target != fileID {
+                nodes[id]?.parentID = target
+            }
+            let ids = [UInt8(fileID >> 8), UInt8(fileID & 0xFF),
+                       UInt8(parent >> 8), UInt8(parent & 0xFF),
+                       UInt8(target >> 8), UInt8(target & 0xFF)]
+            respond(to: frame, status: 0, payload: ids)
+            emitEvent([0x0D] + ids)
 
         default:
             respond(to: frame, status: 2, payload: [])
