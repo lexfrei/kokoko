@@ -30,6 +30,8 @@ public struct DeviceBackup: Sendable {
     /// Project metadata entries of an older backup that keyed them by node id;
     /// they are not restored.
     public var legacyProjectSettings: Int
+    /// What the backup could not capture; not written to the backup folder.
+    public var report = BackupReport()
     /// Project archives by project name ("01".."09"), when the scope includes them.
     public var projectArchives: [String: [UInt8]]
 
@@ -65,6 +67,7 @@ public actor DeviceLibrary {
     public func backup(deviceSKU: String, osVersion: String, scope: Scope = .everything,
                        progress: (@Sendable (String) -> Void)? = nil) async throws -> DeviceBackup {
         var backups: [SoundBackup] = []
+        var unread: [String] = []
         if scope != .projects {
             let soundsRoot = try await resolve("/sounds")
             for node in try await files.list(nodeID: soundsRoot) where node.isFile {
@@ -74,7 +77,13 @@ public actor DeviceLibrary {
                 guard pcm.count == Int(node.size) else {
                     throw FileServiceError.truncated(fileID: node.id, expected: Int(node.size), got: pcm.count)
                 }
-                let meta = (try? await files.getMetadata(fileID: node.id)) ?? [:]
+                let meta: [String: JSONValue]
+                if let read = try? await files.getMetadata(fileID: node.id) {
+                    meta = read
+                } else {
+                    meta = [:]
+                    unread.append(node.name)
+                }
                 backups.append(SoundBackup(nodeID: node.id, pcm: pcm, metadata: meta))
             }
         }
@@ -86,7 +95,10 @@ public actor DeviceLibrary {
             let tree = try await walk(projectsRoot, path: "/projects")
             let pathOf = Dictionary(tree.map { ($0.id, $0.path) }, uniquingKeysWith: { first, _ in first })
             for node in tree where !node.isFile {
-                guard var meta = try? await files.getMetadata(fileID: node.id) else { continue }
+                guard var meta = try? await files.getMetadata(fileID: node.id) else {
+                    unread.append(node.path)
+                    continue
+                }
                 // A selection that names no node in the tree has nothing to point at elsewhere.
                 if let active = meta.removeValue(forKey: "active"),
                    let target = active.intValue.flatMap(UInt16.init(exactly:)).flatMap({ pathOf[$0] }) {
@@ -101,9 +113,11 @@ public actor DeviceLibrary {
             }
         }
 
-        return DeviceBackup(deviceSKU: deviceSKU, osVersion: osVersion, createdAt: Date(),
-                            sounds: backups, projectMetadata: projectMetadata,
-                            projectArchives: archives)
+        var backup = DeviceBackup(deviceSKU: deviceSKU, osVersion: osVersion, createdAt: Date(),
+                                  sounds: backups, projectMetadata: projectMetadata,
+                                  projectArchives: archives)
+        backup.report = BackupReport(unreadMetadata: unread)
+        return backup
     }
 
     /// Every node under the directory `id`, with its path, `id` itself first.
@@ -349,6 +363,19 @@ public actor DeviceLibrary {
 }
 
 // MARK: - Backup folder serialization
+
+public struct BackupReport: Equatable, Sendable {
+    public var unreadMetadata: [String] = []
+
+    public init(unreadMetadata: [String] = []) {
+        self.unreadMetadata = unreadMetadata
+    }
+
+    public var message: String? {
+        guard !unreadMetadata.isEmpty else { return nil }
+        return "metadata not read, backed up without it: " + unreadMetadata.joined(separator: ", ")
+    }
+}
 
 public struct RestoreReport: Equatable, Sendable {
     public var skippedProjects: [String]

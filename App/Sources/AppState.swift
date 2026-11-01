@@ -546,6 +546,10 @@ final class AppState: ObservableObject {
             let target = folder.appendingPathComponent("kokoko-backup-\(label)-\(stamp)")
             try BackupStore.write(backup, to: target)
             progress.update(op, nil)
+            // Not tied to the device generation: the incomplete backup is already on disk.
+            if let note = backup.report.message {
+                lastError = appendingError(lastError, "backup: \(note)")
+            }
         } catch {
             progress.update(op, nil)
             reportOperationError("backup: \(error.localizedDescription)", token: token)
