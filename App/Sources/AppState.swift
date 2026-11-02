@@ -507,7 +507,16 @@ final class AppState: ObservableObject {
         defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files, let root = soundsRootID else { return }
+        // A drop, or a panel that stayed open across an unplug, reaches here
+        // with sounds the user picked; leaving without a word loses them.
+        guard let files else {
+            reportLocalError("upload: no device connected")
+            return
+        }
+        guard let root = soundsRootID else {
+            reportLocalError("upload: the sounds folder was not found")
+            return
+        }
         let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
