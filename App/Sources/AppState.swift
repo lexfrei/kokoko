@@ -203,10 +203,8 @@ final class AppState: ObservableObject {
         if hotplug.isCurrent(token) { lastError = text }
     }
 
-    /// Adds `text` to the error line, unless the device has left since `token`:
-    /// the disconnect reason is not followed by errors about a device that is gone.
     private func appendError(_ text: String, token: Int) {
-        if hotplug.isCurrent(token) { lastError = appendingError(lastError, text) }
+        lastError = nextError(lastError, adding: text, deviceIsCurrent: hotplug.isCurrent(token))
     }
 
     /// Claims the device for one user action; false while another runs.
