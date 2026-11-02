@@ -53,6 +53,25 @@ extension KokokoCoreChecks {
         eq(dropMarker(.projectList, targeted: true, deviceBusy: false), "> drop to upload project archives <",
            "drop marker: the project list says what a drop does")
         eq(dropMarker(.soundRow, targeted: true, deviceBusy: false), "> drop here <", "drop marker: a sound row marks itself")
+        let row = DropContents(rowMove: true, audio: true)
+        let sounds = DropContents(audio: true)
+        let tar = DropContents(tarArchive: true)
+        let text = DropContents()
+        check(dropAccepted(by: .soundList, contents: sounds, deviceBusy: false), "drop accept: the sound list takes audio files")
+        check(!dropAccepted(by: .soundList, contents: row, deviceBusy: false),
+              "drop accept: the sound list refuses a dragged row, though it carries audio, so a reorder uploads no copy")
+        check(!dropAccepted(by: .soundList, contents: tar, deviceBusy: false), "drop accept: the sound list refuses archives")
+        check(dropAccepted(by: .soundRow, contents: row, deviceBusy: false), "drop accept: a row takes another row")
+        check(!dropAccepted(by: .soundRow, contents: text, deviceBusy: false), "drop accept: a row refuses plain text")
+        check(!dropAccepted(by: .soundRow, contents: sounds, deviceBusy: false), "drop accept: a row refuses audio files")
+        check(dropAccepted(by: .projectList, contents: tar, deviceBusy: false), "drop accept: the project list takes tar archives")
+        check(!dropAccepted(by: .projectList, contents: sounds, deviceBusy: false),
+              "drop accept: the project list refuses files that are not tar archives")
+        check(!dropAccepted(by: .projectList, contents: row, deviceBusy: false), "drop accept: the project list refuses a dragged row")
+        for (target, contents) in [(DropTarget.soundList, sounds), (.soundRow, row), (.projectList, tar)] {
+            check(!dropAccepted(by: target, contents: contents, deviceBusy: true),
+                  "drop accept: \(target) refuses everything while the device is busy")
+        }
         eq(rowDropMarker(row: 4, targeted: 4, dragged: 3, deviceBusy: false), "> drop here <",
            "drop marker: a row marks itself while another row is dragged onto it")
         eq(rowDropMarker(row: 3, targeted: 3, dragged: 3, deviceBusy: false), nil,
