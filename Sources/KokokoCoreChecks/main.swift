@@ -71,6 +71,7 @@ struct KokokoCoreChecks {
         backupArchiveChecks()
         projectArchiveValidationChecks()
         archiveNameChecks()
+        waveformChecks()
         confirmationChecks()
         do {
             try audioChecks()
