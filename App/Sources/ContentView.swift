@@ -480,7 +480,7 @@ struct ContentView: View {
         do {
             staging = try DropStaging(count: providers.count)
         } catch {
-            state.lastError = "drop: \(error.localizedDescription)"
+            state.noteError("drop: \(error.localizedDescription)")
             return false
         }
         let group = DispatchGroup()
@@ -507,7 +507,7 @@ struct ContentView: View {
                 // Not tied to the device generation: these files could not be
                 // read, whatever happened to the device.
                 if let text = batchFailureText("drop", failures: staging.failures, total: total) {
-                    state.lastError = appendingError(state.lastError, text)
+                    state.noteError(text)
                 }
             }
         }

@@ -76,7 +76,11 @@ final class AppState: ObservableObject {
     }
     @Published private(set) var progress = ProgressLine()
     var progressText: String? { progress.text }
-    @Published var lastError: String?
+    /// Written through reportOperationError, reportLocalError and noteError;
+    /// cleared only when a device connects and after a successful sounds or
+    /// projects reload.
+    @Published private(set) var errorLine = ErrorLine()
+    var lastError: String? { errorLine.text }
     @Published var showImporter = false
     @Published var exportDocument: DataDocument?
     @Published var exportName = "sound.wav"
@@ -105,7 +109,12 @@ final class AppState: ObservableObject {
     /// each other, so every such action runs one at a time; the UI disables
     /// its device controls while this is set.
     @Published private(set) var deviceBusy = false {
-        didSet { if !deviceBusy { rescanIfDue() } }
+        didSet {
+            if !deviceBusy {
+                errorLine.finish()
+                rescanIfDue()
+            }
+        }
     }
     /// The sound a delete into the bin failed on, offered for a delete without a copy.
     @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String, generation: Int)?
@@ -197,25 +206,34 @@ final class AppState: ObservableObject {
     private var soundsRootID: UInt16?
     private var deviceMeta = GreetMetadata()
 
-    /// Dropped once the device has left since `token`, so the disconnect
-    /// reason is not overwritten.
     private func reportOperationError(_ text: String, token: Int) {
-        if hotplug.isCurrent(token) { lastError = text }
+        errorLine.report(text, deviceIsCurrent: hotplug.isCurrent(token))
     }
 
-    private func appendError(_ text: String, token: Int) {
-        lastError = nextError(lastError, adding: text, deviceIsCurrent: hotplug.isCurrent(token))
+    /// For messages that stay true whatever happens to the device; during an
+    /// operation they take its first place like its own errors.
+    private func reportLocalError(_ text: String) {
+        errorLine.report(text, deviceIsCurrent: true)
     }
+
+    /// For messages that belong to no operation, such as refusals and bin
+    /// errors.
+    func noteError(_ text: String) {
+        errorLine.note(text)
+    }
+
+    private static let busyText = "device busy: wait for the current operation"
 
     /// Claims the device for one user action; false while another runs.
     /// A refusal is reported, since a drag to Finder or a drop that slipped
     /// past the disabled controls would otherwise fail without a word.
     private func enterDevice() -> Bool {
         if deviceBusy {
-            lastError = "device busy: wait for the current operation"
+            noteError(Self.busyText)
             return false
         }
         deviceBusy = true
+        errorLine.start()
         return true
     }
 
@@ -290,7 +308,7 @@ final class AppState: ObservableObject {
                 Task { @MainActor in self?.devicesChanged() }
             }
         } catch {
-            lastError = "device watch: \(error.localizedDescription)"
+            noteError("device watch: \(error.localizedDescription)")
         }
     }
 
@@ -311,7 +329,10 @@ final class AppState: ObservableObject {
             let reason = connectedPair.map { "\($0.name) disconnected" } ?? "device disconnected"
             forgetDevice()
             connection = .failed(reason)
-            lastError = appendingError(lastError, reason)
+            // Reported, not noted: it takes the running operation's first place,
+            // so what that operation reports next joins the reason instead of
+            // replacing it.
+            reportLocalError(reason)
         }
         Task {
             try? await Task.sleep(for: .seconds(hotplug.debounce))
@@ -386,6 +407,7 @@ final class AppState: ObservableObject {
                 try await service.initialize()
                 guard pairIsOnline(pair) else { continue }
                 guard hotplug.commitConnection(token: token) else { break }
+                errorLine.clear()
                 connectedPair = pair
                 self.session = session
                 self.files = service
@@ -399,16 +421,10 @@ final class AppState: ObservableObject {
                                                 current: meta.osVersion, token: token) }
                 // The tab on screen may have been opened before the device was there.
                 switch view {
-                case .projects: await reloadSoundsAndProjects(token: token)
+                case .projects: await reloadSoundsAndProjects()
                 case .settings:
                     await reload()
-                    // A failed settings read replaces lastError; keep a sounds failure next to it.
-                    let soundsError = lastError
                     await fetchSettings()
-                    if hotplug.isCurrent(token), let soundsError, let settingsError = lastError,
-                       settingsError != soundsError {
-                        lastError = appendingError(soundsError, settingsError)
-                    }
                 case .sounds, .bin: await reload()
                 }
                 return
@@ -439,7 +455,7 @@ final class AppState: ObservableObject {
             }
             guard hotplug.isCurrent(token) else { return false }
             sounds = items
-            lastError = nil
+            errorLine.clear()
             return true
         } catch {
             reportOperationError("list failed: \(error.localizedDescription)", token: token)
@@ -487,7 +503,7 @@ final class AppState: ObservableObject {
         // a failed reload stays visible too.
         await reload()
         if let text = batchFailureText("upload", failures: failures, total: urls.count) {
-            appendError(text, token: token)
+            reportOperationError(text, token: token)
         }
     }
 
@@ -579,7 +595,7 @@ final class AppState: ObservableObject {
             // and the selection show what is really there. Its success path
             // clears lastError, so the error is set after it.
             let listed = await reload() ? Set(sounds.map(\.id)) : []
-            appendError("\(label): \(error.localizedDescription)", token: token)
+            reportOperationError("\(label): \(error.localizedDescription)", token: token)
             let offer = binFallbackCandidates(ids: ordered, lastStarted: started.current,
                                               error: error, listed: listed)
             if let slot = offer.first, hotplug.isCurrent(token) {
@@ -594,7 +610,7 @@ final class AppState: ObservableObject {
     /// gets nothing deleted, since the same slot number names another sound.
     func deleteWithoutBin(_ ids: Set<UInt16>, generation: Int) async {
         guard hotplug.isCurrent(generation) else {
-            lastError = "the device changed, nothing was deleted"
+            noteError("the device changed, nothing was deleted")
             return
         }
         guard let library, enterDevice() else { return }
@@ -606,7 +622,7 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             await reload()
-            appendError("delete: \(error.localizedDescription)", token: generation)
+            reportOperationError("delete: \(error.localizedDescription)", token: generation)
         }
     }
 
@@ -616,8 +632,7 @@ final class AppState: ObservableObject {
         do {
             binEntries = try bin.entries()
         } catch {
-            // The bin is on this machine: no device leaving can make its error stale.
-            lastError = nextError(lastError, adding: "bin: \(error.localizedDescription)", deviceIsCurrent: true)
+            noteError("bin: \(error.localizedDescription)")
         }
     }
 
@@ -632,7 +647,7 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             await reload()
-            appendError("restore \(entry.name): \(error.localizedDescription)", token: token)
+            reportOperationError("restore \(entry.name): \(error.localizedDescription)", token: token)
         }
         loadBin()
     }
@@ -641,7 +656,7 @@ final class AppState: ObservableObject {
         do {
             try bin.remove(entry)
         } catch {
-            lastError = nextError(lastError, adding: "bin: \(error.localizedDescription)", deviceIsCurrent: true)
+            noteError("bin: \(error.localizedDescription)")
         }
         loadBin()
     }
@@ -672,7 +687,7 @@ final class AppState: ObservableObject {
             progress.update(op, nil)
             // Not tied to the device generation: the incomplete backup is already on disk.
             if let note = backup.report.message {
-                lastError = appendingError(lastError, "backup: \(note)")
+                reportLocalError("backup: \(note)")
             }
         } catch {
             progress.update(op, nil)
@@ -688,7 +703,7 @@ final class AppState: ObservableObject {
             let backup = try BackupStore.read(from: folder)
             pendingRestore = PendingRestore(backup: backup, summary: RestoreSummary(backup))
         } catch {
-            lastError = appendingError(lastError, "restore: \(error.localizedDescription)")
+            noteError("restore: \(error.localizedDescription)")
         }
     }
 
@@ -705,27 +720,25 @@ final class AppState: ObservableObject {
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
             }
             progress.update(op, nil)
-            await reloadSoundsAndProjects(token: token)
+            await reloadSoundsAndProjects()
             // Not tied to the device generation: these writes are already done.
             if let note = report.message {
-                lastError = appendingError(lastError, "restore: \(note)")
+                reportLocalError("restore: \(note)")
             }
         } catch {
             progress.update(op, nil)
-            await reloadSoundsAndProjects(token: token)
-            appendError("restore: \(error.localizedDescription)", token: token)
+            await reloadSoundsAndProjects()
+            reportOperationError("restore: \(error.localizedDescription)", token: token)
         }
     }
 
-    /// A restore can change both lists. Each reload clears lastError when it
-    /// succeeds, so a projects failure is kept across the sounds reload.
-    /// `token` is the caller's: one taken here after an unplug would let the
-    /// disconnect reason, left in lastError, be appended to itself.
-    private func reloadSoundsAndProjects(token: Int) async {
+    /// A restore can change both lists. Each reload clears the line when it
+    /// succeeds, so a projects failure is put back after a successful sounds
+    /// reload; after a failed one it is still on the line.
+    private func reloadSoundsAndProjects() async {
         await loadProjects()
         let projectsError = lastError
-        await reload()
-        if let projectsError { appendError(projectsError, token: token) }
+        if await reload(), let projectsError { reportLocalError(projectsError) }
     }
 
     // MARK: - rename
@@ -767,7 +780,7 @@ final class AppState: ObservableObject {
         guard let editing = metadataEditing, let changes = editing.form.changes else { return }
         guard hotplug.isCurrent(editing.generation) else {
             metadataEditing = nil
-            lastError = "metadata: the device changed, nothing was written"
+            noteError("metadata: the device changed, nothing was written")
             return
         }
         guard !changes.isEmpty else {
@@ -867,7 +880,7 @@ final class AppState: ObservableObject {
     /// error goes after it, next to any error of the reload itself.
     private func reloadAfterFailedMove(_ text: String, token: Int) async {
         await reload()
-        appendError(text, token: token)
+        reportOperationError(text, token: token)
     }
 
     // MARK: - projects
@@ -880,7 +893,7 @@ final class AppState: ObservableObject {
             let nodes = try await files.list(nodeID: root)
             guard hotplug.isCurrent(token) else { return }
             projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
-            lastError = nil
+            errorLine.clear()
         } catch {
             reportOperationError("projects: \(error.localizedDescription)", token: token)
         }
@@ -931,7 +944,7 @@ final class AppState: ObservableObject {
         // a failed reload stays visible too.
         await loadProjects()
         if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
-            appendError(text, token: token)
+            reportOperationError(text, token: token)
         }
     }
 
@@ -1095,6 +1108,9 @@ final class AppState: ObservableObject {
                                             visibility: .all) { completion in
             let progress = Progress(totalUnitCount: 1)
             Task { @MainActor in
+                // The line also holds the running operation's errors; Finder
+                // gets only the refusal.
+                let refused = self.deviceBusy
                 if let result = await self.download(item) {
                     let temp = FileManager.default.temporaryDirectory
                         .appendingPathComponent(result.name)
@@ -1106,7 +1122,8 @@ final class AppState: ObservableObject {
                         completion(nil, false, error)
                     }
                 } else {
-                    completion(nil, false, self.lastError.map { NSError(domain: "kokoko", code: 1, userInfo: [NSLocalizedDescriptionKey: $0]) })
+                    let text = refused ? Self.busyText : self.lastError
+                    completion(nil, false, text.map { NSError(domain: "kokoko", code: 1, userInfo: [NSLocalizedDescriptionKey: $0]) })
                 }
             }
             return progress
