@@ -1187,7 +1187,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Drag-out provider: downloads the sound on demand and hands over a WAV file.
     func dragProvider(for item: SoundItem) -> NSItemProvider {
         let provider = NSItemProvider()
         provider.registerFileRepresentation(forTypeIdentifier: UTType.wav.identifier,
@@ -1212,10 +1211,9 @@ final class AppState: ObservableObject {
             return progress
         }
         provider.suggestedName = item.displayName + ".wav"
-        // In-app reorder payload alongside the exported file representation.
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
-                                            visibility: .all) { completion in
-            completion("node:\(item.id)".data(using: .utf8), nil)
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.soundRowMove.identifier,
+                                            visibility: .ownProcess) { completion in
+            completion(Data(String(item.id).utf8), nil)
             return nil
         }
         return provider

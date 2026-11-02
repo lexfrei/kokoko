@@ -15,8 +15,8 @@ struct ContentView: View {
     @State private var targetedRow: UInt16?
     /// The row being dragged, if a drag started on one. Nothing tells the
     /// view when a drag to Finder ends, so it stays until the next drag or
-    /// drop; plain text dragged in later still marks no row, since a row
-    /// marks itself only for a drag that also carries a WAV.
+    /// drop; plain text or files dragged in later mark no row, since a row
+    /// marks itself only for a row move.
     @State private var draggedRow: UInt16?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -299,7 +299,8 @@ struct ContentView: View {
                     targetedRow = nil
                     return state.dragProvider(for: item)
                 }
-                .onDrop(of: [.text], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow, dragged: $draggedRow))
+                .onDrop(of: [.soundRowMove], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow,
+                                                                     dragged: $draggedRow))
             }
         }
         // Over the list rather than instead of it, so sounds can still be dropped onto it.
@@ -315,9 +316,9 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { dropBanner(.soundList, targeted: soundListTargeted) }
-        .onDrop(of: [.audio], isTargeted: $soundListTargeted) { providers in
+        .onDrop(of: [.audio], delegate: ListDrop(target: .soundList, types: [.audio], state: state,
+                                                 targeted: $soundListTargeted) { providers in
             draggedRow = nil
-            guard !state.deviceBusy else { return false }
             return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, error in
                     done(url, error)
@@ -325,7 +326,7 @@ struct ContentView: View {
             }, then: { urls in
                 await state.upload(urls: urls)
             })
-        }
+        })
         #if os(macOS)
         .onDeleteCommand(perform: state.isEnabled(.deleteSelected) ? { state.perform(.deleteSelected) } : nil)
         #endif
@@ -473,7 +474,7 @@ struct ContentView: View {
                             if let result = await state.downloadProject(project) {
                                 state.exportName = result.name
                                 state.exportDocument = DataDocument(data: Data(result.tar),
-                                                                    contentType: UTType(filenameExtension: "tar") ?? .data)
+                                                                    contentType: .tarArchive)
                             }
                         }
                     }
@@ -481,15 +482,17 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { dropBanner(.projectList, targeted: projectListTargeted) }
-        .onDrop(of: [.fileURL], isTargeted: $projectListTargeted) { providers in
+        .onDrop(of: [.tarArchive], delegate: ListDrop(target: .projectList, types: [.tarArchive], state: state,
+                                                      targeted: $projectListTargeted) { providers in
             draggedRow = nil
-            guard !state.deviceBusy else { return false }
             return receiveDrop(providers, load: { provider, done in
-                _ = provider.loadObject(ofClass: URL.self) { url, error in done(url, error) }
+                _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.tarArchive.identifier) { url, _, error in
+                    done(url, error)
+                }
             }, then: { urls in
                 await state.uploadProjects(urls: urls)
             })
-        }
+        })
     }
 
     /// At the bottom edge rather than the top, so the rows near the pointer do not move.
@@ -572,6 +575,44 @@ struct ContentView: View {
     }
 }
 
+extension UTType {
+    /// A sound row moved within the list, which this app's rows register
+    /// for its own process; plain text or files are not taken for one.
+    static let soundRowMove = UTType(exportedAs: "la.lex.kokoko.sound-row-move")
+    static let tarArchive = UTType(filenameExtension: "tar") ?? .archive
+}
+
+func dropContents(_ info: DropInfo) -> DropContents {
+    DropContents(rowMove: info.hasItemsConforming(to: [.soundRowMove]), audio: info.hasItemsConforming(to: [.audio]),
+                 tarArchive: info.hasItemsConforming(to: [.tarArchive]))
+}
+
+struct ListDrop: DropDelegate {
+    let target: DropTarget
+    let types: [UTType]
+    let state: AppState
+    @Binding var targeted: Bool
+    let perform: ([NSItemProvider]) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool {
+        dropAccepted(by: target, contents: dropContents(info), deviceBusy: state.deviceBusy)
+    }
+
+    func dropEntered(info: DropInfo) {
+        targeted = validateDrop(info: info)
+    }
+
+    func dropExited(info: DropInfo) {
+        targeted = false
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        targeted = false
+        guard validateDrop(info: info) else { return false }
+        return perform(info.itemProviders(for: types))
+    }
+}
+
 /// Drop target on a sound row: reorders the dragged node into this slot,
 /// swapping when occupied.
 struct SoundRowDrop: DropDelegate {
@@ -580,10 +621,8 @@ struct SoundRowDrop: DropDelegate {
     @Binding var targeted: UInt16?
     @Binding var dragged: UInt16?
 
-    /// Only for a dragged row, which carries its sound as a WAV next to the
-    /// reorder text; plain text from elsewhere carries no WAV and marks nothing.
     func dropEntered(info: DropInfo) {
-        if info.hasItemsConforming(to: [.text]), info.hasItemsConforming(to: [.wav]) { targeted = target.id }
+        if validateDrop(info: info) { targeted = target.id }
     }
 
     func dropExited(info: DropInfo) {
@@ -593,12 +632,9 @@ struct SoundRowDrop: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         targeted = nil
         dragged = nil
-        guard let provider = info.itemProviders(for: [.text]).first else { return false }
-        provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
-            guard let data,
-                  let text = String(data: data, encoding: .utf8),
-                  text.hasPrefix("node:"),
-                  let id = UInt16(text.dropFirst(5)) else { return }
+        guard let provider = info.itemProviders(for: [.soundRowMove]).first else { return false }
+        provider.loadDataRepresentation(forTypeIdentifier: UTType.soundRowMove.identifier) { data, _ in
+            guard let data, let id = UInt16(String(decoding: data, as: UTF8.self)) else { return }
             Task { @MainActor in
                 state.requestSwap(id: id, onto: target)
             }
@@ -607,7 +643,7 @@ struct SoundRowDrop: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        !state.deviceBusy && info.hasItemsConforming(to: [.text])
+        dropAccepted(by: .soundRow, contents: dropContents(info), deviceBusy: state.deviceBusy)
     }
 }
 
