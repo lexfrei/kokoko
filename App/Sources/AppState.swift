@@ -441,6 +441,7 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files, let root = soundsRootID else { return }
+        let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
             do {
@@ -466,7 +467,8 @@ final class AppState: ObservableObject {
         // After the reload, whose success path clears lastError; appended so
         // a failed reload stays visible too.
         await reload()
-        if let text = batchFailureText("upload", failures: failures, total: urls.count) {
+        if let text = batchFailureText("upload", failures: failures, total: urls.count),
+           hotplug.isCurrent(token) {
             lastError = appendingError(lastError, text)
         }
     }
@@ -891,6 +893,7 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return }
+        let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
             do {
@@ -903,7 +906,8 @@ final class AppState: ObservableObject {
         // After the reload, whose success path clears lastError; appended so
         // a failed reload stays visible too.
         await loadProjects()
-        if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
+        if let text = batchFailureText("project upload", failures: failures, total: urls.count),
+           hotplug.isCurrent(token) {
             lastError = appendingError(lastError, text)
         }
     }
