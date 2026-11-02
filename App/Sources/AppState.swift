@@ -56,13 +56,6 @@ struct MetadataEditing: Identifiable {
     var note: String?
 }
 
-enum PendingPicker: Equatable {
-    case none
-    case downloadFolder([UInt16])
-    case backupFolder(DeviceLibrary.Scope)
-    case restoreFolder
-}
-
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
 @MainActor
 final class AppState: ObservableObject {

@@ -60,6 +60,7 @@ struct KokokoCoreChecks {
         hotplugPolicyChecks()
         flowLayoutChecks()
         errorLineChecks()
+        panelRequestChecks()
         await metadataEditChecks()
         firmwareVersionChecks()
         settingsDisplayChecks()
