@@ -76,9 +76,12 @@ final class AppState: ObservableObject {
     }
     @Published private(set) var progress = ProgressLine()
     var progressText: String? { progress.text }
-    /// Written through reportOperationError, reportLocalError and noteError;
-    /// cleared only when a device connects and after a successful sounds or
-    /// projects reload.
+    /// Written through reportOperationError, reportLocalError and noteError,
+    /// with a failed device watch pinned so nothing below removes it. Besides
+    /// an operation's first error replacing the line's messages, as ErrorLine
+    /// does, the messages are cleared only when a device connects and after a
+    /// successful sounds reload; a successful projects or settings load
+    /// withdraws only its own earlier failure.
     @Published private(set) var errorLine = ErrorLine()
     var lastError: String? { errorLine.text }
     @Published var showImporter = false {
@@ -777,12 +780,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// A restore can change both lists. Each reload clears the line when it
-    /// succeeds, so a projects failure is put back after a successful sounds
-    /// reload; after a failed one it is still on the line.
+    /// A restore can change both lists. A successful sounds reload clears the
+    /// line's messages, so a projects failure is put back after it; after a
+    /// failed one it is still on the line.
     private func reloadSoundsAndProjects() async {
-        await loadProjects()
-        let projectsError = lastError
+        let projectsError = await loadProjects()
         if await reload(), let projectsError { reportLocalError(projectsError) }
     }
 
@@ -930,19 +932,26 @@ final class AppState: ObservableObject {
 
     // MARK: - projects
 
-    func loadProjects() async {
-        guard let files else { return }
+    /// The error it reported, if any.
+    @discardableResult
+    func loadProjects() async -> String? {
+        guard let files else { return nil }
         let token = hotplug.currentGeneration()
         do {
             let root = try await resolve("/projects")
             let nodes = try await files.list(nodeID: root)
-            guard hotplug.isCurrent(token) else { return }
+            guard hotplug.isCurrent(token) else { return nil }
             projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
-            errorLine.clear()
+            errorLine.withdraw(startingWith: Self.projectsErrorPrefix)
+            return nil
         } catch {
-            reportOperationError("projects: \(error.localizedDescription)", token: token)
+            let text = Self.projectsErrorPrefix + error.localizedDescription
+            reportOperationError(text, token: token)
+            return hotplug.isCurrent(token) ? text : nil
         }
     }
+
+    private static let projectsErrorPrefix = "projects: "
 
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
@@ -985,8 +994,7 @@ final class AppState: ObservableObject {
             }
             progress.update(op, nil)
         }
-        // After the reload, whose success path clears lastError; appended so
-        // a failed reload stays visible too.
+        // After the reload, so a failed reload's error comes first.
         await loadProjects()
         if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
             reportOperationError(text, token: token)
@@ -1046,17 +1054,23 @@ final class AppState: ObservableObject {
             if hotplug.isCurrent(token) {
                 settingsTree = Self.parseSettingsTree(all)
                 settingsStatus = .loaded
+                errorLine.withdraw(startingWith: Self.settingsErrorPrefix)
             }
             progress.update(op, nil)
         } catch SessionError.deviceError(.commandNotFound, _) {
             progress.update(op, nil)
-            if hotplug.isCurrent(token) { settingsStatus = .unsupported }
+            if hotplug.isCurrent(token) {
+                settingsStatus = .unsupported
+                errorLine.withdraw(startingWith: Self.settingsErrorPrefix)
+            }
         } catch {
             progress.update(op, nil)
             if hotplug.isCurrent(token) { settingsStatus = .failed }
-            reportOperationError("settings: \(error.localizedDescription)", token: token)
+            reportOperationError(Self.settingsErrorPrefix + error.localizedDescription, token: token)
         }
     }
+
+    private static let settingsErrorPrefix = "settings: "
 
     /// Walk {settings: [{title, settings:[...] | id, value, ...}]} tolerantly.
     static func parseSettingsTree(_ json: [String: JSONValue]) -> [SettingsGroupModel] {

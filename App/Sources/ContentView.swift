@@ -489,7 +489,7 @@ struct ContentView: View {
             Task { @MainActor in
                 await handle(staging.urls)
                 staging.discard()
-                // After the handler, whose trailing reload clears stale errors;
+                // After the handler, whose trailing reload may clear earlier errors;
                 // appended so an error from the handler itself stays visible.
                 // Not tied to the device generation: these files could not be
                 // read, whatever happened to the device.
