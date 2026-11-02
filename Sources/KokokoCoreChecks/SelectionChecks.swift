@@ -18,5 +18,14 @@ extension KokokoCoreChecks {
 
         eq(remapSelection([4], moves: [(from: 1, to: 4)]), [],
            "an unselected sound landing on a stale selected slot is not selected")
+
+        eq(selectionAfterFailedMove([5, 7], move: (from: 5, to: 9), occupied: [7, 9]), [7, 9],
+           "failed move: a sound that landed stays selected under its new slot")
+        eq(selectionAfterFailedMove([5, 7], move: (from: 5, to: 9), occupied: [5, 7]), [5, 7],
+           "failed move: a sound that stayed keeps its selection")
+        eq(selectionAfterFailedMove([5], move: (from: 5, to: 9), occupied: nil), [5],
+           "failed move: an unreadable listing changes nothing")
+        eq(selectionAfterFailedMove([7], move: (from: 5, to: 9), occupied: [7, 9]), [7],
+           "failed move: an unselected sound that landed is not selected")
     }
 }

@@ -131,6 +131,20 @@ final class AppState: ObservableObject {
         selection = remapSelection(selection, moves: [(from: id, to: target)])
     }
 
+    /// One move outside a plan. A failed reply does not mean the move did not
+    /// run, so the slots are read again and the selection follows a sound that
+    /// landed; the reload that follows would otherwise prune it.
+    private func moveOne(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
+                         root: UInt16) async throws {
+        do {
+            try await move(files, id, to: target, root: root)
+        } catch {
+            let occupied = (try? await files.list(nodeID: root)).map { Set($0.map(\.id)) }
+            selection = selectionAfterFailedMove(selection, move: (from: id, to: target), occupied: occupied)
+            throw error
+        }
+    }
+
     /// Runs `steps` in order. When one fails, re-reads the slots and undoes
     /// as much as they allow, stopping at the first undo that is unsafe or
     /// refused; if the re-read fails, nothing is undone. Then rethrows the
@@ -777,7 +791,7 @@ final class AppState: ObservableObject {
                 reportOperationError("slot \(target) is occupied", token: token)
                 return
             }
-            try await move(files, item.node.id, to: target, root: root)
+            try await moveOne(files, item.node.id, to: target, root: root)
             await reload()
         } catch {
             await reloadAfterFailedMove("move to slot: \(error.localizedDescription)", token: token)
@@ -830,7 +844,7 @@ final class AppState: ObservableObject {
                 try await runMoves(planSwap(id, target, occupied: Set(nodes.map(\.id))),
                                    files: files, root: root)
             } else {
-                try await move(files, id, to: target, root: root)
+                try await moveOne(files, id, to: target, root: root)
             }
             await reload()
         } catch {
