@@ -52,11 +52,5 @@ struct SettingsView: View {
                 }
             }
         }
-        .task {
-            // While the device is busy, the scan that holds it loads the settings itself.
-            if state.settingsStatus.loadsWhenOpened && !state.deviceBusy {
-                await state.loadSettings()
-            }
-        }
     }
 }

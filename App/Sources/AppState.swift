@@ -113,11 +113,14 @@ final class AppState: ObservableObject {
     /// True while a user action talks to the device. Transfers on the wire
     /// are not serialized, and pages from two interleaved operations corrupt
     /// each other, so every such action runs one at a time; the UI disables
-    /// its device controls while this is set.
+    /// its device controls, though not the tabs, while this is set.
     @Published private(set) var deviceBusy = false {
         didSet {
             if !deviceBusy {
                 errorLine.finish()
+                if let tab = tabLoad.deviceReleased(showing: view, needsLoad: tabNeedsLoad(view)) {
+                    Task { await loadOpenedTab(tab) }
+                }
                 rescanIfDue()
             }
         }
@@ -247,12 +250,35 @@ final class AppState: ObservableObject {
         if case .connected = connection { true } else { false }
     }
 
+    /// A tab that reads from the device waits while the device is busy and,
+    /// if it is still open and, for settings, still not loaded, loads once
+    /// the device is released, instead of being refused.
+    @Published private(set) var tabLoad = PendingTabLoad()
+
     func open(_ tab: HeaderTab) {
+        let current = view
         view = tab
+        if tab == .bin { loadBin() }
+        if let load = tabLoad.open(tab, showing: current, needsLoad: tabNeedsLoad(tab), deviceBusy: deviceBusy) {
+            Task { await loadOpenedTab(load) }
+        }
+    }
+
+    private func tabNeedsLoad(_ tab: HeaderTab) -> Bool {
+        isConnected && (tab != .settings || settingsStatus.loadsWhenOpened)
+    }
+
+    private func loadOpenedTab(_ tab: HeaderTab) async {
+        // Claimed by the rescan first, or by a click in the same moment: the
+        // tab waits again rather than putting a busy refusal on the line.
+        if deviceBusy {
+            _ = tabLoad.open(tab, needsLoad: tabNeedsLoad(tab), deviceBusy: true)
+            return
+        }
         switch tab {
-        case .projects where isConnected: Task { await refreshProjects() }
-        case .bin: loadBin()
-        default: break
+        case .projects: await refreshProjects()
+        case .settings: await loadSettings()
+        case .sounds, .bin: break
         }
     }
 
