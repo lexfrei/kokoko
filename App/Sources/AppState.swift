@@ -778,7 +778,7 @@ final class AppState: ObservableObject {
             try await move(files, item.node.id, to: target, root: root)
             await reload()
         } catch {
-            reportOperationError("move to slot: \(error.localizedDescription)", token: token)
+            await reloadAfterFailedMove("move to slot: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -804,8 +804,7 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             progress.update(op, nil)
-            await reload()
-            reportOperationError("bulk move: \(error.localizedDescription)", token: token)
+            await reloadAfterFailedMove("bulk move: \(error.localizedDescription)", token: token)
         }
     }
 
@@ -833,9 +832,16 @@ final class AppState: ObservableObject {
             }
             await reload()
         } catch {
-            await reload()
-            reportOperationError("move: \(error.localizedDescription)", token: token)
+            await reloadAfterFailedMove("move: \(error.localizedDescription)", token: token)
         }
+    }
+
+    /// A move whose reply failed may still have happened on the device, so the
+    /// list is read again. A successful reload clears lastError, so the move's
+    /// error goes after it, next to any error of the reload itself.
+    private func reloadAfterFailedMove(_ text: String, token: Int) async {
+        await reload()
+        if hotplug.isCurrent(token) { lastError = appendingError(lastError, text) }
     }
 
     // MARK: - projects
