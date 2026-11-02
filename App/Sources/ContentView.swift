@@ -504,6 +504,8 @@ struct ContentView: View {
                 staging.discard()
                 // After the handler, whose trailing reload clears stale errors;
                 // appended so an error from the handler itself stays visible.
+                // Not tied to the device generation: these files could not be
+                // read, whatever happened to the device.
                 if let text = batchFailureText("drop", failures: staging.failures, total: total) {
                     state.lastError = appendingError(state.lastError, text)
                 }

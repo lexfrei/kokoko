@@ -203,6 +203,12 @@ final class AppState: ObservableObject {
         if hotplug.isCurrent(token) { lastError = text }
     }
 
+    /// Adds `text` to the error line, unless the device has left since `token`:
+    /// the disconnect reason is not followed by errors about a device that is gone.
+    private func appendError(_ text: String, token: Int) {
+        if hotplug.isCurrent(token) { lastError = appendingError(lastError, text) }
+    }
+
     /// Claims the device for one user action; false while another runs.
     /// A refusal is reported, since a drag to Finder or a drop that slipped
     /// past the disabled controls would otherwise fail without a word.
@@ -395,13 +401,14 @@ final class AppState: ObservableObject {
                                                 current: meta.osVersion, token: token) }
                 // The tab on screen may have been opened before the device was there.
                 switch view {
-                case .projects: await reloadSoundsAndProjects()
+                case .projects: await reloadSoundsAndProjects(token: token)
                 case .settings:
                     await reload()
                     // A failed settings read replaces lastError; keep a sounds failure next to it.
                     let soundsError = lastError
                     await fetchSettings()
-                    if let soundsError, let settingsError = lastError, settingsError != soundsError {
+                    if hotplug.isCurrent(token), let soundsError, let settingsError = lastError,
+                       settingsError != soundsError {
                         lastError = appendingError(soundsError, settingsError)
                     }
                 case .sounds, .bin: await reload()
@@ -481,9 +488,8 @@ final class AppState: ObservableObject {
         // After the reload, whose success path clears lastError; appended so
         // a failed reload stays visible too.
         await reload()
-        if let text = batchFailureText("upload", failures: failures, total: urls.count),
-           hotplug.isCurrent(token) {
-            lastError = appendingError(lastError, text)
+        if let text = batchFailureText("upload", failures: failures, total: urls.count) {
+            appendError(text, token: token)
         }
     }
 
@@ -575,7 +581,7 @@ final class AppState: ObservableObject {
             // and the selection show what is really there. Its success path
             // clears lastError, so the error is set after it.
             let listed = await reload() ? Set(sounds.map(\.id)) : []
-            lastError = appendingError(lastError, "\(label): \(error.localizedDescription)")
+            appendError("\(label): \(error.localizedDescription)", token: token)
             let offer = binFallbackCandidates(ids: ordered, lastStarted: started.current,
                                               error: error, listed: listed)
             if let slot = offer.first, hotplug.isCurrent(token) {
@@ -602,7 +608,7 @@ final class AppState: ObservableObject {
             await reload()
         } catch {
             await reload()
-            lastError = appendingError(lastError, "delete: \(error.localizedDescription)")
+            appendError("delete: \(error.localizedDescription)", token: generation)
         }
     }
 
@@ -621,12 +627,13 @@ final class AppState: ObservableObject {
         defer { deviceBusy = false }
         let op = progress.begin("restore \(entry.name)")
         defer { progress.end(op) }
+        let token = hotplug.currentGeneration()
         do {
             _ = try await library.restore(entry, from: bin)
             await reload()
         } catch {
             await reload()
-            lastError = appendingError(lastError, "restore \(entry.name): \(error.localizedDescription)")
+            appendError("restore \(entry.name): \(error.localizedDescription)", token: token)
         }
         loadBin()
     }
@@ -692,30 +699,34 @@ final class AppState: ObservableObject {
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
+        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "restore...")
             let report = try await library.restore(backup) { [weak self] name in
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
             }
             progress.update(op, nil)
-            await reloadSoundsAndProjects()
+            await reloadSoundsAndProjects(token: token)
+            // Not tied to the device generation: these writes are already done.
             if let note = report.message {
                 lastError = appendingError(lastError, "restore: \(note)")
             }
         } catch {
             progress.update(op, nil)
-            await reloadSoundsAndProjects()
-            lastError = appendingError(lastError, "restore: \(error.localizedDescription)")
+            await reloadSoundsAndProjects(token: token)
+            appendError("restore: \(error.localizedDescription)", token: token)
         }
     }
 
     /// A restore can change both lists. Each reload clears lastError when it
     /// succeeds, so a projects failure is kept across the sounds reload.
-    private func reloadSoundsAndProjects() async {
+    /// `token` is the caller's: one taken here after an unplug would let the
+    /// disconnect reason, left in lastError, be appended to itself.
+    private func reloadSoundsAndProjects(token: Int) async {
         await loadProjects()
         let projectsError = lastError
         await reload()
-        if let projectsError { lastError = appendingError(lastError, projectsError) }
+        if let projectsError { appendError(projectsError, token: token) }
     }
 
     // MARK: - rename
@@ -857,7 +868,7 @@ final class AppState: ObservableObject {
     /// error goes after it, next to any error of the reload itself.
     private func reloadAfterFailedMove(_ text: String, token: Int) async {
         await reload()
-        if hotplug.isCurrent(token) { lastError = appendingError(lastError, text) }
+        appendError(text, token: token)
     }
 
     // MARK: - projects
@@ -920,9 +931,8 @@ final class AppState: ObservableObject {
         // After the reload, whose success path clears lastError; appended so
         // a failed reload stays visible too.
         await loadProjects()
-        if let text = batchFailureText("project upload", failures: failures, total: urls.count),
-           hotplug.isCurrent(token) {
-            lastError = appendingError(lastError, text)
+        if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
+            appendError(text, token: token)
         }
     }
 
