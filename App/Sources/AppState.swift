@@ -56,13 +56,6 @@ struct MetadataEditing: Identifiable {
     var note: String?
 }
 
-enum PendingPicker: Equatable {
-    case none
-    case downloadFolder([UInt16])
-    case backupFolder(DeviceLibrary.Scope)
-    case restoreFolder
-}
-
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
 @MainActor
 final class AppState: ObservableObject {
@@ -76,24 +69,27 @@ final class AppState: ObservableObject {
     }
     @Published private(set) var progress = ProgressLine()
     var progressText: String? { progress.text }
-    /// Written through reportOperationError, reportLocalError and noteError;
-    /// cleared only when a device connects and after a successful sounds or
-    /// projects reload.
+    /// Written through reportOperationError, reportLocalError and noteError,
+    /// with a failed device watch pinned so nothing below removes it. Besides
+    /// an operation's first error replacing the line's messages, as ErrorLine
+    /// does, the messages are cleared only when a device connects and after a
+    /// successful sounds reload; a successful projects or settings load
+    /// withdraws only its own earlier failure.
     @Published private(set) var errorLine = ErrorLine()
     var lastError: String? { errorLine.text }
     @Published var showImporter = false {
-        didSet { if showImporter { presented = (.none, hotplug.currentGeneration()) } }
+        didSet { if showImporter { panel.open(.none, generation: hotplug.currentGeneration()) } }
     }
     @Published var exportDocument: DataDocument?
     @Published var exportName = "sound.wav"
     @Published var picker: PendingPicker = .none {
-        didSet { if picker != .none { presented = (picker, hotplug.currentGeneration()) } }
+        didSet { if picker != .none { panel.open(picker, generation: hotplug.currentGeneration()) } }
     }
-    /// What the open panel was shown for, and for which device. A device
-    /// leaving resets `picker`; if that lands between the user's choice and
-    /// the panel's callback, reading `picker` there sends the chosen folder
-    /// to upload.
-    private var presented: (picker: PendingPicker, generation: Int) = (.none, 0)
+    /// What the open panel was shown for. A device leaving resets `picker`;
+    /// if that lands between the user's choice and the panel's callback,
+    /// reading `picker` there sends the chosen folder to upload, and the
+    /// panel's own settings would switch to upload's while it closes.
+    private(set) var panel = PanelRequest()
     @Published var renumberItem: SoundItem?
     @Published var renameItem: SoundItem?
     @Published var renameText = ""
@@ -261,12 +257,11 @@ final class AppState: ObservableObject {
 
     /// The files or folder the open panel returned, routed by what it was opened for.
     func handleImport(_ urls: [URL]) {
-        let action = presented.picker
         picker = .none
-        // A folder chosen for a device that has left would act on whatever is
-        // connected now: its slots, or a restore over it. Sounds to upload go
-        // to the device connected now, as when the panel stays open.
-        guard action == .none || hotplug.isCurrent(presented.generation) else { return }
+        guard let action = panel.route(currentGeneration: hotplug.currentGeneration()) else {
+            noteError("the device changed, the chosen folder was not used")
+            return
+        }
         Task {
             switch action {
             case .none:
@@ -338,10 +333,17 @@ final class AppState: ObservableObject {
             hotplugWatcher = try HotplugWatcher { [weak self] _ in
                 Task { @MainActor in self?.devicesChanged() }
             }
+            // A window opened again retries; a watch that starts takes the failure back.
+            errorLine.unpin(startingWith: Self.watchErrorPrefix)
         } catch {
-            noteError("device watch: \(error.localizedDescription)")
+            // Without it the app does not notice a device coming or going, which
+            // the startup scan's reload must not hide.
+            errorLine.unpin(startingWith: Self.watchErrorPrefix)
+            errorLine.pin(Self.watchErrorPrefix + error.localizedDescription)
         }
     }
+
+    private static let watchErrorPrefix = "device watch: "
 
     // The debounce sleeps on ContinuousClock, so the policy reads the same clock.
     private let clockStart = ContinuousClock.now
@@ -530,7 +532,7 @@ final class AppState: ObservableObject {
                 failures.append("\(url.lastPathComponent): \(readFailureText(error))")
             }
         }
-        // After the reload, whose success path clears lastError; appended so
+        // After the reload, whose success path clears the line's messages; appended so
         // a failed reload stays visible too.
         await reload()
         if let text = batchFailureText("upload", failures: failures, total: urls.count) {
@@ -540,12 +542,18 @@ final class AppState: ObservableObject {
 
     // MARK: - download (single + batch)
 
-    func download(_ item: SoundItem) async -> (name: String, wav: [UInt8])? {
-        guard enterDevice() else { return nil }
+    struct DownloadFailure: LocalizedError {
+        let errorDescription: String?
+    }
+
+    /// The failure carries its own text, since the error line may hold other
+    /// operations' errors or drop this one for a device that has left.
+    func download(_ item: SoundItem) async -> Result<(name: String, wav: [UInt8]), DownloadFailure> {
+        guard enterDevice() else { return .failure(DownloadFailure(errorDescription: Self.busyText)) }
         defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return nil }
+        guard let files else { return .failure(DownloadFailure(errorDescription: "download: no device connected")) }
         let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv \(item.displayName)")
@@ -559,12 +567,13 @@ final class AppState: ObservableObject {
                 }
             }
             progress.update(op, nil)
-            return (item.displayName + ".wav",
-                    makeWAV(pcm: result.data, channels: channels, sampleRate: rate))
+            return .success((item.displayName + ".wav",
+                             makeWAV(pcm: result.data, channels: channels, sampleRate: rate)))
         } catch {
             progress.update(op, nil)
-            reportOperationError("download: \(error.localizedDescription)", token: token)
-            return nil
+            let text = "download: \(error.localizedDescription)"
+            reportOperationError(text, token: token)
+            return .failure(DownloadFailure(errorDescription: text))
         }
     }
 
@@ -624,7 +633,7 @@ final class AppState: ObservableObject {
             progress.update(op, nil)
             // A partial failure still changed the device: reload so the list
             // and the selection show what is really there. Its success path
-            // clears lastError, so the error is set after it.
+            // clears the line's messages, so the error is set after it.
             let listed = await reload() ? Set(sounds.map(\.id)) : []
             reportOperationError("\(label): \(error.localizedDescription)", token: token)
             let offer = binFallbackCandidates(ids: ordered, lastStarted: started.current,
@@ -763,12 +772,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// A restore can change both lists. Each reload clears the line when it
-    /// succeeds, so a projects failure is put back after a successful sounds
-    /// reload; after a failed one it is still on the line.
+    /// A restore can change both lists. A successful sounds reload clears the
+    /// line's messages, so a projects failure is put back after it; after a
+    /// failed one it is still on the line.
     private func reloadSoundsAndProjects() async {
-        await loadProjects()
-        let projectsError = lastError
+        let projectsError = await loadProjects()
         if await reload(), let projectsError { reportLocalError(projectsError) }
     }
 
@@ -907,7 +915,7 @@ final class AppState: ObservableObject {
     }
 
     /// A move whose reply failed may still have happened on the device, so the
-    /// list is read again. A successful reload clears lastError, so the move's
+    /// list is read again. A successful reload clears the line's messages, so the move's
     /// error goes after it, next to any error of the reload itself.
     private func reloadAfterFailedMove(_ text: String, token: Int) async {
         await reload()
@@ -916,19 +924,26 @@ final class AppState: ObservableObject {
 
     // MARK: - projects
 
-    func loadProjects() async {
-        guard let files else { return }
+    /// The error it reported, if any.
+    @discardableResult
+    func loadProjects() async -> String? {
+        guard let files else { return nil }
         let token = hotplug.currentGeneration()
         do {
             let root = try await resolve("/projects")
             let nodes = try await files.list(nodeID: root)
-            guard hotplug.isCurrent(token) else { return }
+            guard hotplug.isCurrent(token) else { return nil }
             projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
-            errorLine.clear()
+            errorLine.withdraw(startingWith: Self.projectsErrorPrefix)
+            return nil
         } catch {
-            reportOperationError("projects: \(error.localizedDescription)", token: token)
+            let text = Self.projectsErrorPrefix + error.localizedDescription
+            reportOperationError(text, token: token)
+            return hotplug.isCurrent(token) ? text : nil
         }
     }
+
+    private static let projectsErrorPrefix = "projects: "
 
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
@@ -971,8 +986,7 @@ final class AppState: ObservableObject {
             }
             progress.update(op, nil)
         }
-        // After the reload, whose success path clears lastError; appended so
-        // a failed reload stays visible too.
+        // After the reload, so a failed reload's error comes first.
         await loadProjects()
         if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
             reportOperationError(text, token: token)
@@ -1032,17 +1046,23 @@ final class AppState: ObservableObject {
             if hotplug.isCurrent(token) {
                 settingsTree = Self.parseSettingsTree(all)
                 settingsStatus = .loaded
+                errorLine.withdraw(startingWith: Self.settingsErrorPrefix)
             }
             progress.update(op, nil)
         } catch SessionError.deviceError(.commandNotFound, _) {
             progress.update(op, nil)
-            if hotplug.isCurrent(token) { settingsStatus = .unsupported }
+            if hotplug.isCurrent(token) {
+                settingsStatus = .unsupported
+                errorLine.withdraw(startingWith: Self.settingsErrorPrefix)
+            }
         } catch {
             progress.update(op, nil)
             if hotplug.isCurrent(token) { settingsStatus = .failed }
-            reportOperationError("settings: \(error.localizedDescription)", token: token)
+            reportOperationError(Self.settingsErrorPrefix + error.localizedDescription, token: token)
         }
     }
+
+    private static let settingsErrorPrefix = "settings: "
 
     /// Walk {settings: [{title, settings:[...] | id, value, ...}]} tolerantly.
     static func parseSettingsTree(_ json: [String: JSONValue]) -> [SettingsGroupModel] {
@@ -1139,10 +1159,8 @@ final class AppState: ObservableObject {
                                             visibility: .all) { completion in
             let progress = Progress(totalUnitCount: 1)
             Task { @MainActor in
-                // The line also holds the running operation's errors; Finder
-                // gets only the refusal.
-                let refused = self.deviceBusy
-                if let result = await self.download(item) {
+                switch await self.download(item) {
+                case .success(let result):
                     let temp = FileManager.default.temporaryDirectory
                         .appendingPathComponent(result.name)
                     do {
@@ -1152,9 +1170,8 @@ final class AppState: ObservableObject {
                     } catch {
                         completion(nil, false, error)
                     }
-                } else {
-                    let text = refused ? Self.busyText : self.lastError
-                    completion(nil, false, text.map { NSError(domain: "kokoko", code: 1, userInfo: [NSLocalizedDescriptionKey: $0]) })
+                case .failure(let failure):
+                    completion(nil, false, failure)
                 }
             }
             return progress

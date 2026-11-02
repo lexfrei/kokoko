@@ -30,8 +30,8 @@ struct ContentView: View {
         .frame(minWidth: 420, minHeight: 480)
         #endif
         .fileImporter(isPresented: anyPickerBinding,
-                      allowedContentTypes: state.picker == .none ? [.audio] : [.folder],
-                      allowsMultipleSelection: state.picker == .none) { result in
+                      allowedContentTypes: state.panel.picker == .none ? [.audio] : [.folder],
+                      allowsMultipleSelection: state.panel.picker == .none) { result in
             guard case .success(let urls) = result, !urls.isEmpty else { return }
             state.handleImport(urls)
         }
@@ -319,7 +319,7 @@ struct ContentView: View {
             RowCommand(action: .play, help: "play 1s preview on device") { Task { await state.audition(item) } },
             RowCommand(action: .download, help: "download as wav") {
                 Task {
-                    if let result = await state.download(item) {
+                    if case .success(let result) = await state.download(item) {
                         state.exportName = result.name
                         state.exportDocument = DataDocument(data: Data(result.wav))
                     }
@@ -489,7 +489,7 @@ struct ContentView: View {
             Task { @MainActor in
                 await handle(staging.urls)
                 staging.discard()
-                // After the handler, whose trailing reload clears stale errors;
+                // After the handler, whose trailing reload may clear earlier errors;
                 // appended so an error from the handler itself stays visible.
                 // Not tied to the device generation: these files could not be
                 // read, whatever happened to the device.
