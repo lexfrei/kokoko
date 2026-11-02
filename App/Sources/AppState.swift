@@ -540,12 +540,18 @@ final class AppState: ObservableObject {
 
     // MARK: - download (single + batch)
 
-    func download(_ item: SoundItem) async -> (name: String, wav: [UInt8])? {
-        guard enterDevice() else { return nil }
+    struct DownloadFailure: LocalizedError {
+        let errorDescription: String?
+    }
+
+    /// The failure carries its own text, since the error line may hold other
+    /// operations' errors or drop this one for a device that has left.
+    func download(_ item: SoundItem) async -> Result<(name: String, wav: [UInt8]), DownloadFailure> {
+        guard enterDevice() else { return .failure(DownloadFailure(errorDescription: Self.busyText)) }
         defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return nil }
+        guard let files else { return .failure(DownloadFailure(errorDescription: "download: no device connected")) }
         let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv \(item.displayName)")
@@ -559,12 +565,13 @@ final class AppState: ObservableObject {
                 }
             }
             progress.update(op, nil)
-            return (item.displayName + ".wav",
-                    makeWAV(pcm: result.data, channels: channels, sampleRate: rate))
+            return .success((item.displayName + ".wav",
+                             makeWAV(pcm: result.data, channels: channels, sampleRate: rate)))
         } catch {
             progress.update(op, nil)
-            reportOperationError("download: \(error.localizedDescription)", token: token)
-            return nil
+            let text = "download: \(error.localizedDescription)"
+            reportOperationError(text, token: token)
+            return .failure(DownloadFailure(errorDescription: text))
         }
     }
 
@@ -1139,10 +1146,8 @@ final class AppState: ObservableObject {
                                             visibility: .all) { completion in
             let progress = Progress(totalUnitCount: 1)
             Task { @MainActor in
-                // The line also holds the running operation's errors; Finder
-                // gets only the refusal.
-                let refused = self.deviceBusy
-                if let result = await self.download(item) {
+                switch await self.download(item) {
+                case .success(let result):
                     let temp = FileManager.default.temporaryDirectory
                         .appendingPathComponent(result.name)
                     do {
@@ -1152,9 +1157,8 @@ final class AppState: ObservableObject {
                     } catch {
                         completion(nil, false, error)
                     }
-                } else {
-                    let text = refused ? Self.busyText : self.lastError
-                    completion(nil, false, text.map { NSError(domain: "kokoko", code: 1, userInfo: [NSLocalizedDescriptionKey: $0]) })
+                case .failure(let failure):
+                    completion(nil, false, failure)
                 }
             }
             return progress

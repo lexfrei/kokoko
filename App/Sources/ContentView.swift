@@ -319,7 +319,7 @@ struct ContentView: View {
             RowCommand(action: .play, help: "play 1s preview on device") { Task { await state.audition(item) } },
             RowCommand(action: .download, help: "download as wav") {
                 Task {
-                    if let result = await state.download(item) {
+                    if case .success(let result) = await state.download(item) {
                         state.exportName = result.name
                         state.exportDocument = DataDocument(data: Data(result.wav))
                     }
