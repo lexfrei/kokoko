@@ -87,6 +87,9 @@ struct ContentView: View {
         .sheet(item: $state.metadataEditing) { _ in
             MetadataSheet(state: state)
         }
+        .sheet(item: $state.waveformShown) { shown in
+            WaveformSheet(state: state, shown: shown)
+        }
         .confirmationDialog("remove from bin for good?", isPresented: binRemoveBinding,
                             presenting: state.binToRemove) { entry in
             Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
@@ -261,6 +264,7 @@ struct ContentView: View {
                     rowButton(.rename, help: "rename") { state.renameText = item.displayName; state.renameItem = item }
                     rowButton(.renumber, help: "move to another slot") { state.renumberItem = item }
                     rowButton(.metadata, help: "edit metadata") { Task { await state.editMetadata(item) } }
+                    rowButton(.waveform, help: "show waveform") { Task { await state.showWaveform(item) } }
                     rowButton(.delete, help: "delete from device") { Task { await state.delete(item) } }
                 }
                 .tag(item.id)
@@ -587,7 +591,7 @@ func barButton(_ action: BarAction, perform: @escaping () -> Void) -> some View 
 }
 
 #if os(macOS)
-private let minHitHeight: CGFloat = 28
+let minHitHeight: CGFloat = 28
 #else
-private let minHitHeight: CGFloat = 44
+let minHitHeight: CGFloat = 44
 #endif

@@ -7,6 +7,7 @@ extension KokokoCoreChecks {
             (.renumber, "[#]", "Move to slot"), (.metadata, "[m]", "Edit metadata"), (.delete, "[x]", "Delete"),
             (.restore, "[restore]", "Restore to the device"), (.removeFromBin, "[x]", "Remove from bin"),
             (.downloadArchive, "[v tar]", "Download tar archive"),
+            (.waveform, "[~]", "Show waveform"),
         ]
         for (action, glyph, label) in expected {
             eq(action.glyph, glyph, "row glyph: \(label) keeps its glyph")

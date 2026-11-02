@@ -1,7 +1,7 @@
 /// A per-row action, drawn as a bracketed glyph and read by name, since a
 /// screen reader would otherwise spell out the brackets.
 public enum RowAction: CaseIterable, Sendable {
-    case play, download, rename, renumber, metadata, delete, restore, removeFromBin, downloadArchive
+    case play, download, rename, renumber, metadata, delete, restore, removeFromBin, downloadArchive, waveform
 
     public var glyph: String {
         switch self {
@@ -13,6 +13,7 @@ public enum RowAction: CaseIterable, Sendable {
         case .delete, .removeFromBin: "[x]"
         case .restore: "[restore]"
         case .downloadArchive: "[v tar]"
+        case .waveform: "[~]"
         }
     }
 
@@ -27,6 +28,7 @@ public enum RowAction: CaseIterable, Sendable {
         case .restore: "Restore to the device"
         case .removeFromBin: "Remove from bin"
         case .downloadArchive: "Download tar archive"
+        case .waveform: "Show waveform"
         }
     }
 }
@@ -40,7 +42,7 @@ public func tabTitle(_ name: String, selected: Bool) -> String {
 /// A bracketed text button outside the rows.
 public enum BarAction: CaseIterable, Sendable {
     case retry, moveSelection, downloadSelection, deleteSelection
-    case addSounds, backupSounds, backupProjects, backupAll, restoreBackup, refresh
+    case addSounds, backupSounds, backupProjects, backupAll, restoreBackup, refresh, close
 
     public var text: String {
         switch self {
@@ -54,6 +56,7 @@ public enum BarAction: CaseIterable, Sendable {
         case .backupAll: "[ back up all ]"
         case .restoreBackup: "[ restore backup ]"
         case .refresh: "[ refresh ]"
+        case .close: "[ close ]"
         }
     }
 
@@ -69,6 +72,7 @@ public enum BarAction: CaseIterable, Sendable {
         case .backupAll: "Back up all"
         case .restoreBackup: "Restore backup"
         case .refresh: "Refresh"
+        case .close: "Close"
         }
     }
 }
