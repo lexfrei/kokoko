@@ -419,6 +419,24 @@ struct E2E {
         let fullBackup = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
         check(!fullBackup.sounds.isEmpty, "backup succeeds once reads are whole")
 
+        // --- download: a short read is an error, not a shorter file ---
+        if let shortSound = try await files.list(nodeID: soundsID).first(where: { $0.isFile && $0.size > 64 }) {
+            faulty.truncateGetsFromPage = 1
+            let wavs = try? await faultyLibrary.downloadMany([shortSound.id])
+            var getWholeTruncated = false
+            do {
+                _ = try await faultyFiles.getWhole(fileID: shortSound.id)
+            } catch FileServiceError.truncated(shortSound.id, Int(shortSound.size), 64) {
+                getWholeTruncated = true
+            } catch {}
+            faulty.truncateGetsFromPage = nil
+            check(wavs == nil, "download fails on a short read")
+            check(getWholeTruncated, "a whole read of a short download fails as truncated with both sizes")
+            check(try await faultyLibrary.downloadMany([shortSound.id]).count == 1, "download succeeds once reads are whole")
+        } else {
+            check(false, "a sound longer than one page to download short")
+        }
+
         // --- backup: a project archive that came back short or is not a tar is reported, not kept ---
         let archiveParent = try await resolve("/projects")
         let archive = tarArchive()

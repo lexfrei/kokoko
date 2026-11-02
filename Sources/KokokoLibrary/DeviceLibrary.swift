@@ -77,11 +77,7 @@ public actor DeviceLibrary {
             let soundsRoot = try await resolve("/sounds")
             for node in try await files.list(nodeID: soundsRoot) where node.isFile {
                 progress?(node.name)
-                // get stops at the first empty page, so a short read is not an error by itself.
-                let pcm = try await files.get(fileID: node.id).data
-                guard pcm.count == Int(node.size) else {
-                    throw FileServiceError.truncated(fileID: node.id, expected: Int(node.size), got: pcm.count)
-                }
+                let pcm = try await files.getWhole(fileID: node.id).data
                 let meta: [String: JSONValue]
                 if let read = try? await files.getMetadata(fileID: node.id) {
                     meta = read
@@ -114,13 +110,19 @@ public actor DeviceLibrary {
             }
             for project in try await files.list(nodeID: projectsRoot) {
                 progress?("P\(project.name)")
-                let archive = try await files.get(fileID: project.id)
-                // A read cut at a whole tar block still passes the tar check.
-                guard archive.data.count == archive.size, isValidProjectArchive(archive.data) else {
+                let archive: [UInt8]
+                do {
+                    archive = try await files.getWhole(fileID: project.id).data
+                } catch FileServiceError.truncated {
                     damaged.append(project.name)
                     continue
                 }
-                archives[project.name] = archive.data
+                // A read cut at a whole tar block passes this check; only the size check above catches it.
+                guard isValidProjectArchive(archive) else {
+                    damaged.append(project.name)
+                    continue
+                }
+                archives[project.name] = archive
             }
         }
 
@@ -303,7 +305,7 @@ public actor DeviceLibrary {
             let channels = meta["channels"]?.intValue ?? 1
             let rate = meta["samplerate"]?.intValue ?? deviceSampleRate
             let name = meta["name"]?.stringValue ?? "sound \(id)"
-            let result = try await files.get(fileID: id)
+            let result = try await files.getWhole(fileID: id)
             out.append((name + ".wav", makeWAV(pcm: result.data, channels: channels, sampleRate: rate)))
         }
         return out
@@ -544,6 +546,21 @@ public enum BackupStore {
         backup.unreadArchives = unread.sorted()
         return backup
     }
+}
+
+extension DeviceFileService {
+    /// `get` that fails with `FileServiceError.truncated` when the data is not the
+    /// size the device announced; `get` alone hands a short read back as is.
+    public func getWhole(fileID: UInt16,
+                         progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> (name: String, data: [UInt8]) {
+        let read = try await get(fileID: fileID, progress: progress)
+        return (read.name, try wholeData(read.data, announced: read.size, fileID: fileID))
+    }
+}
+
+public func wholeData(_ data: [UInt8], announced size: Int, fileID: UInt16) throws -> [UInt8] {
+    guard data.count == size else { throw FileServiceError.truncated(fileID: fileID, expected: size, got: data.count) }
+    return data
 }
 
 /// Whether `bytes` look like a tar archive: not empty, whole 512-byte blocks,
