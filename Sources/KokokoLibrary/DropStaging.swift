@@ -58,3 +58,28 @@ public final class DropStaging: @unchecked Sendable {
         try? FileManager.default.removeItem(at: directory)
     }
 }
+
+public enum DropTarget: Sendable {
+    case soundList, projectList, soundRow
+
+    public var marker: String {
+        switch self {
+        case .soundList: "> drop to add sounds <"
+        case .projectList: "> drop to upload project archives <"
+        case .soundRow: "> drop here <"
+        }
+    }
+}
+
+/// What a drop target shows while something it takes is dragged over it.
+/// Every target refuses drops while the device is busy, so it shows nothing then.
+public func dropMarker(_ target: DropTarget, targeted: Bool, deviceBusy: Bool) -> String? {
+    targeted && !deviceBusy ? target.marker : nil
+}
+
+/// A sound row's marker: only for another row of this list dragged onto it,
+/// since a row dropped on itself, or text that is not a row, moves nothing.
+public func rowDropMarker(row: UInt16, targeted: UInt16?, dragged: UInt16?, deviceBusy: Bool) -> String? {
+    guard let dragged, dragged != row else { return nil }
+    return dropMarker(.soundRow, targeted: targeted == row, deviceBusy: deviceBusy)
+}

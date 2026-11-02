@@ -47,5 +47,26 @@ extension KokokoCoreChecks {
 
         staging.discard()
         check(!fm.fileExists(atPath: staging.directory.path), "drop discard removes staging dir")
+
+        eq(dropMarker(.soundList, targeted: true, deviceBusy: false), "> drop to add sounds <",
+           "drop marker: the sound list says what a drop does")
+        eq(dropMarker(.projectList, targeted: true, deviceBusy: false), "> drop to upload project archives <",
+           "drop marker: the project list says what a drop does")
+        eq(dropMarker(.soundRow, targeted: true, deviceBusy: false), "> drop here <", "drop marker: a sound row marks itself")
+        eq(rowDropMarker(row: 4, targeted: 4, dragged: 3, deviceBusy: false), "> drop here <",
+           "drop marker: a row marks itself while another row is dragged onto it")
+        eq(rowDropMarker(row: 3, targeted: 3, dragged: 3, deviceBusy: false), nil,
+           "drop marker: a row dragged over itself marks nothing, since that drop does nothing")
+        eq(rowDropMarker(row: 4, targeted: 4, dragged: nil, deviceBusy: false), nil,
+           "drop marker: text that is not a dragged row marks nothing")
+        eq(rowDropMarker(row: 4, targeted: 5, dragged: 3, deviceBusy: false), nil,
+           "drop marker: only the row under the drag marks itself")
+        eq(rowDropMarker(row: 4, targeted: 4, dragged: 3, deviceBusy: true), nil,
+           "drop marker: a row marks nothing while the device is busy")
+        for target: DropTarget in [.soundList, .projectList, .soundRow] {
+            eq(dropMarker(target, targeted: false, deviceBusy: false), nil, "drop marker: nothing shows with nothing dragged over (\(target))")
+            eq(dropMarker(target, targeted: true, deviceBusy: true), nil,
+               "drop marker: nothing shows while the device is busy, since the drop is refused (\(target))")
+        }
     }
 }
