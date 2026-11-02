@@ -616,7 +616,8 @@ final class AppState: ObservableObject {
         do {
             binEntries = try bin.entries()
         } catch {
-            lastError = "bin: \(error.localizedDescription)"
+            // The bin is on this machine: no device leaving can make its error stale.
+            lastError = nextError(lastError, adding: "bin: \(error.localizedDescription)", deviceIsCurrent: true)
         }
     }
 
@@ -640,7 +641,7 @@ final class AppState: ObservableObject {
         do {
             try bin.remove(entry)
         } catch {
-            lastError = "bin: \(error.localizedDescription)"
+            lastError = nextError(lastError, adding: "bin: \(error.localizedDescription)", deviceIsCurrent: true)
         }
         loadBin()
     }
