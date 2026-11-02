@@ -69,12 +69,13 @@ final class AppState: ObservableObject {
     }
     @Published private(set) var progress = ProgressLine()
     var progressText: String? { progress.text }
-    /// Written through reportOperationError, reportLocalError and noteError,
-    /// with a failed device watch pinned so nothing below removes it. Besides
-    /// an operation's first error replacing the line's messages, as ErrorLine
-    /// does, the messages are cleared only when a device connects and after a
-    /// successful sounds reload; a successful projects or settings load
-    /// withdraws only its own earlier failure.
+    /// Written through reportOperationError, reportLocalError and noteError.
+    /// A failed device watch is pinned until a later try replaces it or, once
+    /// the watch starts, takes it back. Besides an operation's first error
+    /// replacing the line's messages, as ErrorLine does, the messages are
+    /// cleared only when a device connects and after a successful sounds
+    /// reload; a successful projects or settings load withdraws only its own
+    /// earlier failure.
     @Published private(set) var errorLine = ErrorLine()
     var lastError: String? { errorLine.text }
     @Published var showImporter = false {
@@ -89,7 +90,7 @@ final class AppState: ObservableObject {
     /// if that lands between the user's choice and the panel's callback,
     /// reading `picker` there sends the chosen folder to upload, and the
     /// panel's own settings would switch to upload's while it closes.
-    private(set) var panel = PanelRequest()
+    @Published private(set) var panel = PanelRequest()
     @Published var renumberItem: SoundItem?
     @Published var renameItem: SoundItem?
     @Published var renameText = ""
@@ -211,14 +212,14 @@ final class AppState: ObservableObject {
     private var soundsRootID: UInt16?
     private var deviceMeta = GreetMetadata()
 
-    private func reportOperationError(_ text: String, token: Int) {
-        errorLine.report(text, deviceIsCurrent: hotplug.isCurrent(token))
+    private func reportOperationError(_ text: String, kind: ErrorKind? = nil, token: Int) {
+        errorLine.report(text, kind: kind, deviceIsCurrent: hotplug.isCurrent(token))
     }
 
     /// For messages that stay true whatever happens to the device; during an
     /// operation they take its first place like its own errors.
-    private func reportLocalError(_ text: String) {
-        errorLine.report(text, deviceIsCurrent: true)
+    private func reportLocalError(_ text: String, kind: ErrorKind? = nil) {
+        errorLine.report(text, kind: kind, deviceIsCurrent: true)
     }
 
     /// For messages that belong to no operation, such as refusals and bin
@@ -334,16 +335,14 @@ final class AppState: ObservableObject {
                 Task { @MainActor in self?.devicesChanged() }
             }
             // A window opened again retries; a watch that starts takes the failure back.
-            errorLine.unpin(startingWith: Self.watchErrorPrefix)
+            errorLine.unpin(.deviceWatch)
         } catch {
             // Without it the app does not notice a device coming or going, which
             // the startup scan's reload must not hide.
-            errorLine.unpin(startingWith: Self.watchErrorPrefix)
-            errorLine.pin(Self.watchErrorPrefix + error.localizedDescription)
+            errorLine.unpin(.deviceWatch)
+            errorLine.pin("device watch: \(error.localizedDescription)", kind: .deviceWatch)
         }
     }
-
-    private static let watchErrorPrefix = "device watch: "
 
     // The debounce sleeps on ContinuousClock, so the policy reads the same clock.
     private let clockStart = ContinuousClock.now
@@ -508,7 +507,16 @@ final class AppState: ObservableObject {
         defer { deviceBusy = false }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files, let root = soundsRootID else { return }
+        // A drop, or a panel that stayed open across an unplug, reaches here
+        // with sounds the user picked; leaving without a word loses them.
+        guard let files else {
+            reportLocalError("upload: no device connected")
+            return
+        }
+        guard let root = soundsRootID else {
+            reportLocalError("upload: the sounds folder was not found")
+            return
+        }
         let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
@@ -777,7 +785,7 @@ final class AppState: ObservableObject {
     /// failed one it is still on the line.
     private func reloadSoundsAndProjects() async {
         let projectsError = await loadProjects()
-        if await reload(), let projectsError { reportLocalError(projectsError) }
+        if await reload(), let projectsError { reportLocalError(projectsError, kind: .projects) }
     }
 
     // MARK: - rename
@@ -934,16 +942,14 @@ final class AppState: ObservableObject {
             let nodes = try await files.list(nodeID: root)
             guard hotplug.isCurrent(token) else { return nil }
             projects = nodes.map { ProjectItem(id: $0.id, name: $0.name, size: $0.size) }
-            errorLine.withdraw(startingWith: Self.projectsErrorPrefix)
+            errorLine.withdraw(.projects)
             return nil
         } catch {
-            let text = Self.projectsErrorPrefix + error.localizedDescription
-            reportOperationError(text, token: token)
+            let text = "projects: \(error.localizedDescription)"
+            reportOperationError(text, kind: .projects, token: token)
             return hotplug.isCurrent(token) ? text : nil
         }
     }
-
-    private static let projectsErrorPrefix = "projects: "
 
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
@@ -1046,23 +1052,21 @@ final class AppState: ObservableObject {
             if hotplug.isCurrent(token) {
                 settingsTree = Self.parseSettingsTree(all)
                 settingsStatus = .loaded
-                errorLine.withdraw(startingWith: Self.settingsErrorPrefix)
+                errorLine.withdraw(.settings)
             }
             progress.update(op, nil)
         } catch SessionError.deviceError(.commandNotFound, _) {
             progress.update(op, nil)
             if hotplug.isCurrent(token) {
                 settingsStatus = .unsupported
-                errorLine.withdraw(startingWith: Self.settingsErrorPrefix)
+                errorLine.withdraw(.settings)
             }
         } catch {
             progress.update(op, nil)
             if hotplug.isCurrent(token) { settingsStatus = .failed }
-            reportOperationError(Self.settingsErrorPrefix + error.localizedDescription, token: token)
+            reportOperationError("settings: \(error.localizedDescription)", kind: .settings, token: token)
         }
     }
-
-    private static let settingsErrorPrefix = "settings: "
 
     /// Walk {settings: [{title, settings:[...] | id, value, ...}]} tolerantly.
     static func parseSettingsTree(_ json: [String: JSONValue]) -> [SettingsGroupModel] {

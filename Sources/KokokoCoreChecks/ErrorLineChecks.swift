@@ -41,31 +41,43 @@ extension KokokoCoreChecks {
            "error line: a message seen earlier joins again after a newer one")
         eq(line(["xbin: y"]) { $0.note("bin: y") }, "xbin: y; bin: y",
            "error line: only a whole message at the end counts as a repeat")
-        eq(line(["upload: a"]) { $0.pin("device watch: x") }, "device watch: x; upload: a",
+        eq(line(["upload: a"]) { $0.pin("device watch: x", kind: .deviceWatch) }, "device watch: x; upload: a",
            "error line: a pinned message leads the line")
-        eq(line(["upload: a"]) { $0.pin("device watch: x"); $0.clear() }, "device watch: x",
+        eq(line(["upload: a"]) { $0.pin("device watch: x", kind: .deviceWatch); $0.clear() }, "device watch: x",
            "error line: a clear keeps a pinned message")
-        eq(line(["upload: a"]) { $0.pin("device watch: x"); $0.start(); $0.report("rename: b", deviceIsCurrent: true) },
+        eq(line(["upload: a"]) { $0.pin("device watch: x", kind: .deviceWatch); $0.start()
+            $0.report("rename: b", deviceIsCurrent: true) },
            "device watch: x; rename: b", "error line: an operation's first error keeps a pinned message")
-        eq(line([]) { $0.pin("device watch: x"); $0.pin("device watch: x") }, "device watch: x",
-           "error line: the same message pinned twice shows once")
-        eq(line(["upload: a", "projects: x", "projects: y"]) { $0.withdraw(startingWith: "projects: ") }, "upload: a",
+        eq(line([]) { $0.pin("device watch: x", kind: .deviceWatch); $0.pin("device watch: x", kind: .deviceWatch) },
+           "device watch: x", "error line: the same message pinned twice shows once")
+        eq(line(["upload: a"]) { $0.report("projects: x", kind: .projects, deviceIsCurrent: true)
+            $0.report("projects: y", kind: .projects, deviceIsCurrent: true); $0.withdraw(.projects) }, "upload: a",
            "error line: a withdrawal removes every message of its kind and keeps the rest")
-        eq(line(["upload: a"]) { $0.withdraw(startingWith: "projects: ") }, "upload: a",
+        eq(line(["upload: a"]) { $0.withdraw(.projects) }, "upload: a",
            "error line: a withdrawal with nothing of its kind changes nothing")
-        eq(line(["projects: x"]) { $0.pin("projects: pinned"); $0.withdraw(startingWith: "projects: ") }, "projects: pinned",
+        eq(line(["projects: typed by hand"]) { $0.report("projects: x", kind: .projects, deviceIsCurrent: true)
+            $0.withdraw(.projects) }, "projects: typed by hand",
+           "error line: a withdrawal leaves a message of no kind, whatever its text starts with")
+        eq(line([]) { $0.report("settings: x", kind: .settings, deviceIsCurrent: true); $0.withdraw(.projects) },
+           "settings: x", "error line: a withdrawal leaves messages of another kind")
+        eq(line([]) { $0.report("projects: x", kind: .projects, deviceIsCurrent: true)
+            $0.pin("projects: pinned", kind: .projects); $0.withdraw(.projects) }, "projects: pinned",
            "error line: a withdrawal keeps a pinned message")
-        eq(line(["upload: a"]) { $0.pin("device watch: x"); $0.unpin(startingWith: "device watch: ") }, "upload: a",
+        eq(line(["upload: a"]) { $0.pin("device watch: x", kind: .deviceWatch); $0.unpin(.deviceWatch) }, "upload: a",
            "error line: an unpin takes back a pinned message and keeps the rest")
-        eq(line(["device watch: y"]) { $0.unpin(startingWith: "device watch: ") }, "device watch: y",
+        eq(line(["device watch: y"]) { $0.unpin(.deviceWatch) }, "device watch: y",
            "error line: an unpin leaves messages that are not pinned")
-        eq(line([]) { $0.pin("device watch: x"); $0.note("device watch: x") }, "device watch: x",
+        eq(line([]) { $0.pin("device watch: x", kind: .deviceWatch); $0.pin("settings: p", kind: .settings)
+            $0.unpin(.deviceWatch) }, "settings: p", "error line: an unpin leaves pinned messages of another kind")
+        eq(line([]) { $0.pin("device watch: x", kind: .deviceWatch); $0.note("device watch: x") }, "device watch: x",
            "error line: a pinned message is not repeated after it")
-        eq(line(["upload: a"]) { $0.pin("device watch: x"); $0.note("device watch: x") }, "device watch: x; upload: a",
-           "error line: a pinned message is not added again behind other messages")
-        eq(line(["upload: a"]) { $0.pin("device watch: x"); $0.start(); $0.report("device watch: x", deviceIsCurrent: true) },
+        eq(line(["upload: a"]) { $0.pin("device watch: x", kind: .deviceWatch); $0.note("device watch: x") },
+           "device watch: x; upload: a", "error line: a pinned message is not added again behind other messages")
+        eq(line(["upload: a"]) { $0.pin("device watch: x", kind: .deviceWatch); $0.start()
+            $0.report("device watch: x", deviceIsCurrent: true) },
            "device watch: x", "error line: an operation reporting a pinned message first replaces the rest and shows it once")
-        eq(line([]) { $0.pin("device watch: x"); $0.unpin(startingWith: "device watch: "); $0.pin("device watch: y") },
+        eq(line([]) { $0.pin("device watch: x", kind: .deviceWatch); $0.unpin(.deviceWatch)
+            $0.pin("device watch: y", kind: .deviceWatch) },
            "device watch: y", "error line: a pinned message replaced by a newer one of its kind shows once")
         eq(line(["upload: a"]) { $0.finish(); $0.report("bin: x", deviceIsCurrent: true) }, "upload: a; bin: x",
            "error line: an end with no start changes nothing")
