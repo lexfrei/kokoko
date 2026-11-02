@@ -249,7 +249,9 @@ struct ContentView: View {
     }
 
     private var soundRows: some View {
-        List(selection: $state.selection) {
+        let empty = soundListEmpty(total: state.sounds.count, visible: state.visibleSounds.count,
+                                   query: state.filterText, deviceBusy: state.deviceBusy, listed: state.soundsListed)
+        return List(selection: $state.selection) {
             ForEach(state.visibleSounds) { item in
                 HStack {
                     Text(String(format: "%03d", item.node.id))
@@ -281,6 +283,18 @@ struct ContentView: View {
                 .tag(item.id)
                 .onDrag { state.dragProvider(for: item) }
                 .onDrop(of: [.text], delegate: SoundRowDrop(target: item, state: state))
+            }
+        }
+        // Over the list rather than instead of it, so sounds can still be dropped onto it.
+        .overlay {
+            if let empty {
+                VStack(spacing: 12) {
+                    Text(empty.text)
+                        .foregroundStyle(.secondary)
+                    if empty == .noSounds {
+                        barButton(.addSounds) { state.showImporter = true }
+                    }
+                }
             }
         }
         .onDrop(of: [.audio], isTargeted: nil) { providers in

@@ -19,3 +19,25 @@ public func visibleSelection(_ selection: Set<UInt16>,
     let visible = items.filter { soundMatches(name: $0.name, slot: $0.slot, query: query) }
     return selection.intersection(visible.map(\.slot))
 }
+
+/// Why the sound list shows no rows, said in place of them.
+public enum SoundListEmpty: Equatable, Sendable {
+    case noSounds
+    case noMatch(String)
+
+    public var text: String {
+        switch self {
+        case .noSounds: "no sounds on the device"
+        case .noMatch(let query): "no sound matches \"\(query)\""
+        }
+    }
+}
+
+/// With no sounds at all, the filter is not what hides them. An empty list
+/// is called empty only once a listing has succeeded and the device is not
+/// busy, since otherwise it may be unread or still loading.
+public func soundListEmpty(total: Int, visible: Int, query: String, deviceBusy: Bool = false,
+                           listed: Bool = true) -> SoundListEmpty? {
+    if total == 0 { return listed && !deviceBusy ? .noSounds : nil }
+    return visible == 0 ? .noMatch(query.trimmingCharacters(in: .whitespaces)) : nil
+}

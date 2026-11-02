@@ -64,6 +64,9 @@ final class AppState: ObservableObject {
         didSet { pruneSelection() }
     }
     @Published var selection = Set<UInt16>()
+    /// Whether `sounds` came from a listing that succeeded on this device;
+    /// before that an empty list says nothing about the device.
+    @Published private(set) var soundsListed = false
     @Published var filterText = "" {
         didSet { pruneSelection() }
     }
@@ -408,6 +411,7 @@ final class AppState: ObservableObject {
         settings = nil
         soundsRootID = nil
         sounds = []
+        soundsListed = false
         projects = []
         selection = []
         unbinnedDelete = nil
@@ -513,6 +517,7 @@ final class AppState: ObservableObject {
             }
             guard hotplug.isCurrent(token) else { return false }
             sounds = items
+            soundsListed = true
             errorLine.clear()
             return true
         } catch {

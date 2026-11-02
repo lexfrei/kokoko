@@ -30,5 +30,20 @@ extension KokokoCoreChecks {
            "selection kept without a filter")
         eq(visibleSelection([1, 9], items: afterRename, query: ""), [1],
            "selection drops slots that no longer exist")
+
+        eq(soundListEmpty(total: 0, visible: 0, query: ""), .noSounds, "empty list: a device with no sounds says so")
+        eq(soundListEmpty(total: 0, visible: 0, query: "kick"), .noSounds,
+           "empty list: with no sounds at all, the filter is not blamed")
+        eq(soundListEmpty(total: 3, visible: 0, query: " kick "), .noMatch("kick"),
+           "empty list: a filter with no match names the query, trimmed")
+        eq(soundListEmpty(total: 3, visible: 1, query: "kick"), nil, "empty list: a list with rows says nothing")
+        eq(soundListEmpty(total: 0, visible: 0, query: "", deviceBusy: true), nil,
+           "empty list: while the device is busy an empty list may still be loading, so it says nothing")
+        eq(soundListEmpty(total: 3, visible: 0, query: "kick", deviceBusy: true), .noMatch("kick"),
+           "empty list: a filter with no match says so while the device is busy too")
+        eq(soundListEmpty(total: 0, visible: 0, query: "", listed: false), nil,
+           "empty list: with no successful listing, an empty list proves nothing, so it says nothing")
+        eq(SoundListEmpty.noSounds.text, "no sounds on the device", "empty list: the no-sounds text")
+        eq(SoundListEmpty.noMatch("kick").text, "no sound matches \"kick\"", "empty list: the no-match text")
     }
 }
