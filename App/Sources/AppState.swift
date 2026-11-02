@@ -338,10 +338,17 @@ final class AppState: ObservableObject {
             hotplugWatcher = try HotplugWatcher { [weak self] _ in
                 Task { @MainActor in self?.devicesChanged() }
             }
+            // A window opened again retries; a watch that starts takes the failure back.
+            errorLine.unpin(startingWith: Self.watchErrorPrefix)
         } catch {
-            noteError("device watch: \(error.localizedDescription)")
+            // Without it the app does not notice a device coming or going, which
+            // the startup scan's reload must not hide.
+            errorLine.unpin(startingWith: Self.watchErrorPrefix)
+            errorLine.pin(Self.watchErrorPrefix + error.localizedDescription)
         }
     }
+
+    private static let watchErrorPrefix = "device watch: "
 
     // The debounce sleeps on ContinuousClock, so the policy reads the same clock.
     private let clockStart = ContinuousClock.now
@@ -530,7 +537,7 @@ final class AppState: ObservableObject {
                 failures.append("\(url.lastPathComponent): \(readFailureText(error))")
             }
         }
-        // After the reload, whose success path clears lastError; appended so
+        // After the reload, whose success path clears the line's messages; appended so
         // a failed reload stays visible too.
         await reload()
         if let text = batchFailureText("upload", failures: failures, total: urls.count) {
@@ -631,7 +638,7 @@ final class AppState: ObservableObject {
             progress.update(op, nil)
             // A partial failure still changed the device: reload so the list
             // and the selection show what is really there. Its success path
-            // clears lastError, so the error is set after it.
+            // clears the line's messages, so the error is set after it.
             let listed = await reload() ? Set(sounds.map(\.id)) : []
             reportOperationError("\(label): \(error.localizedDescription)", token: token)
             let offer = binFallbackCandidates(ids: ordered, lastStarted: started.current,
@@ -914,7 +921,7 @@ final class AppState: ObservableObject {
     }
 
     /// A move whose reply failed may still have happened on the device, so the
-    /// list is read again. A successful reload clears lastError, so the move's
+    /// list is read again. A successful reload clears the line's messages, so the move's
     /// error goes after it, next to any error of the reload itself.
     private func reloadAfterFailedMove(_ text: String, token: Int) async {
         await reload()
