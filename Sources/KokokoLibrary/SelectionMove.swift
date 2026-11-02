@@ -68,3 +68,13 @@ public func planSwap(_ a: UInt16, _ b: UInt16, occupied: Set<UInt16>) -> [(from:
     while occupied.contains(temp) { temp &-= 1 }
     return [(a, temp), (b, a), (temp, b)]
 }
+
+/// The selection after a single move whose reply failed, given the slots the
+/// device lists afterwards, or nil when they could not be read: carried to the
+/// target when the move ran, unchanged otherwise. Applied to a move whose
+/// selection was already remapped, it drops the sound from the selection.
+public func selectionAfterFailedMove(_ selection: Set<UInt16>, move: (from: UInt16, to: UInt16),
+                                     occupied: Set<UInt16>?) -> Set<UInt16> {
+    guard let occupied, stepLanded(move, occupied: occupied) else { return selection }
+    return remapSelection(selection, moves: [move])
+}
