@@ -10,6 +10,7 @@
 		0E2A9F1BD0D2BBABD872BB78 /* KokokoMIDI in Frameworks */ = {isa = PBXBuildFile; productRef = 07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */; };
 		0E9994F30A2E687C200FE2CE /* KokokoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 89C9A501F569AFA0A05B79F4 /* KokokoCore */; };
 		17CCD6726062B0BDAA867022 /* KokokoAudio in Frameworks */ = {isa = PBXBuildFile; productRef = C579E177800EB81009DB221C /* KokokoAudio */; };
+		385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */; };
 		5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */; };
 		73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB5DC19A96DC8E08EC48477 /* AppState.swift */; };
 		7A848765AA2B0CF1B1A3D754 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB95217652E72FB05A4DFE2 /* ContentView.swift */; };
@@ -19,6 +20,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		3BB95217652E72FB05A4DFE2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		48CBF57372D137143311E4AE /* DataDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataDocument.swift; sourceTree = "<group>"; };
 		638425A4245089BE1DF3479C /* kokoko.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = kokoko.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -68,6 +70,7 @@
 				48CBF57372D137143311E4AE /* DataDocument.swift */,
 				ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */,
 				D76ACB2792656943F3451600 /* SettingsView.swift */,
+				17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */,
 			);
 			name = Sources;
 			path = App/Sources;
@@ -152,6 +155,7 @@
 				C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */,
 				5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */,
 				FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */,
+				385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

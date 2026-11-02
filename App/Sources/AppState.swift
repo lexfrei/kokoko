@@ -32,6 +32,16 @@ struct PendingRestore {
     let summary: RestoreSummary
 }
 
+struct WaveformShown: Identifiable {
+    let item: SoundItem
+    let pcm: [UInt8]
+    let channels: Int
+    let sampleRate: Int
+    let loopStart: Int?
+    let loopEnd: Int?
+    var id: UInt16 { item.id }
+}
+
 struct PendingSwap {
     let id: UInt16
     let target: UInt16
@@ -85,6 +95,11 @@ final class AppState: ObservableObject {
     @Published var binToRemove: BinEntry?
     @Published var pendingRestore: PendingRestore?
     @Published var pendingSwap: PendingSwap?
+    @Published var waveformShown: WaveformShown?
+    /// PCM already read, by slot, with the format it was read in. Emptied at
+    /// the start of every reload(); a sound changed on the device itself
+    /// shows its new audio only after the next one.
+    private var pcmCache: [UInt16: (pcm: [UInt8], channels: Int, sampleRate: Int)] = [:]
     /// True while a user action talks to the device. Transfers on the wire
     /// are not serialized, and pages from two interleaved operations corrupt
     /// each other, so every such action runs one at a time; the UI disables
@@ -203,7 +218,7 @@ final class AppState: ObservableObject {
     var modalOpen: Bool {
         showImporter || picker != .none || exportDocument != nil || renameItem != nil || renumberItem != nil
             || unbinnedDelete != nil || metadataEditing != nil || binToRemove != nil
-            || pendingRestore != nil || pendingSwap != nil
+            || pendingRestore != nil || pendingSwap != nil || waveformShown != nil
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
@@ -308,6 +323,8 @@ final class AppState: ObservableObject {
         settingsStatus = .notLoaded
         pendingRestore = nil
         pendingSwap = nil
+        waveformShown = nil
+        pcmCache = [:]
     }
 
     private func rescanIfDue() {
@@ -387,6 +404,7 @@ final class AppState: ObservableObject {
     @discardableResult
     func reload() async -> Bool {
         guard let files else { return false }
+        pcmCache = [:]
         // A disconnect while listing makes the result belong to a device that left.
         let token = hotplug.currentGeneration()
         do {
@@ -986,6 +1004,40 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - misc
+
+    func showWaveform(_ item: SoundItem) async {
+        guard enterDevice() else { return }
+        defer { deviceBusy = false }
+        let op = progress.begin()
+        defer { progress.end(op) }
+        guard let files else { return }
+        let token = hotplug.currentGeneration()
+        do {
+            let meta = try await files.getMetadata(fileID: item.node.id)
+            let channels = meta["channels"]?.intValue ?? 1
+            let sampleRate = meta["samplerate"]?.intValue ?? deviceSampleRate
+            let pcm: [UInt8]
+            if let cached = pcmCache[item.id], cached.channels == channels, cached.sampleRate == sampleRate {
+                pcm = cached.pcm
+            } else {
+                progress.update(op, "recv \(item.displayName)")
+                pcm = try await files.get(fileID: item.node.id) { done, total in
+                    Task { @MainActor in
+                        self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
+                    }
+                }.data
+                guard hotplug.isCurrent(token) else { return }
+                pcmCache[item.id] = (pcm, channels, sampleRate)
+            }
+            progress.update(op, nil)
+            waveformShown = WaveformShown(item: item, pcm: pcm, channels: channels, sampleRate: sampleRate,
+                                          loopStart: meta["sound.loopstart"]?.intValue,
+                                          loopEnd: meta["sound.loopend"]?.intValue)
+        } catch {
+            progress.update(op, nil)
+            reportOperationError("waveform: \(error.localizedDescription)", token: token)
+        }
+    }
 
     func audition(_ item: SoundItem) async {
         guard enterDevice() else { return }
