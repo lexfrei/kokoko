@@ -90,7 +90,7 @@ final class AppState: ObservableObject {
     /// if that lands between the user's choice and the panel's callback,
     /// reading `picker` there sends the chosen folder to upload, and the
     /// panel's own settings would switch to upload's while it closes.
-    private(set) var panel = PanelRequest()
+    @Published private(set) var panel = PanelRequest()
     @Published var renumberItem: SoundItem?
     @Published var renameItem: SoundItem?
     @Published var renameText = ""
