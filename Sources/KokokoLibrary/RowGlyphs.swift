@@ -2,6 +2,8 @@
 /// screen reader would otherwise spell out the brackets.
 public enum RowAction: CaseIterable, Sendable {
     case play, download, rename, renumber, metadata, delete, restore, removeFromBin, downloadArchive, waveform
+    /// Opens a row's other actions as a menu where a row is too narrow to show them.
+    case actions
 
     public var glyph: String {
         switch self {
@@ -14,6 +16,7 @@ public enum RowAction: CaseIterable, Sendable {
         case .restore: "[restore]"
         case .downloadArchive: "[v tar]"
         case .waveform: "[~]"
+        case .actions: "[...]"
         }
     }
 
@@ -29,6 +32,7 @@ public enum RowAction: CaseIterable, Sendable {
         case .removeFromBin: "Remove from bin"
         case .downloadArchive: "Download tar archive"
         case .waveform: "Show waveform"
+        case .actions: "Actions"
         }
     }
 }

@@ -10,6 +10,9 @@ struct ContentView: View {
     // need Xcode's SwiftUIMacros plugin; this stays typecheckable with CLT.
     @ObservedObject var state: AppState
     @State private var renumberText = ""
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -23,7 +26,9 @@ struct ContentView: View {
         // On macOS the rows of a List kept the proportional font with only the line
         // above; the design has to be set on its own as well.
         .fontDesign(.monospaced)
+        #if os(macOS)
         .frame(minWidth: 420, minHeight: 480)
+        #endif
         .fileImporter(isPresented: anyPickerBinding,
                       allowedContentTypes: state.picker == .none ? [.audio] : [.folder],
                       allowsMultipleSelection: state.picker == .none) { result in
@@ -151,29 +156,43 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack {
-            Text("kokoko")
-                .font(.system(.title2, design: .monospaced))
-            ForEach(HeaderTab.allCases, id: \.self) { tab in
-                tabButton(tab)
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                headerTitle
+                Spacer()
+                connectionStatus
             }
-            Spacer()
-            switch state.connection {
-            case .idle:
-                Text("[ idle ]")
-            case .scanning:
-                Text("[ scan... ]")
-            case .connecting(let name):
-                Text("[ conn \(name) ]").lineLimit(1)
-            case .connected(let name, let serial, let os):
-                let line = StatusLine.connected(name: name, serial: serial, os: os, firmware: state.firmwareStatus)
-                Text(line.text).lineLimit(1)
-                    .accessibilityLabel(line.accessibilityLabel)
-            case .failed(let why):
-                FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1)
+            FlowLayout {
+                headerTitle
+                connectionStatus
             }
         }
         .padding()
+    }
+
+    @ViewBuilder private var headerTitle: some View {
+        Text("kokoko")
+            .font(.system(.title2, design: .monospaced))
+        ForEach(HeaderTab.allCases, id: \.self) { tab in
+            tabButton(tab)
+        }
+    }
+
+    @ViewBuilder private var connectionStatus: some View {
+        switch state.connection {
+        case .idle:
+            Text("[ idle ]")
+        case .scanning:
+            Text("[ scan... ]")
+        case .connecting(let name):
+            Text("[ conn \(name) ]").lineLimit(1)
+        case .connected(let name, let serial, let os):
+            let line = StatusLine.connected(name: name, serial: serial, os: os, firmware: state.firmwareStatus)
+            Text(line.text).lineLimit(1)
+                .accessibilityLabel(line.accessibilityLabel)
+        case .failed(let why):
+            FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1)
+        }
     }
 
     private var isConnected: Bool { state.isConnected }
@@ -252,20 +271,25 @@ struct ContentView: View {
                     Spacer()
                     Text(formatSize(item.node.size))
                         .foregroundStyle(.secondary)
-                    rowButton(.play, help: "play 1s preview on device") { Task { await state.audition(item) } }
-                    rowButton(.download, help: "download as wav") {
-                        Task {
-                            if let result = await state.download(item) {
-                                state.exportName = result.name
-                                state.exportDocument = DataDocument(data: Data(result.wav))
+                    let commands = soundCommands(item)
+                    if collapsesRowActions {
+                        Menu {
+                            ForEach(commands, id: \.action) { command in
+                                Button(command.action.accessibilityLabel, action: command.perform)
                             }
+                        } label: {
+                            Text(RowAction.actions.glyph)
+                                .frame(minWidth: 28, minHeight: minHitHeight)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(state.deviceBusy)
+                        .accessibilityLabel(RowAction.actions.accessibilityLabel)
+                    } else {
+                        ForEach(commands, id: \.action) { command in
+                            rowButton(command.action, help: command.help, perform: command.perform)
                         }
                     }
-                    rowButton(.rename, help: "rename") { state.renameText = item.displayName; state.renameItem = item }
-                    rowButton(.renumber, help: "move to another slot") { state.renumberItem = item }
-                    rowButton(.metadata, help: "edit metadata") { Task { await state.editMetadata(item) } }
-                    rowButton(.waveform, help: "show waveform") { Task { await state.showWaveform(item) } }
-                    rowButton(.delete, help: "delete from device") { Task { await state.delete(item) } }
                 }
                 .tag(item.id)
                 .onDrag { state.dragProvider(for: item) }
@@ -287,43 +311,92 @@ struct ContentView: View {
         #endif
     }
 
-    private var footer: some View {
-        HStack {
-            if let progress = state.progressText {
-                Text(progress)
-            }
-            if let error = state.lastError {
-                FullTextButton(line: .error(error), text: error, lineLimit: 2)
-                    .foregroundStyle(Color.errorText)
-            }
-            Spacer()
-            if case .connected = state.connection, state.view == .sounds {
-                if !state.selection.isEmpty {
-                    Text("sel \(state.selection.count)")
-                    TextField("to #", text: $state.bulkMoveStart)
-                        .frame(width: 56)
-                    barButton(.moveSelection) {
-                        if let start = UInt16(state.bulkMoveStart) {
-                            Task { await state.moveSelection(startingAt: start) }
-                        }
+    /// On a compact-width iPhone or iPad window a sound row cannot show every
+    /// action button next to its name, so they go into one menu.
+    private var collapsesRowActions: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
+
+    private struct RowCommand {
+        let action: RowAction
+        let help: String
+        let perform: () -> Void
+    }
+
+    private func soundCommands(_ item: SoundItem) -> [RowCommand] {
+        [
+            RowCommand(action: .play, help: "play 1s preview on device") { Task { await state.audition(item) } },
+            RowCommand(action: .download, help: "download as wav") {
+                Task {
+                    if let result = await state.download(item) {
+                        state.exportName = result.name
+                        state.exportDocument = DataDocument(data: Data(result.wav))
                     }
-                    .disabled(state.deviceBusy)
-                    barButton(.downloadSelection) { state.picker = .downloadFolder(Array(state.selection)) }
-                        .disabled(state.deviceBusy)
-                    barButton(.deleteSelection) { Task { await state.deleteMany(state.selection) } }
-                        .disabled(state.deviceBusy)
                 }
-                barButton(.addSounds) { state.showImporter = true }
-                    .disabled(state.deviceBusy)
-                barButton(.backupSounds) { state.picker = .backupFolder(.sounds) }
-                    .disabled(state.deviceBusy)
-                barButton(.restoreBackup) { state.picker = .restoreFolder }
-                    .disabled(state.deviceBusy)
-                barButton(.refresh) { Task { await state.refreshSounds() } }
-                    .disabled(state.deviceBusy)
+            },
+            RowCommand(action: .rename, help: "rename") { state.renameText = item.displayName; state.renameItem = item },
+            RowCommand(action: .renumber, help: "move to another slot") { state.renumberItem = item },
+            RowCommand(action: .metadata, help: "edit metadata") { Task { await state.editMetadata(item) } },
+            RowCommand(action: .waveform, help: "show waveform") { Task { await state.showWaveform(item) } },
+            RowCommand(action: .delete, help: "delete from device") { Task { await state.delete(item) } },
+        ]
+    }
+
+    private var footer: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                footerStatus
+                Spacer()
+                footerActions
+            }
+            FlowLayout {
+                footerStatus
+                footerActions
             }
         }
         .padding()
+    }
+
+    @ViewBuilder private var footerStatus: some View {
+        if let progress = state.progressText {
+            Text(progress)
+        }
+        if let error = state.lastError {
+            FullTextButton(line: .error(error), text: error, lineLimit: 2)
+                .foregroundStyle(Color.errorText)
+        }
+    }
+
+    @ViewBuilder private var footerActions: some View {
+        if case .connected = state.connection, state.view == .sounds {
+            if !state.selection.isEmpty {
+                Text("sel \(state.selection.count)")
+                TextField("to #", text: $state.bulkMoveStart)
+                    .frame(width: 56)
+                barButton(.moveSelection) {
+                    if let start = UInt16(state.bulkMoveStart) {
+                        Task { await state.moveSelection(startingAt: start) }
+                    }
+                }
+                .disabled(state.deviceBusy)
+                barButton(.downloadSelection) { state.picker = .downloadFolder(Array(state.selection)) }
+                    .disabled(state.deviceBusy)
+                barButton(.deleteSelection) { Task { await state.deleteMany(state.selection) } }
+                    .disabled(state.deviceBusy)
+            }
+            barButton(.addSounds) { state.showImporter = true }
+                .disabled(state.deviceBusy)
+            barButton(.backupSounds) { state.picker = .backupFolder(.sounds) }
+                .disabled(state.deviceBusy)
+            barButton(.restoreBackup) { state.picker = .restoreFolder }
+                .disabled(state.deviceBusy)
+            barButton(.refresh) { Task { await state.refreshSounds() } }
+                .disabled(state.deviceBusy)
+        }
     }
 
     private var binList: some View {
@@ -350,13 +423,13 @@ struct ContentView: View {
     }
 
     private func backupRow(_ scope: DeviceLibrary.Scope, button: BarAction) -> some View {
-        HStack {
+        FlowLayout {
             barButton(button) { state.picker = .backupFolder(scope) }
                 .disabled(state.deviceBusy)
             barButton(.restoreBackup) { state.picker = .restoreFolder }
                 .disabled(state.deviceBusy)
-            Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal)
         .padding(.vertical, 8)
     }
@@ -588,6 +661,31 @@ func barButton(_ action: BarAction, perform: @escaping () -> Void) -> some View 
     }
     .buttonStyle(.plain)
     .accessibilityLabel(action.accessibilityLabel)
+}
+
+/// Lays its children out left to right and wraps them onto new lines where the
+/// offered width runs out.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        placement(width: proposal.width, subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let placed = placement(width: bounds.width, subviews)
+        for (index, subview) in subviews.enumerated() {
+            let origin = placed.origins[index]
+            subview.place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y),
+                          proposal: ProposedViewSize(placed.sizes[index]))
+        }
+    }
+
+    private func placement(width: CGFloat?, _ subviews: Subviews) -> (origins: [CGPoint], size: CGSize, sizes: [CGSize]) {
+        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
+        let flow = flowPlacement(sizes: sizes, maxWidth: width ?? .infinity, spacing: spacing)
+        return (flow.origins, flow.size, sizes)
+    }
 }
 
 #if os(macOS)
