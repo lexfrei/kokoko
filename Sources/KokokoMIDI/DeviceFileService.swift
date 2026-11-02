@@ -185,9 +185,12 @@ public actor DeviceFileService {
         return initResponse.fileID
     }
 
-    /// Download a whole file, verifying page order.
+    /// Download a whole file, verifying page order. `size` is the byte count the
+    /// device announced from `offset` on; `data` falls short of it when a page
+    /// comes back empty early.
     public func get(fileID: UInt16, offset: UInt32 = 0,
-                    progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> (name: String, data: [UInt8]) {
+                    progress: (@Sendable (Int, Int) -> Void)? = nil)
+        async throws -> (name: String, data: [UInt8], size: Int) {
         await acquire()
         defer { release() }
         let initPayload = try await call(GetInitRequest(fileID: fileID, offset: offset).bytes)
@@ -211,7 +214,7 @@ public actor DeviceFileService {
             progress?(data.count, total)
             page = response.nextPage
         }
-        return (initResponse.fileName, data)
+        return (initResponse.fileName, data, total)
     }
 
     public func delete(fileID: UInt16) async throws {

@@ -30,9 +30,10 @@ public struct DeviceBackup: Sendable {
     /// Project metadata entries of an older backup that keyed them by node id;
     /// they are not restored.
     public var legacyProjectSettings: Int
-    /// Project archives the manifest lists or the folder holds that are missing,
-    /// cannot be read, or are not a valid tar archive, by project name; they are
-    /// not restored.
+    /// Project archives, by project name, that are not restored: read short or
+    /// not a valid tar at backup, or listed by the manifest or held by the folder
+    /// but missing, unreadable, or not a valid tar there. The manifest lists them
+    /// without a file.
     public var unreadArchives: [String] = []
     /// What the backup could not capture; not written to the backup folder.
     public var report = BackupReport()
@@ -94,6 +95,7 @@ public actor DeviceLibrary {
 
         var projectMetadata: [String: [String: JSONValue]] = [:]
         var archives: [String: [UInt8]] = [:]
+        var damaged: [String] = []
         if scope != .sounds {
             let projectsRoot = try await resolve("/projects")
             let tree = try await walk(projectsRoot, path: "/projects")
@@ -113,6 +115,11 @@ public actor DeviceLibrary {
             for project in try await files.list(nodeID: projectsRoot) {
                 progress?("P\(project.name)")
                 let archive = try await files.get(fileID: project.id)
+                // A read cut at a whole tar block still passes the tar check.
+                guard archive.data.count == archive.size, isValidProjectArchive(archive.data) else {
+                    damaged.append(project.name)
+                    continue
+                }
                 archives[project.name] = archive.data
             }
         }
@@ -120,7 +127,8 @@ public actor DeviceLibrary {
         var backup = DeviceBackup(deviceSKU: deviceSKU, osVersion: osVersion, createdAt: Date(),
                                   sounds: backups, projectMetadata: projectMetadata,
                                   projectArchives: archives)
-        backup.report = BackupReport(unreadMetadata: unread)
+        backup.unreadArchives = damaged
+        backup.report = BackupReport(unreadMetadata: unread, damagedArchives: damaged)
         return backup
     }
 
@@ -374,14 +382,24 @@ public actor DeviceLibrary {
 
 public struct BackupReport: Equatable, Sendable {
     public var unreadMetadata: [String] = []
+    /// Projects whose archive came back short or is not a valid tar; left out of the backup.
+    public var damagedArchives: [String] = []
 
-    public init(unreadMetadata: [String] = []) {
+    public init(unreadMetadata: [String] = [], damagedArchives: [String] = []) {
         self.unreadMetadata = unreadMetadata
+        self.damagedArchives = damagedArchives
     }
 
     public var message: String? {
-        guard !unreadMetadata.isEmpty else { return nil }
-        return "metadata not read, backed up without it: " + unreadMetadata.joined(separator: ", ")
+        var parts: [String] = []
+        if !unreadMetadata.isEmpty {
+            parts.append("metadata not read, backed up without it: " + unreadMetadata.joined(separator: ", "))
+        }
+        if !damagedArchives.isEmpty {
+            parts.append(damagedArchives.map { "P\($0)" }.joined(separator: ", ")
+                + " not backed up: archive read short or not a valid tar")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 }
 
@@ -431,8 +449,9 @@ public enum BackupStore {
         ]
         manifest["projectMetadata"] = Dictionary(uniqueKeysWithValues:
             backup.projectMetadata.map { ($0.key, $0.value.mapValues(\.anyValue)) })
-        if !backup.projectArchives.isEmpty {
-            manifest["projectArchives"] = backup.projectArchives.keys.sorted()
+        let listedArchives = Set(backup.projectArchives.keys).union(backup.unreadArchives)
+        if !listedArchives.isEmpty {
+            manifest["projectArchives"] = listedArchives.sorted()
         }
         // Checked up front: JSONSerialization raises an uncatchable exception on NaN, and
         // a refused backup should not leave a half-written folder behind.

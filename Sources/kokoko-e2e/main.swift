@@ -227,10 +227,10 @@ struct E2E {
             check(id == soundsID && stillThere == soundsID, "bin delete refuses a non-sound node")
         }
 
-        faulty.truncateGets = true
+        faulty.truncateGetsFromPage = 1
         check((try? await faultyLibrary.deleteMany([victim], into: bin)) == nil, "bin delete fails on a truncated read")
         check(try await onDevice() && bin.entries().isEmpty, "truncated read: sound kept, bin untouched")
-        faulty.truncateGets = false
+        faulty.truncateGetsFromPage = nil
 
         faulty.failBeforeSend = { $0.payload.first == FileSub.delete }
         check((try? await faultyLibrary.deleteMany([victim], into: bin)) == nil, "bin delete reports a refused delete")
@@ -406,7 +406,7 @@ struct E2E {
         for orphan in afterInitTaken.subtracting(beforeInitTaken) { try await files.delete(fileID: orphan) }
 
         // --- backup: a short download is an error, not a smaller sound ---
-        faulty.truncateGets = true
+        faulty.truncateGetsFromPage = 1
         do {
             _ = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
             check(false, "backup rejects a truncated sound")
@@ -415,9 +415,27 @@ struct E2E {
         } catch {
             check(false, "backup rejects a truncated sound — got \(error)")
         }
-        faulty.truncateGets = false
+        faulty.truncateGetsFromPage = nil
         let fullBackup = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .sounds)
         check(!fullBackup.sounds.isEmpty, "backup succeeds once reads are whole")
+
+        // --- backup: a project archive that came back short or is not a tar is reported, not kept ---
+        let archiveParent = try await resolve("/projects")
+        let archive = tarArchive()
+        let whole = try await files.put(parentID: archiveParent, name: "01", data: archive)
+        let notTar = try await files.put(parentID: archiveParent, name: "02", data: Array(repeating: 0xAB, count: 512))
+        // 64-byte pages: the read stops at 512 bytes, a whole tar block, so the cut copy still opens as a tar.
+        faulty.truncateGetsFromPage = 8
+        let shortRead = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .projects)
+        faulty.truncateGetsFromPage = nil
+        check(shortRead.report.damagedArchives == ["01", "02"] && shortRead.unreadArchives == ["01", "02"]
+                && shortRead.projectArchives.isEmpty,
+              "backup reports and leaves out a short archive and a non-tar one — got \(shortRead.report.damagedArchives), kept \(shortRead.projectArchives.keys.sorted())")
+        let wholeRead = try await faultyLibrary.backup(deviceSKU: "TE032AS001", osVersion: "2.1.0", scope: .projects)
+        check(wholeRead.projectArchives == ["01": archive] && wholeRead.report.damagedArchives == ["02"],
+              "backup keeps a whole archive — kept \(wholeRead.projectArchives.keys.sorted()), damaged \(wholeRead.report.damagedArchives)")
+        try await files.delete(fileID: whole)
+        try await files.delete(fileID: notTar)
 
         // --- backup: metadata that cannot be read is reported, not dropped silently ---
         check(fullBackup.report.unreadMetadata.isEmpty && fullBackup.report.message == nil,
@@ -806,13 +824,13 @@ struct E2E {
 
 /// Wire wrapper that injects faults: an outbound frame can be delivered and then
 /// reported as failed (the device acted, the client saw an error), and GET data
-/// replies after the first page can be cut to an empty page.
+/// replies from a given page on can be cut to an empty page.
 final class FaultyWire: MIDIWire, @unchecked Sendable {
     private let inner: MIDIWire
     private let lock = NSLock()
     private var _failAfterSend: (@Sendable (TEFrame) -> Bool)?
     private var _failBeforeSend: (@Sendable (TEFrame) -> Bool)?
-    private var _truncateGets = false
+    private var _truncateGetsFromPage: Int?
     private var _beforeFailure: (@Sendable () async -> Void)?
     private var getDataRequests: Set<UInt16> = []
 
@@ -838,16 +856,18 @@ final class FaultyWire: MIDIWire, @unchecked Sendable {
         set { lock.withLock { _beforeFailure = newValue } }
     }
 
-    var truncateGets: Bool {
-        get { lock.withLock { _truncateGets } }
-        set { lock.withLock { _truncateGets = newValue } }
+    var truncateGetsFromPage: Int? {
+        get { lock.withLock { _truncateGetsFromPage } }
+        set { lock.withLock { _truncateGetsFromPage = newValue } }
     }
 
     func send(_ bytes: [UInt8]) async throws {
         let frame = TEFrame.parse(bytes)
-        if let frame, frame.payload.starts(with: [FileSub.get, 1]),
-           Array(frame.payload.dropFirst(2)) != [0, 0] {
-            lock.withLock { _ = getDataRequests.insert(frame.requestID) }
+        if let frame, frame.payload.count >= 4, frame.payload.starts(with: [FileSub.get, 1]) {
+            let page = Int(frame.payload[2]) << 8 | Int(frame.payload[3])
+            lock.withLock {
+                if let from = _truncateGetsFromPage, page >= from { _ = getDataRequests.insert(frame.requestID) }
+            }
         }
         if let frame, failBeforeSend?(frame) == true {
             throw WireError.noDevice
@@ -868,7 +888,7 @@ final class FaultyWire: MIDIWire, @unchecked Sendable {
 
     private func rewrite(_ bytes: [UInt8]) -> [UInt8] {
         guard let frame = TEFrame.parse(bytes), frame.kind == .response, frame.hasRequestID,
-              lock.withLock({ _truncateGets && getDataRequests.remove(frame.requestID) != nil })
+              lock.withLock({ getDataRequests.remove(frame.requestID) != nil })
         else { return bytes }
         // Header through the status byte, then only the page number: an empty page.
         return Array(bytes[0...9]) + SevenBitCoding.pack(Array(frame.payload.prefix(2))) + [0xF7]
@@ -892,4 +912,18 @@ final class ReadBox: @unchecked Sendable {
     private var _value: [UInt8]?
     var value: [UInt8]? { lock.withLock { _value } }
     func set(_ value: [UInt8]?) { lock.withLock { _value = value } }
+}
+
+/// A one-member tar of 2048 bytes: header, one data block, the two end blocks.
+func tarArchive() -> [UInt8] {
+    var header = [UInt8](repeating: 0, count: 512)
+    func put(_ text: String, at offset: Int) {
+        for (i, byte) in text.utf8.enumerated() { header[offset + i] = byte }
+    }
+    put("song.json", at: 0)
+    put("0000644", at: 100)
+    put("00000000041", at: 124)
+    put("0", at: 156)
+    put(String(format: "%06o", header.reduce(8 * 0x20) { $0 + Int($1) }), at: 148)
+    return header + [UInt8](repeating: 0x61, count: 33) + [UInt8](repeating: 0, count: 479 + 1024)
 }
