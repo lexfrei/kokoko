@@ -26,8 +26,8 @@ extension KokokoCoreChecks {
         eq([AppCommand.showSounds, .showProjects, .showSettings, .showBin].map(\.selectsTab),
            [.sounds, .projects, .settings, .bin], "commands: each tab command selects its tab")
 
-        eq(enabled(busy: true), [.showSounds, .showBin],
-           "commands: while the device is busy only the tabs that do not read from it on opening stay available")
+        eq(enabled(busy: true), [.showSounds, .showProjects, .showSettings, .showBin],
+           "commands: while the device is busy every tab can still be chosen, and nothing else")
         eq(enabled(connected: false), [.showSounds, .showProjects, .showSettings, .showBin, .scan],
            "commands: without a device only the tabs and the scan are available")
         eq(enabled(tab: .bin, connected: false), [.showSounds, .showProjects, .showSettings, .showBin, .refresh, .scan],

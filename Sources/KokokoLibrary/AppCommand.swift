@@ -70,7 +70,7 @@ public enum AppCommand: CaseIterable, Sendable {
         if modalOpen && opensPanel { return false }
         return switch self {
         case .showSounds, .showProjects, .showSettings, .showBin:
-            selectsTab.map { $0.isEnabled(deviceBusy: busy) } ?? false
+            true
         case .scan:
             !busy && !connected
         case .refresh:

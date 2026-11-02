@@ -196,7 +196,6 @@ struct ContentView: View {
     private func tabButton(_ tab: HeaderTab) -> some View {
         Button(tabTitle(tab.title, selected: state.view == tab)) { state.open(tab) }
         .buttonStyle(.plain)
-        .disabled(!tab.isEnabled(deviceBusy: state.deviceBusy))
         .foregroundStyle(state.view == tab ? .primary : .secondary)
         .accessibilityLabel(tab.title.capitalized)
         .accessibilityAddTraits(state.view == tab ? .isSelected : [])
@@ -204,7 +203,8 @@ struct ContentView: View {
 
     private var content: some View {
         Group {
-            if let notice = tabNotice(state.view, device: devicePhase) {
+            if let notice = tabNotice(state.view, device: devicePhase,
+                                      waitingForDevice: state.tabLoad.waiting == state.view) {
                 deviceNotice(notice)
             } else {
                 switch state.view {
