@@ -30,8 +30,8 @@ struct ContentView: View {
         .frame(minWidth: 420, minHeight: 480)
         #endif
         .fileImporter(isPresented: anyPickerBinding,
-                      allowedContentTypes: state.picker == .none ? [.audio] : [.folder],
-                      allowsMultipleSelection: state.picker == .none) { result in
+                      allowedContentTypes: state.panel.picker == .none ? [.audio] : [.folder],
+                      allowsMultipleSelection: state.panel.picker == .none) { result in
             guard case .success(let urls) = result, !urls.isEmpty else { return }
             state.handleImport(urls)
         }

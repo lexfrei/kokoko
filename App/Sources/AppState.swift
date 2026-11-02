@@ -78,18 +78,18 @@ final class AppState: ObservableObject {
     @Published private(set) var errorLine = ErrorLine()
     var lastError: String? { errorLine.text }
     @Published var showImporter = false {
-        didSet { if showImporter { presented = (.none, hotplug.currentGeneration()) } }
+        didSet { if showImporter { panel.open(.none, generation: hotplug.currentGeneration()) } }
     }
     @Published var exportDocument: DataDocument?
     @Published var exportName = "sound.wav"
     @Published var picker: PendingPicker = .none {
-        didSet { if picker != .none { presented = (picker, hotplug.currentGeneration()) } }
+        didSet { if picker != .none { panel.open(picker, generation: hotplug.currentGeneration()) } }
     }
-    /// What the open panel was shown for, and for which device. A device
-    /// leaving resets `picker`; if that lands between the user's choice and
-    /// the panel's callback, reading `picker` there sends the chosen folder
-    /// to upload.
-    private var presented: (picker: PendingPicker, generation: Int) = (.none, 0)
+    /// What the open panel was shown for. A device leaving resets `picker`;
+    /// if that lands between the user's choice and the panel's callback,
+    /// reading `picker` there sends the chosen folder to upload, and the
+    /// panel's own settings would switch to upload's while it closes.
+    private(set) var panel = PanelRequest()
     @Published var renumberItem: SoundItem?
     @Published var renameItem: SoundItem?
     @Published var renameText = ""
@@ -257,12 +257,11 @@ final class AppState: ObservableObject {
 
     /// The files or folder the open panel returned, routed by what it was opened for.
     func handleImport(_ urls: [URL]) {
-        let action = presented.picker
         picker = .none
-        // A folder chosen for a device that has left would act on whatever is
-        // connected now: its slots, or a restore over it. Sounds to upload go
-        // to the device connected now, as when the panel stays open.
-        guard action == .none || hotplug.isCurrent(presented.generation) else { return }
+        guard let action = panel.route(currentGeneration: hotplug.currentGeneration()) else {
+            noteError("the device changed, the chosen folder was not used")
+            return
+        }
         Task {
             switch action {
             case .none:
