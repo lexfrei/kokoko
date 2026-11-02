@@ -33,20 +33,7 @@ struct ContentView: View {
                       allowedContentTypes: state.picker == .none ? [.audio] : [.folder],
                       allowsMultipleSelection: state.picker == .none) { result in
             guard case .success(let urls) = result, !urls.isEmpty else { return }
-            let action = state.picker
-            state.picker = .none
-            Task {
-                switch action {
-                case .none:
-                    await state.upload(urls: urls)
-                case .downloadFolder(let ids):
-                    await state.downloadManyToFolder(ids, folder: urls[0])
-                case .backupFolder(let scope):
-                    await state.backupToFolder(urls[0], scope: scope)
-                case .restoreFolder:
-                    state.prepareRestore(from: urls[0])
-                }
-            }
+            state.handleImport(urls)
         }
         .fileExporter(isPresented: exporterBinding,
                       document: state.exportDocument,

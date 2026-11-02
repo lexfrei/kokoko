@@ -81,10 +81,19 @@ final class AppState: ObservableObject {
     /// projects reload.
     @Published private(set) var errorLine = ErrorLine()
     var lastError: String? { errorLine.text }
-    @Published var showImporter = false
+    @Published var showImporter = false {
+        didSet { if showImporter { presented = (.none, hotplug.currentGeneration()) } }
+    }
     @Published var exportDocument: DataDocument?
     @Published var exportName = "sound.wav"
-    @Published var picker: PendingPicker = .none
+    @Published var picker: PendingPicker = .none {
+        didSet { if picker != .none { presented = (picker, hotplug.currentGeneration()) } }
+    }
+    /// What the open panel was shown for, and for which device. A device
+    /// leaving resets `picker`; if that lands between the user's choice and
+    /// the panel's callback, reading `picker` there sends the chosen folder
+    /// to upload.
+    private var presented: (picker: PendingPicker, generation: Int) = (.none, 0)
     @Published var renumberItem: SoundItem?
     @Published var renameItem: SoundItem?
     @Published var renameText = ""
@@ -247,6 +256,28 @@ final class AppState: ObservableObject {
         case .projects where isConnected: Task { await refreshProjects() }
         case .bin: loadBin()
         default: break
+        }
+    }
+
+    /// The files or folder the open panel returned, routed by what it was opened for.
+    func handleImport(_ urls: [URL]) {
+        let action = presented.picker
+        picker = .none
+        // A folder chosen for a device that has left would act on whatever is
+        // connected now: its slots, or a restore over it. Sounds to upload go
+        // to the device connected now, as when the panel stays open.
+        guard action == .none || hotplug.isCurrent(presented.generation) else { return }
+        Task {
+            switch action {
+            case .none:
+                await upload(urls: urls)
+            case .downloadFolder(let ids):
+                await downloadManyToFolder(ids, folder: urls[0])
+            case .backupFolder(let scope):
+                await backupToFolder(urls[0], scope: scope)
+            case .restoreFolder:
+                prepareRestore(from: urls[0])
+            }
         }
     }
 
