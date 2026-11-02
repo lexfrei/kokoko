@@ -8,17 +8,19 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 - Lists the sounds on the device with slot number, name and size, and filters the list by name or slot.
 - Adds sounds from audio files, picked or dropped onto the list. WAV files already in the device format (16-bit, 46875 Hz, mono or stereo) are sent as they are. Other audio is converted to 16-bit at 46875 Hz first, and audio that needs converting is refused if it is longer than 40 seconds. Audio with more than two channels is refused rather than mixed down.
 - Plays a one-second preview of a sound on the device.
+- Draws a sound's waveform from its `[~]` button, with its loop points marked when it has them. The drawing is for viewing; loop points are edited from `[m]`.
 - Downloads a sound as a WAV file, by button or by dragging its row out of the app, and downloads a selection of sounds into a folder.
-- Renames a sound, moves it to another slot, and swaps two sounds by dragging one row onto the other. A selection of sounds can be moved, in slot order, onto the free slots counting up from a chosen number, skipping slots held by other sounds.
+- Renames a sound, moves it to another slot, and swaps two sounds by dragging one row onto the other, after asking. A selection of sounds can be moved, in slot order, onto the free slots counting up from a chosen number, skipping slots held by other sounds.
 - Edits a sound's root note, bpm, pitch, pan, amplitude, envelope attack and release, loop points and play and time modes from its `[m]` button. Numbers are checked against the ranges in [docs/protocol.md](docs/protocol.md), and only the changed fields are sent.
 - Deletes one sound or a selection and keeps a copy of each in a recycle bin on the Mac or iPad. If deleting into the bin fails, it offers to delete that sound without keeping a copy.
 - Lists the deleted sounds in a bin tab with their original slot, name and time of deletion. A sound can be put back, into its original slot if that slot is free and into another one otherwise, or removed from the bin for good. The bin tab works without a device; putting a sound back needs one connected.
-- Backs up the sounds, the projects, or both into a folder, from the buttons on the sounds, projects and settings tabs or from the File menu. A restore, started from those tabs or the menu, puts back the sounds from the chosen backup folder and its projects into the project slots that already exist on the device.
+- Backs up the sounds, the projects, or both into a folder, from the buttons on the sounds, projects and settings tabs or from the File menu. A restore, started from those tabs or the menu, first says what it will write and asks, then puts back the sounds from the chosen backup folder and its projects into the project slots that already exist on the device. A backup names and leaves out a project archive that reads short or is not a valid archive, and a restore does the same for one that is missing, unreadable or damaged.
 - Lists the projects, downloads one as a `.tar` archive, and uploads archives named like `P01.tar` by dropping them onto the project list, into a slot that already exists on the device.
 - Shows the device settings where the firmware exposes them.
-- Keeps every tab visible, with or without a device, and says on each device tab whether it is scanning, connecting or not connected. The full text of an error opens from the footer.
+- Keeps every tab visible, with or without a device, and says on each device tab whether it is scanning, connecting or not connected. The projects and settings tabs, opened while the device is busy, say they will load once it is free. The full text of an error opens from the footer, or from the header for a failed connection.
 - Gives every bracketed button a spoken name for VoiceOver, such as "Delete selected" for `[ x ]`, and marks the selected tab with `*` as well as with color.
-- Puts these actions in the menu bar as well: File has Add Sounds (⌘O), downloading the selected sounds, and the three backups and the restore, which work from any tab; View switches tabs (⌘1 to ⌘4), refreshes the open tab (⌘R) and scans for devices again. On a Mac the app has a single window, and closing it quits the app.
+- Puts these actions in the menu bar as well: File has Add Sounds (⌘O), downloading the selected sounds, and the three backups and the restore, which work from any tab; View switches tabs (⌘1 to ⌘4), refreshes the open tab (⌘R) and scans for devices again.
+- Runs in a single window on a Mac; closing it quits the app.
 
 ## Status and limits
 
