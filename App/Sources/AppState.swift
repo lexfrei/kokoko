@@ -486,7 +486,7 @@ final class AppState: ObservableObject {
             let meta = try await files.getMetadata(fileID: item.node.id)
             let channels = meta["channels"]?.intValue ?? 1
             let rate = meta["samplerate"]?.intValue ?? deviceSampleRate
-            let result = try await files.get(fileID: item.node.id) { done, total in
+            let result = try await files.getWhole(fileID: item.node.id) { done, total in
                 Task { @MainActor in
                     self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                 }
@@ -864,9 +864,13 @@ final class AppState: ObservableObject {
         let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv P\(project.name)")
-            let result = try await files.get(fileID: project.id)
+            let tar = try await files.getWhole(fileID: project.id).data
             progress.update(op, nil)
-            return ("P\(project.name).tar", result.data)
+            guard isValidProjectArchive(tar) else {
+                reportOperationError("project download: P\(project.name) is not a valid tar archive", token: token)
+                return nil
+            }
+            return ("P\(project.name).tar", tar)
         } catch {
             progress.update(op, nil)
             reportOperationError("project download: \(error.localizedDescription)", token: token)
@@ -1021,7 +1025,7 @@ final class AppState: ObservableObject {
                 pcm = cached.pcm
             } else {
                 progress.update(op, "recv \(item.displayName)")
-                pcm = try await files.get(fileID: item.node.id) { done, total in
+                pcm = try await files.getWhole(fileID: item.node.id) { done, total in
                     Task { @MainActor in
                         self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                     }
