@@ -62,6 +62,8 @@ extension KokokoCoreChecks {
 
             var noArchives = backup
             noArchives.projectArchives = [:]
+            // The virtual device reads a project directory as an empty archive, which backup reports as damaged.
+            noArchives.unreadArchives = []
             let report = try await DeviceLibrary(files: to).restore(noArchives)
             eq(try await to.getMetadata(fileID: dstRoot)["active"], .int(Int(dst02)),
                "project settings: the active project points at the target's node for its path")
@@ -116,6 +118,12 @@ extension KokokoCoreChecks {
             eq(BackupReport().message, nil, "backup report: an empty report has no message")
             eq(BackupReport(unreadMetadata: ["003.pcm", "/projects/01"]).message,
                "metadata not read, backed up without it: 003.pcm, /projects/01", "backup report: the message names every node")
+            eq(BackupReport(damagedArchives: ["01", "04"]).message,
+               "P01, P04 not backed up: archive read short or not a valid tar",
+               "backup report: the message names every damaged archive")
+            eq(BackupReport(unreadMetadata: ["003.pcm"], damagedArchives: ["01"]).message,
+               "metadata not read, backed up without it: 003.pcm; P01 not backed up: archive read short or not a valid tar",
+               "backup report: the message names both kinds of problem")
         } catch {
             check(false, "project settings checks threw \(error)")
         }

@@ -126,6 +126,17 @@ extension KokokoCoreChecks {
             try Data(#"{"deviceSKU":"","osVersion":""}"#.utf8).write(to: soundsOnly.appendingPathComponent("manifest.json"))
             eq(try BackupStore.read(from: soundsOnly).unreadArchives, [],
                "backup archives: a backup without archives reports none unread")
+
+            var damaged = DeviceBackup(deviceSKU: "", osVersion: "", createdAt: Date(), sounds: [],
+                                       projectMetadata: ["/projects/02": ["bpm": .int(120)]],
+                                       projectArchives: ["01": tar])
+            damaged.unreadArchives = ["02"]
+            let damagedDir = dir.appendingPathComponent("damaged")
+            try BackupStore.write(damaged, to: damagedDir)
+            let reread = try BackupStore.read(from: damagedDir)
+            check(reread.projectArchives == ["01": tar] && reread.unreadArchives == ["02"],
+                  "backup archives: an archive left out at backup is still unread after a write and read — "
+                      + "loaded \(reread.projectArchives.keys.sorted()), unread \(reread.unreadArchives)")
         } catch {
             check(false, "backup archive checks threw \(error)")
         }
