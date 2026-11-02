@@ -10,6 +10,14 @@ struct ContentView: View {
     // need Xcode's SwiftUIMacros plugin; this stays typecheckable with CLT.
     @ObservedObject var state: AppState
     @State private var renumberText = ""
+    @State private var soundListTargeted = false
+    @State private var projectListTargeted = false
+    @State private var targetedRow: UInt16?
+    /// The row being dragged, if a drag started on one. Nothing tells the
+    /// view when a drag to Finder ends, so it stays until the next drag or
+    /// drop; plain text dragged in later still marks no row, since a row
+    /// marks itself only for a drag that also carries a WAV.
+    @State private var draggedRow: UInt16?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -249,15 +257,22 @@ struct ContentView: View {
     }
 
     private var soundRows: some View {
-        List(selection: $state.selection) {
+        let empty = soundListEmpty(total: state.sounds.count, visible: state.visibleSounds.count,
+                                   query: state.filterText, deviceBusy: state.deviceBusy, listed: state.soundsListed)
+        return List(selection: $state.selection) {
             ForEach(state.visibleSounds) { item in
                 HStack {
                     Text(String(format: "%03d", item.node.id))
                         .foregroundStyle(.secondary)
                     Text(item.displayName)
                     Spacer()
-                    Text(formatSize(item.node.size))
-                        .foregroundStyle(.secondary)
+                    if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: draggedRow,
+                                                  deviceBusy: state.deviceBusy) {
+                        Text(marker)
+                    } else {
+                        Text(formatSize(item.node.size))
+                            .foregroundStyle(.secondary)
+                    }
                     let commands = soundCommands(item)
                     if collapsesRowActions {
                         Menu {
@@ -279,11 +294,29 @@ struct ContentView: View {
                     }
                 }
                 .tag(item.id)
-                .onDrag { state.dragProvider(for: item) }
-                .onDrop(of: [.text], delegate: SoundRowDrop(target: item, state: state))
+                .onDrag {
+                    draggedRow = item.id
+                    targetedRow = nil
+                    return state.dragProvider(for: item)
+                }
+                .onDrop(of: [.text], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow, dragged: $draggedRow))
             }
         }
-        .onDrop(of: [.audio], isTargeted: nil) { providers in
+        // Over the list rather than instead of it, so sounds can still be dropped onto it.
+        .overlay {
+            if let empty {
+                VStack(spacing: 12) {
+                    Text(empty.text)
+                        .foregroundStyle(.secondary)
+                    if empty == .noSounds {
+                        barButton(.addSounds) { state.showImporter = true }
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { dropBanner(.soundList, targeted: soundListTargeted) }
+        .onDrop(of: [.audio], isTargeted: $soundListTargeted) { providers in
+            draggedRow = nil
             guard !state.deviceBusy else { return false }
             return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, error in
@@ -447,13 +480,25 @@ struct ContentView: View {
                 }
             }
         }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+        .safeAreaInset(edge: .bottom, spacing: 0) { dropBanner(.projectList, targeted: projectListTargeted) }
+        .onDrop(of: [.fileURL], isTargeted: $projectListTargeted) { providers in
+            draggedRow = nil
             guard !state.deviceBusy else { return false }
             return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadObject(ofClass: URL.self) { url, error in done(url, error) }
             }, then: { urls in
                 await state.uploadProjects(urls: urls)
             })
+        }
+    }
+
+    /// At the bottom edge rather than the top, so the rows near the pointer do not move.
+    @ViewBuilder private func dropBanner(_ target: DropTarget, targeted: Bool) -> some View {
+        if let marker = dropMarker(target, targeted: targeted, deviceBusy: state.deviceBusy) {
+            Text(marker)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(.bar)
         }
     }
 
@@ -532,8 +577,22 @@ struct ContentView: View {
 struct SoundRowDrop: DropDelegate {
     let target: SoundItem
     let state: AppState
+    @Binding var targeted: UInt16?
+    @Binding var dragged: UInt16?
+
+    /// Only for a dragged row, which carries its sound as a WAV next to the
+    /// reorder text; plain text from elsewhere carries no WAV and marks nothing.
+    func dropEntered(info: DropInfo) {
+        if info.hasItemsConforming(to: [.text]), info.hasItemsConforming(to: [.wav]) { targeted = target.id }
+    }
+
+    func dropExited(info: DropInfo) {
+        if targeted == target.id { targeted = nil }
+    }
 
     func performDrop(info: DropInfo) -> Bool {
+        targeted = nil
+        dragged = nil
         guard let provider = info.itemProviders(for: [.text]).first else { return false }
         provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
             guard let data,
