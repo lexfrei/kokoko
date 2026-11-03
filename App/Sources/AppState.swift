@@ -65,12 +65,17 @@ final class AppState: ObservableObject {
     @Published var sounds: [SoundItem] = [] {
         didSet { pruneSelection() }
     }
-    @Published var selection = Set<UInt16>()
+    @Published var selection = Set<UInt16>() {
+        didSet { invalidateInlineRename() }
+    }
     /// Whether `sounds` came from a listing that succeeded on this device;
     /// before that an empty list says nothing about the device.
     @Published private(set) var soundsListed = false
     @Published var filterText = "" {
-        didSet { pruneSelection() }
+        didSet {
+            if filterText != oldValue { inlineRename = nil }
+            pruneSelection()
+        }
     }
     @Published private(set) var progress = ProgressLine()
     var progressText: String? { progress.text }
@@ -97,14 +102,16 @@ final class AppState: ObservableObject {
     /// panel's own settings would switch to upload's while it closes.
     @Published private(set) var panel = PanelRequest()
     @Published var renumberItem: SoundItem?
-    @Published var renameItem: SoundItem?
-    @Published var renameText = ""
+    @Published var inlineRename: InlineRename?
+    @Published var statusDetails = Set<UUID>()
     @Published var metadataEditing: MetadataEditing?
     @Published var firmwareStatus: FirmwareStatus?
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsStatus: SettingsStatus = .notLoaded
-    @Published var view: HeaderTab = .sounds
+    @Published var view: HeaderTab = .sounds {
+        didSet { invalidateInlineRename() }
+    }
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
     @Published var binToRemove: BinEntry?
@@ -143,6 +150,7 @@ final class AppState: ObservableObject {
                                       items: sounds.map { (slot: $0.id, name: $0.displayName) },
                                       query: filterText)
         if pruned != selection { selection = pruned }
+        invalidateInlineRename()
     }
 
     /// Selection is keyed by slot, so every slot change on the device must
@@ -308,16 +316,20 @@ final class AppState: ObservableObject {
         }
     }
 
+    func setStatusDetail(_ id: UUID, shown: Bool) {
+        if shown { statusDetails.insert(id) } else { statusDetails.remove(id) }
+    }
+
     /// A file panel, alert, dialog or sheet is up over the window.
     var modalOpen: Bool {
-        showImporter || picker != .none || exportDocument != nil || renameItem != nil || renumberItem != nil
+        showImporter || picker != .none || exportDocument != nil || renumberItem != nil
             || unbinnedDelete != nil || metadataEditing != nil || binToRemove != nil
             || pendingRestore != nil || pendingSwap != nil || waveformShown != nil
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
         command.isEnabled(tab: view, connected: isConnected, busy: deviceBusy, selection: selection.count,
-                          modalOpen: modalOpen)
+                          modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || !statusDetails.isEmpty)))
     }
 
     func perform(_ command: AppCommand) {
@@ -430,7 +442,7 @@ final class AppState: ObservableObject {
         projects = []
         selection = []
         unbinnedDelete = nil
-        renameItem = nil
+        inlineRename = nil
         renumberItem = nil
         metadataEditing = nil
         picker = .none
@@ -838,19 +850,75 @@ final class AppState: ObservableObject {
 
     // MARK: - rename
 
+    private func inlineRenameIsCurrent(_ edit: InlineRename) -> Bool {
+        edit.isCurrent(selection: selection, visible: Set(visibleSounds.map(\.id)), tab: view,
+                       generation: hotplug.currentGeneration())
+    }
+
+    private func invalidateInlineRename() {
+        if let edit = inlineRename, !inlineRenameIsCurrent(edit) { inlineRename = nil }
+    }
+
+    func beginInlineRename(_ item: SoundItem) {
+        guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
+              visibleSounds.contains(where: { $0.id == item.id }), inlineRename?.submitting != true else { return }
+        selection = [item.id]
+        inlineRename = InlineRename(id: item.id, generation: hotplug.currentGeneration(), name: item.displayName)
+    }
+
+    func cancelInlineRename() -> Bool {
+        guard let edit = inlineRename, edit.canCancel else { return false }
+        let restore = inlineRenameIsCurrent(edit)
+        inlineRename = nil
+        return restore
+    }
+
+    func commitInlineRename(session: UUID) async -> Bool {
+        guard var edit = inlineRename, edit.session == session, inlineRenameIsCurrent(edit),
+              !deviceBusy, !modalOpen, statusDetails.isEmpty else { return false }
+        switch edit.prepare() {
+        case .invalid, .waiting:
+            inlineRename = edit
+            return false
+        case .unchanged:
+            inlineRename = nil
+            return true
+        case .write(let name):
+            inlineRename = edit
+            let result = await rename(id: edit.id, to: name, generation: edit.generation)
+            guard var current = inlineRename, current.session == edit.session,
+                  inlineRenameIsCurrent(current) else { return false }
+            switch result {
+            case .saved:
+                _ = current.finish(error: nil)
+                inlineRename = nil
+                return true
+            case .failed(let error):
+                _ = current.finish(error: error)
+                inlineRename = current
+            case .stale:
+                inlineRename = nil
+            }
+            return false
+        }
+    }
+
+    enum RenameResult { case saved, failed(String), stale }
+
     /// Display name lives in metadata; the wire filename stays NNN.pcm.
-    func rename(_ item: SoundItem, to name: String) async {
-        guard enterDevice() else { return }
+    private func rename(id: UInt16, to name: String, generation: Int) async -> RenameResult {
+        guard hotplug.isCurrent(generation), sounds.contains(where: { $0.id == id }) else { return .stale }
+        guard let files, enterDevice() else { return .failed("device unavailable or busy") }
         defer { deviceBusy = false }
-        guard let files else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        let token = hotplug.currentGeneration()
         do {
-            try await files.setMetadata(fileID: item.node.id, ["name": .string(trimmed)])
-            await reload()
+            try await files.setMetadata(fileID: id, ["name": .string(name)])
+            guard hotplug.isCurrent(generation) else { return .stale }
+            let reloaded = await reload()
+            guard hotplug.isCurrent(generation) else { return .stale }
+            return reloaded ? .saved : .failed("name saved, but the sound list could not be refreshed")
         } catch {
-            reportOperationError("rename: \(error.localizedDescription)", token: token)
+            reportOperationError("rename: \(error.localizedDescription)", token: generation)
+            return hotplug.isCurrent(generation) ? .failed(error.localizedDescription) : .stale
         }
     }
 

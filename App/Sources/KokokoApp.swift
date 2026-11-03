@@ -39,6 +39,7 @@ struct KokokoCommands: Commands {
         CommandGroup(after: .newItem) {
             item(.addSounds)
             item(.downloadSelected)
+            item(.auditionSelected)
             Divider()
             item(.backupSounds)
             item(.backupProjects)
