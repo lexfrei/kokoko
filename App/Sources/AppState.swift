@@ -342,6 +342,19 @@ final class AppState: ObservableObject {
             case .bin: loadBin()
             }
         case .scan: Task { await scan() }
+        case .auditionSelected: auditionSelected()
+        }
+    }
+
+    func auditionSelected() {
+        guard isEnabled(.auditionSelected), selection.count == 1,
+              let item = visibleSounds.first(where: { selection.contains($0.id) }) else { return }
+        let selected = selection
+        let generation = hotplug.currentGeneration()
+        Task { @MainActor in
+            guard self.hotplug.isCurrent(generation), self.selection == selected,
+                  self.isEnabled(.auditionSelected), self.visibleSounds.contains(where: { $0.id == item.id }) else { return }
+            await self.audition(item)
         }
     }
 

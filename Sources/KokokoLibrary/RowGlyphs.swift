@@ -1,6 +1,6 @@
 /// A per-row action, drawn as a bracketed glyph and read by name, since a
 /// screen reader would otherwise spell out the brackets.
-public enum RowAction: CaseIterable, Sendable {
+public enum RowAction: CaseIterable, Hashable, Sendable {
     case play, download, rename, renumber, metadata, delete, restore, removeFromBin, downloadArchive, waveform
     /// Opens a row's other actions as a menu where a row is too narrow to show them.
     case actions
