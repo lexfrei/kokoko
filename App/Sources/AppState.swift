@@ -122,21 +122,9 @@ final class AppState: ObservableObject {
     /// the start of every reload(); a sound changed on the device itself
     /// shows its new audio only after the next one.
     private var pcmCache: [UInt16: (pcm: [UInt8], channels: Int, sampleRate: Int)] = [:]
-    /// True while a user action talks to the device. Transfers on the wire
-    /// are not serialized, and pages from two interleaved operations corrupt
-    /// each other, so every such action runs one at a time; the UI disables
-    /// its device controls, though not the tabs, while this is set.
-    @Published private(set) var deviceBusy = false {
-        didSet {
-            if !deviceBusy {
-                errorLine.finish()
-                if let tab = tabLoad.deviceReleased(showing: view, needsLoad: tabNeedsLoad(view)) {
-                    Task { await loadOpenedTab(tab) }
-                }
-                rescanIfDue()
-            }
-        }
-    }
+    @Published private var deviceAdmission = DeviceAdmission()
+    var deviceBusy: Bool { deviceAdmission.operation }
+    private var deviceOccupied: Bool { deviceAdmission.occupied }
     /// The sound a delete into the bin failed on, offered for a delete without a copy.
     @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String, generation: Int)?
     @Published var bulkMoveStart = ""
@@ -250,13 +238,24 @@ final class AppState: ObservableObject {
     /// A refusal is reported, since a drag to Finder or a drop that slipped
     /// past the disabled controls would otherwise fail without a word.
     private func enterDevice() -> Bool {
-        if deviceBusy {
+        guard deviceAdmission.beginOperation() else {
             noteError(Self.busyText)
             return false
         }
-        deviceBusy = true
         errorLine.start()
         return true
+    }
+
+    private func leaveDevice() {
+        if deviceAdmission.endOperation() { deviceReleased() }
+    }
+
+    private func deviceReleased() {
+        errorLine.finish()
+        if let tab = tabLoad.deviceReleased(showing: view, needsLoad: tabNeedsLoad(view)) {
+            Task { await loadOpenedTab(tab) }
+        }
+        rescanIfDue()
     }
 
     var isConnected: Bool {
@@ -272,7 +271,7 @@ final class AppState: ObservableObject {
         let current = view
         view = tab
         if tab == .bin { loadBin() }
-        if let load = tabLoad.open(tab, showing: current, needsLoad: tabNeedsLoad(tab), deviceBusy: deviceBusy) {
+        if let load = tabLoad.open(tab, showing: current, needsLoad: tabNeedsLoad(tab), deviceBusy: deviceOccupied) {
             Task { await loadOpenedTab(load) }
         }
     }
@@ -284,7 +283,7 @@ final class AppState: ObservableObject {
     private func loadOpenedTab(_ tab: HeaderTab) async {
         // Claimed by the rescan first, or by a click in the same moment: the
         // tab waits again rather than putting a busy refusal on the line.
-        if deviceBusy {
+        if deviceOccupied {
             _ = tabLoad.open(tab, needsLoad: tabNeedsLoad(tab), deviceBusy: true)
             return
         }
@@ -328,12 +327,17 @@ final class AppState: ObservableObject {
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
-        command.isEnabled(tab: view, connected: isConnected, busy: deviceBusy, selection: selection.count,
+        command.isEnabled(tab: view, connected: isConnected, busy: deviceOccupied, selection: selection.count,
                           modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || !statusDetails.isEmpty)))
     }
 
     func perform(_ command: AppCommand) {
-        guard isEnabled(command) else { return }
+        guard isEnabled(command) else {
+            if deviceOccupied, command != .auditionSelected, command.selectsTab == nil || command.opensPanel {
+                noteError(Self.busyText)
+            }
+            return
+        }
         if let tab = command.selectsTab { open(tab) }
         switch command {
         case .addSounds: showImporter = true
@@ -361,24 +365,18 @@ final class AppState: ObservableObject {
     func auditionSelected() {
         guard isEnabled(.auditionSelected), selection.count == 1,
               let item = visibleSounds.first(where: { selection.contains($0.id) }) else { return }
-        let selected = selection
-        let generation = hotplug.currentGeneration()
-        Task { @MainActor in
-            guard self.hotplug.isCurrent(generation), self.selection == selected,
-                  self.isEnabled(.auditionSelected), self.visibleSounds.contains(where: { $0.id == item.id }) else { return }
-            await self.audition(item)
-        }
+        requestAudition(item, selected: selection)
     }
 
     func refreshSounds() async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         await reload()
     }
 
     func refreshProjects() async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         await loadProjects()
     }
 
@@ -461,14 +459,14 @@ final class AppState: ObservableObject {
         // Checked inside the task: scan() claims the device before its first
         // await, so nothing can take the device between the check and the scan.
         Task {
-            guard hotplug.takeRescan(now: clockSeconds, busy: deviceBusy) else { return }
+            guard hotplug.takeRescan(now: clockSeconds, busy: deviceOccupied) else { return }
             await scan()
         }
     }
 
     func scan() async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let token = hotplug.currentGeneration()
         connection = .scanning
         // Offline entries are cached ghosts of unplugged devices; they can
@@ -564,7 +562,7 @@ final class AppState: ObservableObject {
 
     func upload(urls: [URL]) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         // A drop, or a panel that stayed open across an unplug, reaches here
@@ -618,7 +616,7 @@ final class AppState: ObservableObject {
     /// operations' errors or drop this one for a device that has left.
     func download(_ item: SoundItem) async -> Result<(name: String, wav: [UInt8]), DownloadFailure> {
         guard enterDevice() else { return .failure(DownloadFailure(errorDescription: Self.busyText)) }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return .failure(DownloadFailure(errorDescription: "download: no device connected")) }
@@ -647,7 +645,7 @@ final class AppState: ObservableObject {
 
     func downloadManyToFolder(_ ids: [UInt16], folder: URL) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
@@ -684,7 +682,7 @@ final class AppState: ObservableObject {
     /// otherwise be impossible to delete from the app.
     private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
         guard let library, enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         let ordered = Array(ids)
@@ -722,7 +720,7 @@ final class AppState: ObservableObject {
             return
         }
         guard let library, enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin("delete without copy")
         defer { progress.end(op) }
         do {
@@ -746,7 +744,7 @@ final class AppState: ObservableObject {
 
     func restoreFromBin(_ entry: BinEntry) async {
         guard let library, enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin("restore \(entry.name)")
         defer { progress.end(op) }
         let token = hotplug.currentGeneration()
@@ -773,7 +771,7 @@ final class AppState: ObservableObject {
 
     func backupToFolder(_ folder: URL, scope: DeviceLibrary.Scope = .everything) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
@@ -817,7 +815,7 @@ final class AppState: ObservableObject {
 
     func restore(_ backup: DeviceBackup) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let library else { return }
@@ -875,7 +873,7 @@ final class AppState: ObservableObject {
 
     func commitInlineRename(session: UUID) async -> Bool {
         guard var edit = inlineRename, edit.session == session, inlineRenameIsCurrent(edit),
-              !deviceBusy, !modalOpen, statusDetails.isEmpty else { return false }
+              !modalOpen, statusDetails.isEmpty else { return false }
         switch edit.prepare() {
         case .invalid, .waiting:
             inlineRename = edit
@@ -909,7 +907,7 @@ final class AppState: ObservableObject {
     private func rename(id: UInt16, to name: String, generation: Int) async -> RenameResult {
         guard hotplug.isCurrent(generation), sounds.contains(where: { $0.id == id }) else { return .stale }
         guard let files, enterDevice() else { return .failed("device unavailable or busy") }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         do {
             try await files.setMetadata(fileID: id, ["name": .string(name)])
             guard hotplug.isCurrent(generation) else { return .stale }
@@ -926,7 +924,7 @@ final class AppState: ObservableObject {
 
     func editMetadata(_ item: SoundItem) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         guard let files else { return }
         let token = hotplug.currentGeneration()
         do {
@@ -951,7 +949,7 @@ final class AppState: ObservableObject {
             return
         }
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         guard let files else { return }
         let result = await KokokoLibrary.saveMetadata(files: files, fileID: editing.id, changes: changes)
         guard hotplug.isCurrent(editing.generation), metadataEditing?.id == editing.id else { return }
@@ -968,7 +966,7 @@ final class AppState: ObservableObject {
     /// Move a sound to a different slot number (node id). Fails if occupied.
     func renumber(_ item: SoundItem, to target: UInt16) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         guard let files, let root = soundsRootID else { return }
         let token = hotplug.currentGeneration()
         do {
@@ -989,7 +987,7 @@ final class AppState: ObservableObject {
     /// moved sounds.
     func moveSelection(startingAt start: UInt16) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
@@ -1021,7 +1019,7 @@ final class AppState: ObservableObject {
     /// Drag reorder: move to the target slot; swap with the occupant if taken.
     func moveOrSwap(id: UInt16, toSlot target: UInt16) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         guard let files, let root = soundsRootID, id != target else { return }
         let token = hotplug.currentGeneration()
         do {
@@ -1070,7 +1068,7 @@ final class AppState: ObservableObject {
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
         guard enterDevice() else { return nil }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return nil }
@@ -1094,7 +1092,7 @@ final class AppState: ObservableObject {
     /// Upload .tar project archives; each name carries the target slot (P01..P09).
     func uploadProjects(urls: [URL]) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return }
@@ -1150,7 +1148,7 @@ final class AppState: ObservableObject {
 
     func loadSettings() async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         await fetchSettings()
     }
 
@@ -1228,7 +1226,7 @@ final class AppState: ObservableObject {
 
     func showWaveform(_ item: SoundItem) async {
         guard enterDevice() else { return }
-        defer { deviceBusy = false }
+        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         guard let files else { return }
@@ -1260,15 +1258,27 @@ final class AppState: ObservableObject {
         }
     }
 
-    func audition(_ item: SoundItem) async {
-        guard enterDevice() else { return }
-        defer { deviceBusy = false }
-        guard let files else { return }
-        let token = hotplug.currentGeneration()
-        do {
-            try await files.startPlayback(fileID: item.node.id, offset: 0, length: 1000)
-        } catch {
-            reportOperationError("preview: \(error.localizedDescription)", token: token)
+    func requestAudition(_ item: SoundItem, selected: Set<UInt16>? = nil) {
+        guard isConnected, let files, sounds.contains(where: { $0.id == item.id }),
+              let ownership = deviceAdmission.beginPreview() else { return }
+        let generation = hotplug.currentGeneration()
+        errorLine.start()
+        Task { @MainActor in
+            defer {
+                if self.deviceAdmission.endPreview(ownership) { self.deviceReleased() }
+            }
+            guard self.hotplug.isCurrent(generation), self.sounds.contains(where: { $0.id == item.id }) else { return }
+            if let selected {
+                guard self.selection == selected, self.visibleSounds.contains(where: { $0.id == item.id }),
+                      AppCommand.auditionSelected.isEnabled(tab: self.view, connected: self.isConnected,
+                          busy: self.deviceBusy, selection: selected.count,
+                          modalOpen: self.modalOpen || self.inlineRename != nil || !self.statusDetails.isEmpty) else { return }
+            }
+            do {
+                try await files.startPlayback(fileID: item.node.id, offset: 0, length: 1000)
+            } catch {
+                self.reportOperationError("preview: \(error.localizedDescription)", token: generation)
+            }
         }
     }
 

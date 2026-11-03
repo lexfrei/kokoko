@@ -397,7 +397,7 @@ struct ContentView: View {
 
     private func soundCommands(_ item: SoundItem) -> [RowCommand] {
         [
-            RowCommand(action: .play, help: "play 1s preview on device") { Task { await state.audition(item) } },
+            RowCommand(action: .play, help: "play 1s preview on device") { state.requestAudition(item) },
             RowCommand(action: .download, help: "download as wav") {
                 Task {
                     if case .success(let result) = await state.download(item) {

@@ -41,6 +41,7 @@ struct KokokoCoreChecks {
         dropChecks()
         rowDragChecks()
         soundKeyboardChecks()
+        deviceAdmissionChecks()
         progressChecks()
         binListChecks()
         binFallbackChecks()

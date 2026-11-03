@@ -34,7 +34,7 @@ struct WaveformSheet: View {
             }
             .frame(height: cell.height * (Self.barLines + 2))
             HStack {
-                Button { Task { await state.audition(shown.item) } } label: {
+                Button { state.requestAudition(shown.item) } label: {
                     Text(RowAction.play.glyph)
                         .frame(minWidth: 28, minHeight: minHitHeight)
                         .contentShape(Rectangle())
