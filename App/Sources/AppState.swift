@@ -1286,8 +1286,10 @@ final class AppState: ObservableObject {
         let provider = NSItemProvider()
         provider.registerFileRepresentation(forTypeIdentifier: UTType.wav.identifier,
                                             visibility: .all) { completion in
+            RowDragDiagnostics.event("provider wav-request")
             let progress = Progress(totalUnitCount: 1)
             Task { @MainActor in
+                RowDragDiagnostics.event("provider wav-entered-main")
                 self.rowDrag.end(token)
                 switch await self.download(item) {
                 case .success(let result):
@@ -1296,11 +1298,14 @@ final class AppState: ObservableObject {
                     do {
                         try Data(result.wav).write(to: temp)
                         progress.completedUnitCount = 1
+                        RowDragDiagnostics.event("provider wav-complete success=true")
                         completion(temp, true, nil)
                     } catch {
+                        RowDragDiagnostics.error("provider wav-write", error)
                         completion(nil, false, error)
                     }
                 case .failure(let failure):
+                    RowDragDiagnostics.error("provider wav-download", failure)
                     completion(nil, false, failure)
                 }
             }
@@ -1314,6 +1319,7 @@ final class AppState: ObservableObject {
         }
         provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
                                             visibility: .all) { completion in
+            RowDragDiagnostics.event("provider text-request")
             completion(Data(token.payload.utf8), nil)
             return nil
         }
