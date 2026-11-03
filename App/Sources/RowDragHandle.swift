@@ -20,7 +20,7 @@ struct RowDragHandle: NSViewRepresentable {
         view.state = state
     }
 
-    final class Handle: NSTextField, NSDraggingSource, NSFilePromiseProviderDelegate {
+    final class Handle: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
         var item: SoundItem?
         var state: AppState?
         private var token: RowDragToken?
@@ -28,18 +28,26 @@ struct RowDragHandle: NSViewRepresentable {
 
         init() {
             super.init(frame: .zero)
-            stringValue = "≡"
-            isEditable = false
-            isSelectable = false
-            isBezeled = false
-            drawsBackground = false
-            alignment = .center
-            font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
+        override func draw(_ dirtyRect: NSRect) {
+            let glyph = "≡" as NSString
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                .foregroundColor: NSColor.labelColor,
+            ]
+            let size = glyph.size(withAttributes: attributes)
+            glyph.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2,
+                                  width: size.width, height: size.height), withAttributes: attributes)
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
         override func mouseDown(with event: NSEvent) { startEvent = event }
+
+        override func mouseUp(with event: NSEvent) { startEvent = nil }
 
         override func mouseDragged(with event: NSEvent) {
             guard let startEvent, let item, let state, !state.deviceBusy else { return }
