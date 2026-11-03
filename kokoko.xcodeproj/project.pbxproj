@@ -12,6 +12,7 @@
 		17CCD6726062B0BDAA867022 /* KokokoAudio in Frameworks */ = {isa = PBXBuildFile; productRef = C579E177800EB81009DB221C /* KokokoAudio */; };
 		385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */; };
 		5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */; };
+		61FCDA569539B55FBA87B80A /* RowDragHitChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3EFBD405D7247C9DB492D2 /* RowDragHitChecks.swift */; };
 		73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB5DC19A96DC8E08EC48477 /* AppState.swift */; };
 		7A848765AA2B0CF1B1A3D754 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB95217652E72FB05A4DFE2 /* ContentView.swift */; };
 		9CE8EB30A0EBB8CC82B3B115 /* KokokoLibrary in Frameworks */ = {isa = PBXBuildFile; productRef = 4EB44EC50E31825BF6D2011A /* KokokoLibrary */; };
@@ -30,6 +31,7 @@
 		ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokokoApp.swift; sourceTree = "<group>"; };
 		D2D88E399460FE396DD44C53 /* kokoko */ = {isa = PBXFileReference; lastKnownFileType = folder; name = kokoko; path = .; sourceTree = SOURCE_ROOT; };
 		D76ACB2792656943F3451600 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		EC3EFBD405D7247C9DB492D2 /* RowDragHitChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowDragHitChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,6 +74,7 @@
 				48CBF57372D137143311E4AE /* DataDocument.swift */,
 				ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */,
 				7B716455249BDE32C3D9C37B /* RowDragHandle.swift */,
+				EC3EFBD405D7247C9DB492D2 /* RowDragHitChecks.swift */,
 				D76ACB2792656943F3451600 /* SettingsView.swift */,
 				17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */,
 			);
@@ -158,6 +161,7 @@
 				C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */,
 				5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */,
 				BC3F4128D01D779AD502B47A /* RowDragHandle.swift in Sources */,
+				61FCDA569539B55FBA87B80A /* RowDragHitChecks.swift in Sources */,
 				FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */,
 				385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */,
 			);

@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import Darwin
+#endif
 import KokokoCore
 import KokokoMIDI
 import KokokoAudio
@@ -9,6 +12,11 @@ struct KokokoApp: App {
     @StateObject private var state = AppState()
 
     init() {
+        #if os(macOS) && DEBUG
+        if CommandLine.arguments.contains("--check-drag-hit-target") {
+            exit(RowDragHitChecks.run())
+        }
+        #endif
         #if os(macOS)
         // SPM smoke runs have no app bundle; without this the window stays backgrounded.
         NSApplication.shared.setActivationPolicy(.regular)

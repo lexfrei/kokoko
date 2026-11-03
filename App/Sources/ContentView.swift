@@ -675,21 +675,36 @@ struct SoundRowDrop: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         targeted = nil
-        guard let token = state.rowDrag.claim(target: target.id, busy: state.deviceBusy),
-              let provider = info.itemProviders(for: [.plainText]).first else { return false }
+        RowDragDiagnostics.event("target perform slot=\(target.id)")
+        guard let token = state.rowDrag.claim(target: target.id, busy: state.deviceBusy) else {
+            RowDragDiagnostics.event("target reject=no-claim")
+            return false
+        }
+        guard let provider = info.itemProviders(for: [.plainText]).first else {
+            RowDragDiagnostics.event("target reject=no-text-provider")
+            return false
+        }
         let generation = state.rowDragGeneration
         provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, error in
+            RowDragDiagnostics.event("target text-complete data=\(data != nil) bytes=\(data?.count ?? 0)")
+            RowDragDiagnostics.error("target text", error)
             Task { @MainActor in
-                guard generation == state.rowDragGeneration else { return }
+                guard generation == state.rowDragGeneration else {
+                    RowDragDiagnostics.event("target reject=device-changed")
+                    return
+                }
                 guard let data, let text = String(data: data, encoding: .utf8), token.matches(text) else {
+                    RowDragDiagnostics.event("target reject=payload-mismatch")
                     state.noteError("reorder: \(error?.localizedDescription ?? "invalid drag payload")")
                     return
                 }
                 guard !state.deviceBusy, state.sounds.contains(where: { $0.id == token.id }),
                       state.sounds.contains(where: { $0.id == target.id }) else {
+                    RowDragDiagnostics.event("target reject=busy-or-missing-sound")
                     state.noteError("reorder: device busy or sound no longer available")
                     return
                 }
+                RowDragDiagnostics.event("target request-swap slot=\(target.id)")
                 state.requestSwap(id: token.id, onto: target)
             }
         }
@@ -697,8 +712,13 @@ struct SoundRowDrop: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        guard let token = state.rowDrag.active, token.id != target.id else { return false }
-        return !state.deviceBusy && info.hasItemsConforming(to: [.plainText])
+        guard let token = state.rowDrag.active, token.id != target.id else {
+            RowDragDiagnostics.event("target validate slot=\(target.id) accepted=false reason=context-or-self")
+            return false
+        }
+        let accepted = !state.deviceBusy && info.hasItemsConforming(to: [.plainText])
+        RowDragDiagnostics.event("target validate slot=\(target.id) accepted=\(accepted)")
+        return accepted
     }
 }
 
