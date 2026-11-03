@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
     @State private var targetedRow: UInt16?
+    @FocusState private var focus: SoundFocus?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -50,18 +51,9 @@ struct ContentView: View {
                 await state.scan()
             }
         }
-        .alert("rename", isPresented: renameBinding) {
-            TextField("name", text: $state.renameText)
-                .frame(minWidth: 160)
-            Button("rename") {
-                if let item = state.renameItem {
-                    Task { await state.rename(item, to: state.renameText) }
-                }
-            }
-            Button("cancel", role: .cancel) {}
-        }
         .alert("move to slot", isPresented: renumberBinding) {
             TextField("slot number", text: $renumberText)
+                .focused($focus, equals: .moveSlot)
                 .frame(minWidth: 120)
             Button("move") {
                 if let item = state.renumberItem, let target = UInt16(renumberText) {
@@ -120,13 +112,6 @@ struct ContentView: View {
         Binding(get: { state.binToRemove != nil }, set: { if !$0 { state.binToRemove = nil } })
     }
 
-    private var renameBinding: Binding<Bool> {
-        Binding(
-            get: { state.renameItem != nil },
-            set: { if !$0 { state.renameItem = nil } }
-        )
-    }
-
     private var renumberBinding: Binding<Bool> {
         Binding(
             get: { state.renumberItem != nil },
@@ -181,7 +166,7 @@ struct ContentView: View {
             Text(line.text).lineLimit(1)
                 .accessibilityLabel(line.accessibilityLabel)
         case .failed(let why):
-            FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1)
+            FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1, presentationChanged: state.setStatusDetail)
         }
     }
 
@@ -243,6 +228,7 @@ struct ContentView: View {
     private var soundList: some View {
         VStack(spacing: 0) {
             TextField("filter: name or slot", text: $state.filterText)
+                .focused($focus, equals: .filter)
                 .textFieldStyle(.plain)
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -262,7 +248,26 @@ struct ContentView: View {
                         .help("drag sound to reorder or export")
                     Text(String(format: "%03d", item.node.id))
                         .foregroundStyle(.secondary)
-                    Text(item.displayName)
+                    if let edit = state.inlineRename, edit.id == item.id {
+                        VStack(alignment: .leading, spacing: 2) {
+                            TextField("sound name", text: renameDraft(edit))
+                                .textFieldStyle(.plain)
+                                .focused($focus, equals: .rename(item.id))
+                                .accessibilityLabel("sound name, slot \(item.id)")
+                                .disabled(edit.submitting)
+                                .onSubmit { submitRename(edit) }
+                                .onKeyPress(.escape, phases: .down) { press in
+                                    guard press.modifiers.isEmpty, edit.canCancel else { return .ignored }
+                                    if state.cancelInlineRename() { focus = .soundList }
+                                    return .handled
+                                }
+                            if let error = edit.error {
+                                Text(error).foregroundStyle(Color.errorText)
+                            }
+                        }
+                    } else {
+                        Text(item.displayName)
+                    }
                     Spacer()
                     if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
                                                   deviceBusy: state.deviceBusy) {
@@ -283,17 +288,31 @@ struct ContentView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .focused($focus, equals: .rowMenu(item.id))
                         .disabled(state.deviceBusy)
                         .accessibilityLabel(RowAction.actions.accessibilityLabel)
                     } else {
                         ForEach(commands, id: \.action) { command in
                             rowButton(command.action, help: command.help, perform: command.perform)
+                                .focused($focus, equals: .rowAction(item.id, command.action))
                         }
                     }
                 }
                 .tag(item.id)
                 .onDrop(of: [.plainText], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
             }
+        }
+        .focused($focus, equals: .soundList)
+        .onKeyPress(.space, phases: .down) { press in
+            guard keyboard.target(phase: .down, modified: !press.modifiers.isEmpty) != nil else { return .ignored }
+            state.auditionSelected()
+            return .handled
+        }
+        .onKeyPress(.return, phases: .down) { press in
+            guard let id = keyboard.target(phase: .down, modified: !press.modifiers.isEmpty),
+                  let item = state.visibleSounds.first(where: { $0.id == id }) else { return .ignored }
+            beginRename(item)
+            return .handled
         }
         // Over the list rather than instead of it, so sounds can still be dropped onto it.
         .overlay {
@@ -319,8 +338,45 @@ struct ContentView: View {
             })
         })
         #if os(macOS)
-        .onDeleteCommand(perform: state.isEnabled(.deleteSelected) ? { state.perform(.deleteSelected) } : nil)
+        .onDeleteCommand(perform: focus == .soundList && state.inlineRename == nil && !state.modalOpen
+                         && state.isEnabled(.deleteSelected) ? { state.perform(.deleteSelected) } : nil)
         #endif
+    }
+
+    private var keyboard: SoundKeyboard {
+        var input = SoundKeyboard()
+        input.focus = focus
+        input.tab = state.view
+        input.connected = state.isConnected
+        input.busy = state.deviceBusy
+        input.blocked = state.modalOpen || state.inlineRename != nil || !state.statusDetails.isEmpty
+        input.selection = state.selection
+        input.visible = Set(state.visibleSounds.map(\.id))
+        return input
+    }
+
+    private func beginRename(_ item: SoundItem) {
+        state.beginInlineRename(item)
+        if state.inlineRename?.id == item.id { focus = .rename(item.id) }
+    }
+
+    private func renameDraft(_ edit: InlineRename) -> Binding<String> {
+        Binding(get: { state.inlineRename?.session == edit.session ? state.inlineRename?.draft ?? "" : "" },
+                set: {
+                    if state.inlineRename?.session == edit.session, state.inlineRename?.submitting == false {
+                        state.inlineRename?.draft = $0
+                    }
+                })
+    }
+
+    private func submitRename(_ edit: InlineRename) {
+        Task { @MainActor in
+            if await state.commitInlineRename(session: edit.session) {
+                if focus == nil || focus == .rename(edit.id) || focus == .soundList { focus = .soundList }
+            } else if state.inlineRename?.session == edit.session, focus == nil {
+                focus = .rename(edit.id)
+            }
+        }
     }
 
     /// On a compact-width iPhone or iPad window a sound row cannot show every
@@ -350,7 +406,7 @@ struct ContentView: View {
                     }
                 }
             },
-            RowCommand(action: .rename, help: "rename") { state.renameText = item.displayName; state.renameItem = item },
+            RowCommand(action: .rename, help: "rename") { beginRename(item) },
             RowCommand(action: .renumber, help: "move to another slot") { state.renumberItem = item },
             RowCommand(action: .metadata, help: "edit metadata") { Task { await state.editMetadata(item) } },
             RowCommand(action: .waveform, help: "show waveform") { Task { await state.showWaveform(item) } },
@@ -378,7 +434,7 @@ struct ContentView: View {
             Text(progress)
         }
         if let error = state.lastError {
-            FullTextButton(line: .error(error), text: error, lineLimit: 2)
+            FullTextButton(line: .error(error), text: error, lineLimit: 2, presentationChanged: state.setStatusDetail)
                 .foregroundStyle(Color.errorText)
         }
     }
@@ -388,6 +444,7 @@ struct ContentView: View {
             if !state.selection.isEmpty {
                 Text("sel \(state.selection.count)")
                 TextField("to #", text: $state.bulkMoveStart)
+                    .focused($focus, equals: .bulkMove)
                     .frame(width: 56)
                 barButton(.moveSelection) {
                     if let start = UInt16(state.bulkMoveStart) {
@@ -713,15 +770,25 @@ private struct FullTextButton: View {
     let line: StatusLine
     let text: String
     let lineLimit: Int
+    let presentationChanged: (UUID, Bool) -> Void
     @State private var shown = false
+    @State private var presentationID = UUID()
 
     var body: some View {
-        Button { shown = true } label: {
+        Button {
+            shown = true
+            presentationChanged(presentationID, true)
+        } label: {
             Text(line.text).lineLimit(lineLimit)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(line.accessibilityLabel)
         .help(text)
+        .onChange(of: shown) { _, value in presentationChanged(presentationID, value) }
+        .onDisappear {
+            shown = false
+            presentationChanged(presentationID, false)
+        }
         .popover(isPresented: $shown) {
             ScrollView {
                 Text(text)

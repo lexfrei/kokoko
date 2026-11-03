@@ -10,7 +10,7 @@ public struct Shortcut: Hashable, Sendable {
 }
 
 public enum AppCommand: CaseIterable, Sendable {
-    case addSounds, downloadSelected, deleteSelected
+    case addSounds, downloadSelected, deleteSelected, auditionSelected
     case backupSounds, backupProjects, backupAll, restoreBackup
     case showSounds, showProjects, showSettings, showBin
     case refresh, scan
@@ -20,6 +20,7 @@ public enum AppCommand: CaseIterable, Sendable {
         case .addSounds: "Add Sounds…"
         case .downloadSelected: "Download Selected to Folder…"
         case .deleteSelected: "Delete Selected"
+        case .auditionSelected: "Preview Selected Sound"
         case .backupSounds: "Back Up Sounds…"
         case .backupProjects: "Back Up Projects…"
         case .backupAll: "Back Up All…"
@@ -75,6 +76,8 @@ public enum AppCommand: CaseIterable, Sendable {
             !busy && !connected
         case .refresh:
             !busy && (connected || !tab.needsDevice)
+        case .auditionSelected:
+            connected && !busy && tab == .sounds && selection == 1 && !modalOpen
         case .downloadSelected, .deleteSelected:
             connected && !busy && tab == .sounds && selection > 0
         case .addSounds, .backupSounds, .backupProjects, .backupAll, .restoreBackup:

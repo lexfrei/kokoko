@@ -39,8 +39,15 @@ extension KokokoCoreChecks {
         check(!enabled(tab: .projects, selection: 2).contains(.downloadSelected) && !enabled(tab: .projects, selection: 2).contains(.deleteSelected),
               "commands: the sound selection is not acted on from another tab")
         check(enabled(tab: .bin).contains(.addSounds), "commands: add sounds works from any tab while connected")
-        eq(enabled(), all.filter { ![.downloadSelected, .deleteSelected, .scan].contains($0) },
+        eq(enabled(), all.filter { ![.downloadSelected, .deleteSelected, .auditionSelected, .scan].contains($0) },
            "commands: connected and idle, everything but the selection commands and the scan is available")
+        check(enabled(selection: 1).contains(.auditionSelected), "commands: one selected sound can be previewed")
+        for count in [0, 2] {
+            check(!enabled(selection: count).contains(.auditionSelected), "commands: preview requires exactly one selection")
+        }
+        check(!enabled(selection: 1, modalOpen: true).contains(.auditionSelected), "commands: no preview under a modal")
+        check(!enabled(tab: .projects, selection: 1).contains(.auditionSelected), "commands: preview belongs to Sounds")
+        eq(AppCommand.auditionSelected.shortcut, nil, "commands: preview has no global Space shortcut")
         let panelCommands: [AppCommand] = [.addSounds, .downloadSelected, .backupSounds, .backupProjects, .backupAll, .restoreBackup]
         eq(all.filter(\.opensPanel), panelCommands, "commands: the commands that open a file panel")
         eq(enabled(selection: 1, modalOpen: true).filter(panelCommands.contains), [],
