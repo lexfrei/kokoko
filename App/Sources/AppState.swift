@@ -59,6 +59,8 @@ struct MetadataEditing: Identifiable {
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
 @MainActor
 final class AppState: ObservableObject {
+    @Published var rowDrag = RowDragContext()
+    private(set) var rowDragGeneration = UUID()
     @Published var connection: ConnectionState = .idle
     @Published var sounds: [SoundItem] = [] {
         didSet { pruneSelection() }
@@ -424,6 +426,8 @@ final class AppState: ObservableObject {
         settingsStatus = .notLoaded
         pendingRestore = nil
         pendingSwap = nil
+        rowDrag = RowDragContext()
+        rowDragGeneration = UUID()
         waveformShown = nil
         pcmCache = [:]
     }
@@ -1187,12 +1191,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    func dragProvider(for item: SoundItem) -> NSItemProvider {
+    func dragProvider(for item: SoundItem, token: RowDragToken) -> NSItemProvider {
         let provider = NSItemProvider()
         provider.registerFileRepresentation(forTypeIdentifier: UTType.wav.identifier,
                                             visibility: .all) { completion in
             let progress = Progress(totalUnitCount: 1)
             Task { @MainActor in
+                self.rowDrag.end(token)
                 switch await self.download(item) {
                 case .success(let result):
                     let temp = FileManager.default.temporaryDirectory
@@ -1212,8 +1217,13 @@ final class AppState: ObservableObject {
         }
         provider.suggestedName = item.displayName + ".wav"
         provider.registerDataRepresentation(forTypeIdentifier: UTType.soundRowMove.identifier,
-                                            visibility: .ownProcess) { completion in
-            completion(Data(String(item.id).utf8), nil)
+                                            visibility: .all) { completion in
+            completion(Data(), nil)
+            return nil
+        }
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+                                            visibility: .all) { completion in
+            completion(Data(token.payload.utf8), nil)
             return nil
         }
         return provider
