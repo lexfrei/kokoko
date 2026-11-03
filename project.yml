@@ -15,6 +15,13 @@ targets:
     platform: iOS
     sources:
       - App/Sources
+    info:
+      path: App/Info.plist
+      properties:
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: la.lex.kokoko.sound-row-move
+            UTTypeDescription: kokoko sound row move
+            UTTypeConformsTo: [public.data]
     settings:
       base:
         SDKROOT: auto

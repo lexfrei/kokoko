@@ -83,3 +83,27 @@ public func rowDropMarker(row: UInt16, targeted: UInt16?, dragged: UInt16?, devi
     guard let dragged, dragged != row else { return nil }
     return dropMarker(.soundRow, targeted: targeted == row, deviceBusy: deviceBusy)
 }
+
+public struct DropContents: Equatable, Sendable {
+    public var rowMove: Bool
+    public var audio: Bool
+    public var tarArchive: Bool
+
+    public init(rowMove: Bool = false, audio: Bool = false, tarArchive: Bool = false) {
+        self.rowMove = rowMove
+        self.audio = audio
+        self.tarArchive = tarArchive
+    }
+}
+
+/// Whether `target` takes the drag. A dragged row carries its sound as a
+/// WAV too, for Finder, so the sound list tells it apart by the row move and
+/// refuses it: taking it would upload a copy instead of reordering.
+public func dropAccepted(by target: DropTarget, contents: DropContents, deviceBusy: Bool) -> Bool {
+    guard !deviceBusy else { return false }
+    return switch target {
+    case .soundList: contents.audio && !contents.rowMove
+    case .soundRow: contents.rowMove
+    case .projectList: contents.tarArchive && !contents.rowMove
+    }
+}

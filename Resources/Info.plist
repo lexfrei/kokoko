@@ -20,5 +20,18 @@
 	<string>14.0</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>kokoko sound row move</string>
+			<key>UTTypeIdentifier</key>
+			<string>la.lex.kokoko.sound-row-move</string>
+		</dict>
+	</array>
 </dict>
 </plist>

@@ -59,6 +59,8 @@ struct MetadataEditing: Identifiable {
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
 @MainActor
 final class AppState: ObservableObject {
+    @Published var rowDrag = RowDragContext()
+    private(set) var rowDragGeneration = UUID()
     @Published var connection: ConnectionState = .idle
     @Published var sounds: [SoundItem] = [] {
         didSet { pruneSelection() }
@@ -424,6 +426,8 @@ final class AppState: ObservableObject {
         settingsStatus = .notLoaded
         pendingRestore = nil
         pendingSwap = nil
+        rowDrag = RowDragContext()
+        rowDragGeneration = UUID()
         waveformShown = nil
         pcmCache = [:]
     }
@@ -1187,13 +1191,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Drag-out provider: downloads the sound on demand and hands over a WAV file.
-    func dragProvider(for item: SoundItem) -> NSItemProvider {
+    func dragProvider(for item: SoundItem, token: RowDragToken) -> NSItemProvider {
         let provider = NSItemProvider()
         provider.registerFileRepresentation(forTypeIdentifier: UTType.wav.identifier,
                                             visibility: .all) { completion in
             let progress = Progress(totalUnitCount: 1)
             Task { @MainActor in
+                self.rowDrag.end(token)
                 switch await self.download(item) {
                 case .success(let result):
                     let temp = FileManager.default.temporaryDirectory
@@ -1212,10 +1216,14 @@ final class AppState: ObservableObject {
             return progress
         }
         provider.suggestedName = item.displayName + ".wav"
-        // In-app reorder payload alongside the exported file representation.
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.soundRowMove.identifier,
+                                            visibility: .all) { completion in
+            completion(Data(), nil)
+            return nil
+        }
         provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
                                             visibility: .all) { completion in
-            completion("node:\(item.id)".data(using: .utf8), nil)
+            completion(Data(token.payload.utf8), nil)
             return nil
         }
         return provider

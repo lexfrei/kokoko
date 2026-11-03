@@ -13,11 +13,6 @@ struct ContentView: View {
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
     @State private var targetedRow: UInt16?
-    /// The row being dragged, if a drag started on one. Nothing tells the
-    /// view when a drag to Finder ends, so it stays until the next drag or
-    /// drop; plain text dragged in later still marks no row, since a row
-    /// marks itself only for a drag that also carries a WAV.
-    @State private var draggedRow: UInt16?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -262,11 +257,14 @@ struct ContentView: View {
         return List(selection: $state.selection) {
             ForEach(state.visibleSounds) { item in
                 HStack {
+                    RowDragHandle(item: item, state: state)
+                        .frame(width: 28, height: minHitHeight)
+                        .help("drag sound to reorder or export")
                     Text(String(format: "%03d", item.node.id))
                         .foregroundStyle(.secondary)
                     Text(item.displayName)
                     Spacer()
-                    if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: draggedRow,
+                    if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
                                                   deviceBusy: state.deviceBusy) {
                         Text(marker)
                     } else {
@@ -294,12 +292,7 @@ struct ContentView: View {
                     }
                 }
                 .tag(item.id)
-                .onDrag {
-                    draggedRow = item.id
-                    targetedRow = nil
-                    return state.dragProvider(for: item)
-                }
-                .onDrop(of: [.text], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow, dragged: $draggedRow))
+                .onDrop(of: [.plainText], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
             }
         }
         // Over the list rather than instead of it, so sounds can still be dropped onto it.
@@ -315,9 +308,8 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { dropBanner(.soundList, targeted: soundListTargeted) }
-        .onDrop(of: [.audio], isTargeted: $soundListTargeted) { providers in
-            draggedRow = nil
-            guard !state.deviceBusy else { return false }
+        .onDrop(of: [.audio], delegate: ListDrop(target: .soundList, types: [.audio], state: state,
+                                                 targeted: $soundListTargeted) { providers in
             return receiveDrop(providers, load: { provider, done in
                 _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.audio.identifier) { url, _, error in
                     done(url, error)
@@ -325,7 +317,7 @@ struct ContentView: View {
             }, then: { urls in
                 await state.upload(urls: urls)
             })
-        }
+        })
         #if os(macOS)
         .onDeleteCommand(perform: state.isEnabled(.deleteSelected) ? { state.perform(.deleteSelected) } : nil)
         #endif
@@ -473,7 +465,7 @@ struct ContentView: View {
                             if let result = await state.downloadProject(project) {
                                 state.exportName = result.name
                                 state.exportDocument = DataDocument(data: Data(result.tar),
-                                                                    contentType: UTType(filenameExtension: "tar") ?? .data)
+                                                                    contentType: .tarArchive)
                             }
                         }
                     }
@@ -481,15 +473,16 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { dropBanner(.projectList, targeted: projectListTargeted) }
-        .onDrop(of: [.fileURL], isTargeted: $projectListTargeted) { providers in
-            draggedRow = nil
-            guard !state.deviceBusy else { return false }
+        .onDrop(of: [.tarArchive], delegate: ListDrop(target: .projectList, types: [.tarArchive], state: state,
+                                                      targeted: $projectListTargeted) { providers in
             return receiveDrop(providers, load: { provider, done in
-                _ = provider.loadObject(ofClass: URL.self) { url, error in done(url, error) }
+                _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.tarArchive.identifier) { url, _, error in
+                    done(url, error)
+                }
             }, then: { urls in
                 await state.uploadProjects(urls: urls)
             })
-        }
+        })
     }
 
     /// At the bottom edge rather than the top, so the rows near the pointer do not move.
@@ -572,18 +565,51 @@ struct ContentView: View {
     }
 }
 
+extension UTType {
+    static let soundRowMove = UTType(exportedAs: "la.lex.kokoko.sound-row-move")
+    static let tarArchive = UTType(filenameExtension: "tar") ?? .archive
+}
+
+func dropContents(_ info: DropInfo) -> DropContents {
+    DropContents(rowMove: info.hasItemsConforming(to: [.soundRowMove]), audio: info.hasItemsConforming(to: [.audio]),
+                 tarArchive: info.hasItemsConforming(to: [.tarArchive]))
+}
+
+struct ListDrop: DropDelegate {
+    let target: DropTarget
+    let types: [UTType]
+    let state: AppState
+    @Binding var targeted: Bool
+    let perform: ([NSItemProvider]) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool {
+        dropAccepted(by: target, contents: dropContents(info), deviceBusy: state.deviceBusy)
+    }
+
+    func dropEntered(info: DropInfo) {
+        targeted = validateDrop(info: info)
+    }
+
+    func dropExited(info: DropInfo) {
+        targeted = false
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        targeted = false
+        guard validateDrop(info: info) else { return false }
+        return perform(info.itemProviders(for: types))
+    }
+}
+
 /// Drop target on a sound row: reorders the dragged node into this slot,
 /// swapping when occupied.
 struct SoundRowDrop: DropDelegate {
     let target: SoundItem
     let state: AppState
     @Binding var targeted: UInt16?
-    @Binding var dragged: UInt16?
 
-    /// Only for a dragged row, which carries its sound as a WAV next to the
-    /// reorder text; plain text from elsewhere carries no WAV and marks nothing.
     func dropEntered(info: DropInfo) {
-        if info.hasItemsConforming(to: [.text]), info.hasItemsConforming(to: [.wav]) { targeted = target.id }
+        if validateDrop(info: info) { targeted = target.id }
     }
 
     func dropExited(info: DropInfo) {
@@ -592,22 +618,30 @@ struct SoundRowDrop: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         targeted = nil
-        dragged = nil
-        guard let provider = info.itemProviders(for: [.text]).first else { return false }
-        provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
-            guard let data,
-                  let text = String(data: data, encoding: .utf8),
-                  text.hasPrefix("node:"),
-                  let id = UInt16(text.dropFirst(5)) else { return }
+        guard let token = state.rowDrag.claim(target: target.id, busy: state.deviceBusy),
+              let provider = info.itemProviders(for: [.plainText]).first else { return false }
+        let generation = state.rowDragGeneration
+        provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, error in
             Task { @MainActor in
-                state.requestSwap(id: id, onto: target)
+                guard generation == state.rowDragGeneration else { return }
+                guard let data, let text = String(data: data, encoding: .utf8), token.matches(text) else {
+                    state.noteError("reorder: \(error?.localizedDescription ?? "invalid drag payload")")
+                    return
+                }
+                guard !state.deviceBusy, state.sounds.contains(where: { $0.id == token.id }),
+                      state.sounds.contains(where: { $0.id == target.id }) else {
+                    state.noteError("reorder: device busy or sound no longer available")
+                    return
+                }
+                state.requestSwap(id: token.id, onto: target)
             }
         }
         return true
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        !state.deviceBusy && info.hasItemsConforming(to: [.text])
+        guard let token = state.rowDrag.active, token.id != target.id else { return false }
+        return !state.deviceBusy && info.hasItemsConforming(to: [.plainText])
     }
 }
 
