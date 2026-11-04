@@ -1314,12 +1314,7 @@ final class AppState: ObservableObject {
         provider.suggestedName = item.displayName + ".wav"
         provider.registerDataRepresentation(forTypeIdentifier: UTType.soundRowMove.identifier,
                                             visibility: .all) { completion in
-            completion(Data(), nil)
-            return nil
-        }
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
-                                            visibility: .all) { completion in
-            RowDragDiagnostics.event("provider text-request")
+            RowDragDiagnostics.event("provider move-request")
             completion(Data(token.payload.utf8), nil)
             return nil
         }

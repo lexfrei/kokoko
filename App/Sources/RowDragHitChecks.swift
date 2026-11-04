@@ -74,7 +74,7 @@ enum RowDragHitChecks {
                         Button("play") {}.focused($focus, equals: .button(id))
                     }
                     .tag(id)
-                    .onDrop(of: [.plainText], delegate: Drop())
+                    .onDrop(of: [.soundRowMove], delegate: Drop())
                 }
             }
             .focused($focus, equals: .list)

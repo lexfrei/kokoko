@@ -151,23 +151,22 @@ struct RowDragHandle: NSViewRepresentable {
     }
 }
 
-private final class RowPromise: NSFilePromiseProvider {
+final class RowPromise: NSFilePromiseProvider {
     var token: RowDragToken?
 
     override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
         RowDragDiagnostics.event("promise types-request")
-        return super.writableTypes(for: pasteboard) + [.string, NSPasteboard.PasteboardType(UTType.soundRowMove.identifier)]
+        return super.writableTypes(for: pasteboard) + [NSPasteboard.PasteboardType(UTType.soundRowMove.identifier)]
     }
 
     override func writingOptions(forType type: NSPasteboard.PasteboardType, pasteboard: NSPasteboard) -> NSPasteboard.WritingOptions {
-        if type == .string || type.rawValue == UTType.soundRowMove.identifier { return [] }
+        if type.rawValue == UTType.soundRowMove.identifier { return [] }
         return super.writingOptions(forType: type, pasteboard: pasteboard)
     }
 
     override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
         RowDragDiagnostics.event("promise representation-request type=\(type.rawValue)")
-        if type == .string { return token?.payload }
-        if type.rawValue == UTType.soundRowMove.identifier { return Data() }
+        if type.rawValue == UTType.soundRowMove.identifier { return token.map { Data($0.payload.utf8) } }
         return super.pasteboardPropertyList(forType: type)
     }
 }
