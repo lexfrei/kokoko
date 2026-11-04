@@ -67,6 +67,7 @@ struct KokokoCoreChecks {
         errorLineChecks()
         panelRequestChecks()
         await metadataEditChecks()
+        await inlineMetadataChecks()
         firmwareVersionChecks()
         settingsDisplayChecks()
         settingsValueChecks()
