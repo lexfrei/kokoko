@@ -1,7 +1,13 @@
+import Foundation
+
+public func slotNumberLabel(_ slot: UInt16) -> String {
+    String(format: "Move to slot, current slot %03d", slot)
+}
+
 /// A per-row action, drawn as a bracketed glyph and read by name, since a
 /// screen reader would otherwise spell out the brackets.
 public enum RowAction: CaseIterable, Hashable, Sendable {
-    case play, download, rename, renumber, metadata, delete, restore, removeFromBin, downloadArchive, waveform
+    case play, download, rename, metadata, delete, restore, removeFromBin, downloadArchive, waveform
     /// Opens a row's other actions as a menu where a row is too narrow to show them.
     case actions
 
@@ -10,7 +16,6 @@ public enum RowAction: CaseIterable, Hashable, Sendable {
         case .play: "[>]"
         case .download: "[v]"
         case .rename: "[r]"
-        case .renumber: "[#]"
         case .metadata: "[m]"
         case .delete, .removeFromBin: "[x]"
         case .restore: "[restore]"
@@ -25,7 +30,6 @@ public enum RowAction: CaseIterable, Hashable, Sendable {
         case .play: "Play preview"
         case .download: "Download"
         case .rename: "Rename"
-        case .renumber: "Move to slot"
         case .metadata: "Edit metadata"
         case .delete: "Delete"
         case .restore: "Restore to the device"

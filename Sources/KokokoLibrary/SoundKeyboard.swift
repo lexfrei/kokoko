@@ -1,8 +1,8 @@
 import Foundation
 
 public enum SoundFocus: Hashable, Sendable {
-    case soundList, filter, bulkMove, moveSlot
-    case rename(UInt16), rowAction(UInt16, RowAction), rowMenu(UInt16)
+    case soundList, filter, bulkMove
+    case slotNumber(UInt16), slot(UUID), slotRefresh(UUID), rename(UInt16), rowAction(UInt16, RowAction), rowMenu(UInt16)
 }
 
 public enum SoundKeyPhase: Sendable { case down, repeating, up }
