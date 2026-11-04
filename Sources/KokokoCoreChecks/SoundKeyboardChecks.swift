@@ -14,6 +14,13 @@ extension KokokoCoreChecks {
             other.focus = focus
             eq(other.target(phase: .down, modified: false), nil, "sound keys: fields and native controls keep their keys")
         }
+        let metadataSession = UUID()
+        for focus: SoundFocus in [.metadataField(metadataSession, "sound.bpm"), .metadataSave(metadataSession),
+                                  .metadataCancel(metadataSession), .metadataRetry(metadataSession)] {
+            var other = input
+            other.focus = focus
+            eq(other.target(phase: .down, modified: false), nil, "sound keys: metadata fields and buttons retain native activation")
+        }
         for phase in [SoundKeyPhase.repeating, .up] {
             eq(input.target(phase: phase, modified: false), nil, "sound keys: no repeat or release action")
         }

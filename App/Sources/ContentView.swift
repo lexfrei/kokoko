@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var projectListTargeted = false
     @State private var targetedRow: UInt16?
     @FocusState private var focus: SoundFocus?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -58,9 +59,6 @@ struct ContentView: View {
             Button("cancel", role: .cancel) {}
         } message: { pending in
             Text(pending.prompt)
-        }
-        .sheet(item: $state.metadataEditing) { _ in
-            MetadataSheet(state: state)
         }
         .sheet(item: $state.waveformShown) { shown in
             WaveformSheet(state: state, shown: shown)
@@ -280,6 +278,7 @@ struct ContentView: View {
                         }
                     }
                     slotNote(item)
+                    metadataDetails(item)
                 }
                 .tag(item.id)
                 .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
@@ -321,7 +320,7 @@ struct ContentView: View {
             })
         })
         #if os(macOS)
-        .onDeleteCommand(perform: focus == .soundList && state.inlineRename == nil && state.inlineSlotEdit == nil && !state.modalOpen
+        .onDeleteCommand(perform: focus == .soundList && state.inlineRename == nil && state.inlineSlotEdit == nil && state.metadataEditing == nil && !state.modalOpen
                          && state.isEnabled(.deleteSelected) ? { state.perform(.deleteSelected) } : nil)
         #endif
     }
@@ -397,13 +396,137 @@ struct ContentView: View {
         }
     }
 
+    private var metadataFieldsStacked: Bool { collapsesRowActions || dynamicTypeSize.isAccessibilitySize }
+
+    @ViewBuilder private func metadataDetails(_ item: SoundItem) -> some View {
+        if let edit = state.metadataEditing, edit.id == item.id {
+            VStack(alignment: .leading, spacing: 8) {
+                Divider()
+                if edit.phase == .loading { Text("reading metadata...").foregroundStyle(.secondary) }
+                if let form = edit.form {
+                    ForEach(MetadataEditForm.keys, id: \.self) { key in
+                        VStack(alignment: .leading, spacing: 2) {
+                            let layout = metadataFieldsStacked
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                                : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+                            layout {
+                                if metadataFieldsStacked {
+                                    Text(key)
+                                } else {
+                                    Text(key).frame(width: 160, alignment: .leading)
+                                }
+                                TextField("", text: metadataDraft(key, edit: edit))
+                                    .textFieldStyle(.plain)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .frame(minHeight: minHitHeight)
+                                    .focused($focus, equals: .metadataField(edit.session, key))
+                                    .accessibilityLabel("\(key), \(edit.name), slot \(edit.id)")
+                                    .disabled(edit.phase != .ready || state.deviceBusy)
+                                    .onSubmit { submitMetadata(session: edit.session) }
+                            }
+                            if let error = form.error(for: key) { Text(error).foregroundStyle(Color.errorText) }
+                        }
+                    }
+                }
+                if let note = edit.note {
+                    Text(note).foregroundStyle(Color.errorText)
+                    if edit.form != nil {
+                        Text("cancel closes this draft; it does not undo device writes").foregroundStyle(.secondary)
+                    }
+                }
+                if edit.needsReadback { Text("save reads the device before retrying").foregroundStyle(.secondary) }
+                if edit.phase == .saving { Text("saving metadata...").foregroundStyle(.secondary) }
+                HStack {
+                    if edit.phase == .loadFailed {
+                        barButton(.retry) { retryMetadata(session: edit.session) }
+                            .focused($focus, equals: .metadataRetry(edit.session))
+                            .disabled(state.deviceBusy)
+                    }
+                    if edit.form != nil {
+                        barButton(.saveMetadata) { submitMetadata(session: edit.session) }
+                            .focused($focus, equals: .metadataSave(edit.session))
+                            .disabled(!edit.canSubmit || state.deviceBusy)
+                    }
+                    barButton(.cancelMetadata) { cancelMetadata(session: edit.session) }
+                        .focused($focus, equals: .metadataCancel(edit.session))
+                        .disabled(!edit.canCancel)
+                }
+            }
+            .onKeyPress(.escape, phases: .down) { press in
+                guard press.modifiers.isEmpty, state.metadataEditing?.session == edit.session,
+                      state.metadataEditing?.canCancel == true else { return .ignored }
+                cancelMetadata(session: edit.session)
+                return .handled
+            }
+        }
+    }
+
+    private func metadataDraft(_ key: String, edit: InlineMetadataEdit) -> Binding<String> {
+        Binding(get: { state.metadataEditing?.session == edit.session ? state.metadataEditing?.form?.text[key] ?? "" : "" },
+                set: {
+                    if state.metadataEditing?.session == edit.session, state.metadataEditing?.phase == .ready {
+                        state.metadataEditing?.form?.text[key] = $0
+                    }
+                })
+    }
+
+    private func beginMetadata(_ item: SoundItem) {
+        let previous = focus
+        Task { @MainActor in
+            if let session = await state.editMetadata(item) { focusMetadataIfReady(session: session, previous: previous) }
+        }
+    }
+
+    private func retryMetadata(session: UUID) {
+        let previous = focus
+        Task { @MainActor in
+            await state.retryMetadata(session: session)
+            focusMetadataIfReady(session: session, previous: previous)
+        }
+    }
+
+    private func focusMetadataIfReady(session: UUID, previous: SoundFocus?) {
+        guard state.metadataEditing?.session == session, state.metadataEditing?.phase == .ready,
+              focus == nil || focus == previous, let key = MetadataEditForm.keys.first else { return }
+        focus = .metadataField(session, key)
+    }
+
+    private func metadataOwnsFocus(_ value: SoundFocus?, session: UUID) -> Bool {
+        guard let value else { return false }
+        switch value {
+        case .metadataField(let id, _), .metadataSave(let id), .metadataCancel(let id), .metadataRetry(let id):
+            return id == session
+        default: return false
+        }
+    }
+
+    private func submitMetadata(session: UUID) {
+        guard state.metadataEditing?.session == session, state.metadataEditing?.canSubmit == true else { return }
+        let previous = focus
+        Task { @MainActor in
+            if await state.saveMetadata(session: session) {
+                if focus == nil || metadataOwnsFocus(focus, session: session) { focus = .soundList }
+            } else if state.metadataEditing?.session == session, focus == nil {
+                if metadataOwnsFocus(previous, session: session) {
+                    focus = previous
+                } else {
+                    focusMetadataIfReady(session: session, previous: nil)
+                }
+            }
+        }
+    }
+
+    private func cancelMetadata(session: UUID) {
+        if state.cancelMetadata(session: session) { focus = .soundList }
+    }
+
     private var keyboard: SoundKeyboard {
         var input = SoundKeyboard()
         input.focus = focus
         input.tab = state.view
         input.connected = state.isConnected
         input.busy = state.deviceBusy
-        input.blocked = state.modalOpen || state.inlineRename != nil || state.inlineSlotEdit != nil || !state.statusDetails.isEmpty
+        input.blocked = state.modalOpen || state.inlineRename != nil || state.inlineSlotEdit != nil || state.metadataEditing != nil || !state.statusDetails.isEmpty
         input.selection = state.selection
         input.visible = Set(state.visibleSounds.map(\.id))
         return input
@@ -461,7 +584,7 @@ struct ContentView: View {
                 }
             },
             RowCommand(action: .rename, help: "rename") { beginRename(item) },
-            RowCommand(action: .metadata, help: "edit metadata") { Task { await state.editMetadata(item) } },
+            RowCommand(action: .metadata, help: "edit metadata") { beginMetadata(item) },
             RowCommand(action: .waveform, help: "show waveform") { Task { await state.showWaveform(item) } },
             RowCommand(action: .delete, help: "delete from device") { Task { await state.delete(item) } },
         ]
@@ -772,48 +895,6 @@ struct SoundRowDrop: DropDelegate {
         let accepted = !state.deviceBusy && info.hasItemsConforming(to: [rowMoveTextType])
         RowDragDiagnostics.event("target validate slot=\(target.id) accepted=\(accepted)")
         return accepted
-    }
-}
-
-struct MetadataSheet: View {
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        if let editing = state.metadataEditing {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("metadata: \(editing.name)")
-                    .font(.system(.headline, design: .monospaced))
-                Grid(alignment: .leading) {
-                    ForEach(MetadataEditForm.keys, id: \.self) { key in
-                        GridRow {
-                            Text(key)
-                            TextField("", text: field(key))
-                                .frame(minWidth: 120)
-                            Text(editing.form.error(for: key) ?? "")
-                                .foregroundStyle(Color.errorText)
-                        }
-                    }
-                }
-                if let note = editing.note {
-                    Text(note)
-                        .foregroundStyle(Color.errorText)
-                }
-                HStack {
-                    Button("cancel") { state.metadataEditing = nil }
-                        .disabled(state.deviceBusy)
-                    Button("save") { Task { await state.saveMetadata() } }
-                        .disabled(state.deviceBusy || editing.form.changes == nil)
-                }
-            }
-            .font(.system(.body, design: .monospaced))
-            .padding()
-            .interactiveDismissDisabled(state.deviceBusy)
-        }
-    }
-
-    private func field(_ key: String) -> Binding<String> {
-        Binding(get: { state.metadataEditing?.form.text[key] ?? "" },
-                set: { state.metadataEditing?.form.text[key] = $0 })
     }
 }
 

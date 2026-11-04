@@ -48,14 +48,6 @@ struct PendingSwap {
     let summary: SwapSummary
 }
 
-struct MetadataEditing: Identifiable {
-    let id: UInt16
-    let name: String
-    let generation: Int
-    var form: MetadataEditForm
-    var note: String?
-}
-
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
 @MainActor
 final class AppState: ObservableObject {
@@ -75,6 +67,7 @@ final class AppState: ObservableObject {
             if filterText != oldValue {
                 inlineRename = nil
                 inlineSlotEdit = nil
+                metadataEditing = nil
             }
             pruneSelection()
         }
@@ -106,7 +99,7 @@ final class AppState: ObservableObject {
     @Published var inlineSlotEdit: InlineSlotEdit?
     @Published var inlineRename: InlineRename?
     @Published var statusDetails = Set<UUID>()
-    @Published var metadataEditing: MetadataEditing?
+    @Published var metadataEditing: InlineMetadataEdit?
     @Published var firmwareStatus: FirmwareStatus?
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
@@ -148,6 +141,7 @@ final class AppState: ObservableObject {
     /// through a swap still leaves each selected sound selected where it is.
     private func move(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                       root: UInt16) async throws {
+        invalidateMetadataIntent(affecting: [id, target])
         try await files.move(fileID: id, toParent: root, newFileID: target)
         selection = remapSelection(selection, moves: [(from: id, to: target)])
     }
@@ -324,13 +318,13 @@ final class AppState: ObservableObject {
     /// A file panel, alert, dialog or sheet is up over the window.
     var modalOpen: Bool {
         showImporter || picker != .none || exportDocument != nil
-            || unbinnedDelete != nil || metadataEditing != nil || binToRemove != nil
+            || unbinnedDelete != nil || binToRemove != nil
             || pendingRestore != nil || pendingSwap != nil || waveformShown != nil
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
         command.isEnabled(tab: view, connected: isConnected, busy: deviceOccupied, selection: selection.count,
-                          modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || inlineSlotEdit != nil || !statusDetails.isEmpty)))
+                          modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || inlineSlotEdit != nil || metadataEditing != nil || !statusDetails.isEmpty)))
     }
 
     func perform(_ command: AppCommand) {
@@ -597,6 +591,7 @@ final class AppState: ObservableObject {
                 let prepared = try prepareForUpload(fileData: data, fileName: url.lastPathComponent)
                 let name = normalizedDeviceFileName(url.lastPathComponent)
                 progress.update(op, "send \(name)")
+                invalidateMetadataIntent()
                 _ = try await uploadSound(files: files, parent: root, name: name, pcm: prepared.pcm,
                                           metadata: prepared.metadata) { done, total in
                     Task { @MainActor in
@@ -693,6 +688,7 @@ final class AppState: ObservableObject {
     /// otherwise be impossible to delete from the app.
     private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
         guard let library, enterDevice() else { return }
+        invalidateMetadataIntent(affecting: ids)
         defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
@@ -731,6 +727,7 @@ final class AppState: ObservableObject {
             return
         }
         guard let library, enterDevice() else { return }
+        invalidateMetadataIntent(affecting: ids)
         defer { leaveDevice() }
         let op = progress.begin("delete without copy")
         defer { progress.end(op) }
@@ -755,6 +752,7 @@ final class AppState: ObservableObject {
 
     func restoreFromBin(_ entry: BinEntry) async {
         guard let library, enterDevice() else { return }
+        invalidateMetadataIntent()
         defer { leaveDevice() }
         let op = progress.begin("restore \(entry.name)")
         defer { progress.end(op) }
@@ -833,6 +831,7 @@ final class AppState: ObservableObject {
         let token = hotplug.currentGeneration()
         do {
             progress.update(op, "restore...")
+            invalidateMetadataIntent()
             let report = try await library.restore(backup) { [weak self] name in
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
             }
@@ -869,12 +868,29 @@ final class AppState: ObservableObject {
                        generation: hotplug.currentGeneration())
     }
 
+    private func metadataIsCurrent(_ edit: InlineMetadataEdit) -> Bool {
+        edit.isCurrent(selection: selection, visible: Set(visibleSounds.map(\.id)), tab: view,
+                       generation: hotplug.currentGeneration())
+    }
+
+    private func invalidateMetadataIntent(affecting ids: Set<UInt16>? = nil, listingMayChange: Bool = true) {
+        if listingMayChange { soundsListed = false }
+        guard let edit = metadataEditing else { return }
+        if let ids, !ids.contains(edit.id) { return }
+        metadataEditing = nil
+    }
+
     private func invalidateInlineEditors() {
         if let edit = inlineRename, !inlineRenameIsCurrent(edit) { inlineRename = nil }
         if let edit = inlineSlotEdit, !inlineSlotIsCurrent(edit) { inlineSlotEdit = nil }
+        if let edit = metadataEditing, !metadataIsCurrent(edit) { metadataEditing = nil }
     }
 
     func beginInlineRename(_ item: SoundItem) {
+        guard metadataEditing == nil else {
+            noteError("save or cancel the metadata edit first")
+            return
+        }
         guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
               visibleSounds.contains(where: { $0.id == item.id }), inlineRename?.submitting != true,
               inlineSlotEdit?.submitting != true else { return }
@@ -928,6 +944,7 @@ final class AppState: ObservableObject {
         guard let files, enterDevice() else { return .failed("device unavailable or busy") }
         defer { leaveDevice() }
         do {
+            invalidateMetadataIntent(affecting: [id])
             try await files.setMetadata(fileID: id, ["name": .string(name)])
             guard hotplug.isCurrent(generation) else { return .stale }
             let reloaded = await reload()
@@ -941,48 +958,111 @@ final class AppState: ObservableObject {
 
     // MARK: - metadata
 
-    func editMetadata(_ item: SoundItem) async {
-        guard enterDevice() else { return }
+    func editMetadata(_ item: SoundItem) async -> UUID? {
+        if let edit = metadataEditing {
+            if edit.id == item.id, metadataIsCurrent(edit) { return edit.session }
+            noteError("save or cancel the metadata edit first")
+            return nil
+        }
+        guard inlineRename == nil, inlineSlotEdit == nil else {
+            noteError("finish the current inline edit first")
+            return nil
+        }
+        guard soundsListed else {
+            noteError("refresh the sound list before editing metadata")
+            return nil
+        }
+        guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
+              visibleSounds.contains(where: { $0.id == item.id }), let files, enterDevice() else { return nil }
         defer { leaveDevice() }
-        guard let files else { return }
-        let token = hotplug.currentGeneration()
+        selection = [item.id]
+        let edit = InlineMetadataEdit(id: item.id, name: item.displayName, generation: hotplug.currentGeneration())
+        metadataEditing = edit
+        await readMetadata(edit, files: files)
+        return metadataEditing?.session == edit.session ? edit.session : nil
+    }
+
+    private func readMetadata(_ edit: InlineMetadataEdit, files: DeviceFileService) async {
+        guard let request = edit.request else { return }
+        let op = progress.begin("read metadata")
+        defer { progress.end(op) }
         do {
-            let metadata = try await files.getMetadata(fileID: item.node.id)
-            guard hotplug.isCurrent(token) else { return }
-            metadataEditing = MetadataEditing(id: item.node.id, name: item.displayName, generation: token,
-                                              form: MetadataEditForm(metadata: metadata))
+            let metadata = try await files.getMetadata(fileID: edit.id)
+            guard hotplug.isCurrent(edit.generation), var current = metadataEditing,
+                  current.session == edit.session, metadataIsCurrent(current),
+                  current.loaded(request: request, metadata: metadata, error: nil) else { return }
+            metadataEditing = current
         } catch {
-            reportOperationError("metadata: \(error.localizedDescription)", token: token)
+            guard hotplug.isCurrent(edit.generation), var current = metadataEditing,
+                  current.session == edit.session, metadataIsCurrent(current),
+                  current.loaded(request: request, metadata: nil, error: error.localizedDescription) else { return }
+            metadataEditing = current
+            reportOperationError("metadata: \(error.localizedDescription)", token: edit.generation)
         }
     }
 
-    func saveMetadata() async {
-        guard let editing = metadataEditing, let changes = editing.form.changes else { return }
-        guard hotplug.isCurrent(editing.generation) else {
-            metadataEditing = nil
-            noteError("metadata: the device changed, nothing was written")
-            return
-        }
-        guard !changes.isEmpty else {
-            metadataEditing = nil
-            return
-        }
-        guard enterDevice() else { return }
+    func retryMetadata(session: UUID) async {
+        guard var edit = metadataEditing, edit.session == session, metadataIsCurrent(edit),
+              !modalOpen, statusDetails.isEmpty, edit.beginLoad() != nil, let files, enterDevice() else { return }
+        metadataEditing = edit
         defer { leaveDevice() }
-        guard let files else { return }
-        let result = await KokokoLibrary.saveMetadata(files: files, fileID: editing.id, changes: changes)
-        guard hotplug.isCurrent(editing.generation), metadataEditing?.id == editing.id else { return }
-        guard let message = result.message else {
+        await readMetadata(edit, files: files)
+    }
+
+    func cancelMetadata(session: UUID) -> Bool {
+        guard let edit = metadataEditing, edit.session == session, edit.canCancel else { return false }
+        let restore = metadataIsCurrent(edit)
+        metadataEditing = nil
+        return restore
+    }
+
+    func saveMetadata(session: UUID) async -> Bool {
+        guard var edit = metadataEditing, edit.session == session, metadataIsCurrent(edit),
+              !modalOpen, statusDetails.isEmpty else { return false }
+        switch edit.prepareSave() {
+        case .invalid, .waiting:
+            return false
+        case .unchanged:
             metadataEditing = nil
-            return
+            return true
+        case .write(let request, let form, let refreshBeforeWrite):
+            metadataEditing = edit
+            guard let files, enterDevice() else {
+                _ = edit.finished(request: request, result: .failed(form: form, message: "device unavailable or busy",
+                                                                   needsReadback: refreshBeforeWrite))
+                metadataEditing = edit
+                return false
+            }
+            defer { leaveDevice() }
+            let op = progress.begin("save metadata")
+            defer { progress.end(op) }
+            let result = await saveMetadataDraft(files: files, fileID: edit.id, form: form,
+                                                 refreshBeforeWrite: refreshBeforeWrite,
+                                                 isCurrent: { await MainActor.run {
+                guard let current = self.metadataEditing, current.session == session, current.request == request,
+                      current.phase == .saving else { return false }
+                return self.metadataIsCurrent(current) && !self.modalOpen && self.statusDetails.isEmpty
+            } })
+            guard hotplug.isCurrent(edit.generation) else { return false }
+            if case .failed(_, let message, _) = result { reportOperationError("metadata: \(message)", token: edit.generation) }
+            guard var current = metadataEditing, current.session == session, metadataIsCurrent(current),
+                  current.finished(request: request, result: result) else { return false }
+            if case .saved = result {
+                metadataEditing = nil
+                return true
+            }
+            metadataEditing = current
+            return false
         }
-        if let current = result.current { metadataEditing?.form = MetadataEditForm(metadata: current) }
-        metadataEditing?.note = message
     }
 
     // MARK: - renumber
 
     func beginInlineSlot(_ item: SoundItem) {
+        guard metadataEditing == nil else {
+            noteError("save or cancel the metadata edit first")
+            return
+        }
         guard soundsListed, inlineSlotEdit?.needsRefresh != true else {
             noteError("refresh the sound list before starting another slot edit")
             return
@@ -1021,13 +1101,16 @@ final class AppState: ObservableObject {
             }
             defer { leaveDevice() }
             let generation = edit.generation
+            invalidateMetadataIntent(affecting: [from, to], listingMayChange: false)
             let result = await moveToFreeSlot(files: files, root: root, from: from, to: to,
                                               isCurrent: { await MainActor.run { self.hotplug.isCurrent(generation) } })
             guard hotplug.isCurrent(generation) else { return false }
             let at: UInt16?
             var message: String?
             switch result {
-            case .moved: at = to
+            case .moved:
+                soundsListed = false
+                at = to
             case .unchanged: at = from
             case .refused(let reason):
                 if var current = inlineSlotEdit, current.session == session {
@@ -1037,6 +1120,7 @@ final class AppState: ObservableObject {
                 reportOperationError("move to slot: \(reason)", token: generation)
                 return false
             case .failed(let reason, let location):
+                soundsListed = false
                 at = location
                 message = reason
             case .missing:
@@ -1249,6 +1333,7 @@ final class AppState: ObservableObject {
             throw ProjectUploadError(errorDescription: "no project slot P\(slot) on device")
         }
         progress.update(op, "send P\(slot)")
+        invalidateMetadataIntent()
         _ = try await files.put(parentID: projectsRoot, name: slot, data: data,
                                 fileID: parent.id, capabilities: [FileCapability.read],
                                 progress: { [weak self] done, total in

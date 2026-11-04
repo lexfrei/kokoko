@@ -40,6 +40,10 @@ extension KokokoCoreChecks {
         for line in [StatusLine.error("upload: kick.wav: storage full"), .connectionFailed("no device found")] + connected {
             check(labelHasEveryWord(line.text, line.accessibilityLabel), "status: \(line.text) is in its label \"\(line.accessibilityLabel)\"")
         }
+        eq(BarAction.saveMetadata.text, "[ save ]", "metadata: Save keeps the bracketed text style")
+        eq(BarAction.cancelMetadata.text, "[ cancel ]", "metadata: Cancel keeps the bracketed text style")
+        eq(BarAction.saveMetadata.accessibilityLabel, "Save metadata", "metadata: Save is named for its task")
+        eq(BarAction.cancelMetadata.accessibilityLabel, "Cancel metadata edits", "metadata: Cancel does not claim to undo SET")
         eq(BarAction.addSounds.text, "[ + add sounds ]", "bar: add sounds keeps its text")
         eq(BarAction.deleteSelection.accessibilityLabel, "Delete selected", "bar: the footer [ x ] is read as Delete selected")
         eq(BarAction.downloadSelection.accessibilityLabel, "Download to folder", "bar: the footer [ v to folder ] is read as Download to folder")

@@ -47,10 +47,11 @@ public func tabTitle(_ name: String, selected: Bool) -> String {
     selected ? "[*\(name)*]" : "[ \(name) ]"
 }
 
-/// A bracketed text button outside the rows.
+/// A bracketed text button for bars and inline editors.
 public enum BarAction: CaseIterable, Sendable {
     case retry, moveSelection, downloadSelection, deleteSelection
     case addSounds, backupSounds, backupProjects, backupAll, restoreBackup, refresh, close
+    case saveMetadata, cancelMetadata
 
     public var text: String {
         switch self {
@@ -65,6 +66,8 @@ public enum BarAction: CaseIterable, Sendable {
         case .restoreBackup: "[ restore backup ]"
         case .refresh: "[ refresh ]"
         case .close: "[ close ]"
+        case .saveMetadata: "[ save ]"
+        case .cancelMetadata: "[ cancel ]"
         }
     }
 
@@ -81,6 +84,8 @@ public enum BarAction: CaseIterable, Sendable {
         case .restoreBackup: "Restore backup"
         case .refresh: "Refresh"
         case .close: "Close"
+        case .saveMetadata: "Save metadata"
+        case .cancelMetadata: "Cancel metadata edits"
         }
     }
 }

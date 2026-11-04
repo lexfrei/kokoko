@@ -54,7 +54,7 @@ enum RowDragHitChecks {
         func updateNSView(_ view: RowDragHandle.Handle, context: Context) {}
     }
 
-    private enum Focus: Hashable { case list, button(Int), slot(Int) }
+    private enum Focus: Hashable { case list, button(Int), slot(Int), metadata(Int) }
 
     private struct Drop: DropDelegate {
         func performDrop(info: DropInfo) -> Bool { false }
@@ -63,6 +63,7 @@ enum RowDragHitChecks {
     private struct Rows: View {
         @State var selected: Set<Int>
         @State private var slot = "0"
+        @State private var bpm = "120"
         @FocusState private var focus: Focus?
 
         var body: some View {
@@ -84,6 +85,15 @@ enum RowDragHitChecks {
                             Text("row \(id)")
                             Spacer()
                             Button("play") {}.focused($focus, equals: .button(id))
+                        }
+                        if selected == [id] {
+                            Divider()
+                            HStack {
+                                Text("sound.bpm")
+                                TextField("", text: $bpm)
+                                    .textFieldStyle(.plain)
+                                    .focused($focus, equals: .metadata(id))
+                            }
                         }
                     }
                     .tag(id)
