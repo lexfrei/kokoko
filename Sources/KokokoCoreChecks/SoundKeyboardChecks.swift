@@ -1,3 +1,4 @@
+import Foundation
 import KokokoLibrary
 
 extension KokokoCoreChecks {
@@ -8,7 +9,7 @@ extension KokokoCoreChecks {
         input.selection = [12]
         input.visible = [12, 13]
         eq(input.target(phase: .down, modified: false), 12, "sound keys: a plain key-down targets the selected visible row")
-        for focus: SoundFocus? in [nil, .filter, .bulkMove, .moveSlot, .rename(12), .rowAction(12, .play), .rowMenu(12)] {
+        for focus: SoundFocus? in [nil, .filter, .bulkMove, .slot(UUID()), .slotRefresh(UUID()), .slotNumber(12), .rename(12), .rowAction(12, .play), .rowMenu(12)] {
             var other = input
             other.focus = focus
             eq(other.target(phase: .down, modified: false), nil, "sound keys: fields and native controls keep their keys")

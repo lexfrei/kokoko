@@ -54,7 +54,7 @@ enum RowDragHitChecks {
         func updateNSView(_ view: RowDragHandle.Handle, context: Context) {}
     }
 
-    private enum Focus: Hashable { case list, button(Int) }
+    private enum Focus: Hashable { case list, button(Int), slot(Int) }
 
     private struct Drop: DropDelegate {
         func performDrop(info: DropInfo) -> Bool { false }
@@ -62,16 +62,29 @@ enum RowDragHitChecks {
 
     private struct Rows: View {
         @State var selected: Set<Int>
+        @State private var slot = "0"
         @FocusState private var focus: Focus?
 
         var body: some View {
             List(selection: $selected) {
                 ForEach(0..<3) { id in
-                    HStack {
-                        Fixture().frame(width: 28, height: 28)
-                        Text("row \(id)")
-                        Spacer()
-                        Button("play") {}.focused($focus, equals: .button(id))
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Fixture().frame(width: 28, height: 28)
+                            if selected == [id] {
+                                TextField("slot", text: $slot)
+                                    .textFieldStyle(.plain)
+                                    .frame(width: 64)
+                                    .focused($focus, equals: .slot(id))
+                            } else {
+                                Button("000") {}.buttonStyle(.plain)
+                                    .frame(width: 64)
+                                    .focused($focus, equals: .slot(id))
+                            }
+                            Text("row \(id)")
+                            Spacer()
+                            Button("play") {}.focused($focus, equals: .button(id))
+                        }
                     }
                     .tag(id)
                     .onDrop(of: [rowMoveTextType], delegate: Drop())

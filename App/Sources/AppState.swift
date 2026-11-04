@@ -66,14 +66,16 @@ final class AppState: ObservableObject {
         didSet { pruneSelection() }
     }
     @Published var selection = Set<UInt16>() {
-        didSet { invalidateInlineRename() }
+        didSet { invalidateInlineEditors() }
     }
-    /// Whether `sounds` came from a listing that succeeded on this device;
-    /// before that an empty list says nothing about the device.
+    /// Old row addresses are unusable after an unrefreshed move or a missing source.
     @Published private(set) var soundsListed = false
     @Published var filterText = "" {
         didSet {
-            if filterText != oldValue { inlineRename = nil }
+            if filterText != oldValue {
+                inlineRename = nil
+                inlineSlotEdit = nil
+            }
             pruneSelection()
         }
     }
@@ -101,7 +103,7 @@ final class AppState: ObservableObject {
     /// reading `picker` there sends the chosen folder to upload, and the
     /// panel's own settings would switch to upload's while it closes.
     @Published private(set) var panel = PanelRequest()
-    @Published var renumberItem: SoundItem?
+    @Published var inlineSlotEdit: InlineSlotEdit?
     @Published var inlineRename: InlineRename?
     @Published var statusDetails = Set<UUID>()
     @Published var metadataEditing: MetadataEditing?
@@ -110,7 +112,7 @@ final class AppState: ObservableObject {
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsStatus: SettingsStatus = .notLoaded
     @Published var view: HeaderTab = .sounds {
-        didSet { invalidateInlineRename() }
+        didSet { invalidateInlineEditors() }
     }
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
@@ -138,7 +140,7 @@ final class AppState: ObservableObject {
                                       items: sounds.map { (slot: $0.id, name: $0.displayName) },
                                       query: filterText)
         if pruned != selection { selection = pruned }
-        invalidateInlineRename()
+        invalidateInlineEditors()
     }
 
     /// Selection is keyed by slot, so every slot change on the device must
@@ -321,14 +323,14 @@ final class AppState: ObservableObject {
 
     /// A file panel, alert, dialog or sheet is up over the window.
     var modalOpen: Bool {
-        showImporter || picker != .none || exportDocument != nil || renumberItem != nil
+        showImporter || picker != .none || exportDocument != nil
             || unbinnedDelete != nil || metadataEditing != nil || binToRemove != nil
             || pendingRestore != nil || pendingSwap != nil || waveformShown != nil
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
         command.isEnabled(tab: view, connected: isConnected, busy: deviceOccupied, selection: selection.count,
-                          modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || !statusDetails.isEmpty)))
+                          modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || inlineSlotEdit != nil || !statusDetails.isEmpty)))
     }
 
     func perform(_ command: AppCommand) {
@@ -369,6 +371,10 @@ final class AppState: ObservableObject {
     }
 
     func refreshSounds() async {
+        if let edit = inlineSlotEdit, edit.needsRefresh {
+            await refreshInlineSlot(session: edit.session)
+            return
+        }
         guard enterDevice() else { return }
         defer { leaveDevice() }
         await reload()
@@ -441,7 +447,7 @@ final class AppState: ObservableObject {
         selection = []
         unbinnedDelete = nil
         inlineRename = nil
-        renumberItem = nil
+        inlineSlotEdit = nil
         metadataEditing = nil
         picker = .none
         firmwareStatus = nil
@@ -543,6 +549,11 @@ final class AppState: ObservableObject {
                 items.append(SoundItem(node: node, displayName: display))
             }
             guard hotplug.isCurrent(token) else { return false }
+            if var edit = inlineSlotEdit, edit.submitting, edit.generation == token {
+                let carried = edit.reconcile(occupied: Set(items.map(\.id)))
+                inlineSlotEdit = edit
+                selection = remapSelection(selection, moves: carried)
+            }
             sounds = items
             soundsListed = true
             errorLine.clear()
@@ -853,13 +864,21 @@ final class AppState: ObservableObject {
                        generation: hotplug.currentGeneration())
     }
 
-    private func invalidateInlineRename() {
+    private func inlineSlotIsCurrent(_ edit: InlineSlotEdit) -> Bool {
+        edit.isCurrent(selection: selection, visible: Set(visibleSounds.map(\.id)), tab: view,
+                       generation: hotplug.currentGeneration())
+    }
+
+    private func invalidateInlineEditors() {
         if let edit = inlineRename, !inlineRenameIsCurrent(edit) { inlineRename = nil }
+        if let edit = inlineSlotEdit, !inlineSlotIsCurrent(edit) { inlineSlotEdit = nil }
     }
 
     func beginInlineRename(_ item: SoundItem) {
         guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
-              visibleSounds.contains(where: { $0.id == item.id }), inlineRename?.submitting != true else { return }
+              visibleSounds.contains(where: { $0.id == item.id }), inlineRename?.submitting != true,
+              inlineSlotEdit?.submitting != true else { return }
+        inlineSlotEdit = nil
         selection = [item.id]
         inlineRename = InlineRename(id: item.id, generation: hotplug.currentGeneration(), name: item.displayName)
     }
@@ -963,23 +982,117 @@ final class AppState: ObservableObject {
 
     // MARK: - renumber
 
-    /// Move a sound to a different slot number (node id). Fails if occupied.
-    func renumber(_ item: SoundItem, to target: UInt16) async {
-        guard enterDevice() else { return }
-        defer { leaveDevice() }
-        guard let files, let root = soundsRootID else { return }
-        let token = hotplug.currentGeneration()
-        do {
-            let nodes = try await files.list(nodeID: root)
-            if nodes.contains(where: { $0.id == target }) {
-                reportOperationError("slot \(target) is occupied", token: token)
-                return
-            }
-            try await moveOne(files, item.node.id, to: target, root: root)
-            await reload()
-        } catch {
-            await reloadAfterFailedMove("move to slot: \(error.localizedDescription)", token: token)
+    func beginInlineSlot(_ item: SoundItem) {
+        guard soundsListed, inlineSlotEdit?.needsRefresh != true else {
+            noteError("refresh the sound list before starting another slot edit")
+            return
         }
+        guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
+              visibleSounds.contains(where: { $0.id == item.id }), inlineRename?.submitting != true,
+              inlineSlotEdit?.submitting != true else { return }
+        inlineRename = nil
+        selection = [item.id]
+        inlineSlotEdit = InlineSlotEdit(id: item.id, generation: hotplug.currentGeneration())
+    }
+
+    func cancelInlineSlot() -> Bool {
+        guard let edit = inlineSlotEdit, edit.canCancel else { return false }
+        let restore = inlineSlotIsCurrent(edit)
+        inlineSlotEdit = nil
+        return restore
+    }
+
+    func commitInlineSlot(session: UUID) async -> Bool {
+        guard var edit = inlineSlotEdit, edit.session == session, inlineSlotIsCurrent(edit),
+              !modalOpen, statusDetails.isEmpty else { return false }
+        switch edit.prepare() {
+        case .invalid, .waiting:
+            inlineSlotEdit = edit
+            return false
+        case .unchanged:
+            inlineSlotEdit = nil
+            return true
+        case .write(let from, let to):
+            inlineSlotEdit = edit
+            guard let files, let root = soundsRootID, enterDevice() else {
+                _ = edit.finish(at: from, error: "device unavailable or busy", listed: nil)
+                inlineSlotEdit = edit
+                return false
+            }
+            defer { leaveDevice() }
+            let generation = edit.generation
+            let result = await moveToFreeSlot(files: files, root: root, from: from, to: to,
+                                              isCurrent: { await MainActor.run { self.hotplug.isCurrent(generation) } })
+            guard hotplug.isCurrent(generation) else { return false }
+            let at: UInt16?
+            var message: String?
+            switch result {
+            case .moved: at = to
+            case .unchanged: at = from
+            case .refused(let reason):
+                if var current = inlineSlotEdit, current.session == session {
+                    _ = current.finish(at: from, error: reason, listed: Set(sounds.map(\.id)))
+                    inlineSlotEdit = inlineSlotIsCurrent(current) ? current : nil
+                }
+                reportOperationError("move to slot: \(reason)", token: generation)
+                return false
+            case .failed(let reason, let location):
+                at = location
+                message = reason
+            case .missing:
+                if inlineSlotEdit?.session == session { inlineSlotEdit = nil }
+                soundsListed = false
+                await reload()
+                reportOperationError("move to slot: sound is no longer available", token: generation)
+                return false
+            case .stale:
+                return false
+            }
+            if at == to { selection = remapSelection(selection, moves: [(from: from, to: to)]) }
+            if inlineSlotEdit?.session == session { inlineSlotEdit?.recordLocation(at: at) }
+            let refreshed = await reload()
+            guard hotplug.isCurrent(generation) else { return false }
+            if !refreshed { soundsListed = false }
+            guard var current = inlineSlotEdit, current.session == session else {
+                if let message { reportOperationError("move to slot: \(message)", token: generation) }
+                return false
+            }
+            if message == nil, !refreshed { message = "move was confirmed, but the sound list could not be refreshed" }
+            if refreshed, let slot = current.slot, !sounds.contains(where: { $0.id == slot }) {
+                current.recordLocation(at: nil)
+                message = "sound placement could not be confirmed in the refreshed list"
+            }
+            if let reason = message {
+                if let slot = current.slot { message = "\(reason); sound is in slot \(slot)" }
+                reportOperationError("move to slot: \(message ?? reason)", token: generation)
+            }
+            let saved = current.finish(at: current.slot, error: message,
+                                       listed: refreshed ? Set(sounds.map(\.id)) : nil)
+            guard inlineSlotIsCurrent(current) else {
+                inlineSlotEdit = nil
+                return false
+            }
+            inlineSlotEdit = saved ? nil : current
+            return saved
+        }
+    }
+
+    func refreshInlineSlot(session: UUID) async {
+        guard var edit = inlineSlotEdit, edit.session == session, inlineSlotIsCurrent(edit),
+              edit.beginRefresh(), enterDevice() else { return }
+        inlineSlotEdit = edit
+        defer { leaveDevice() }
+        let refreshed = await reload()
+        guard hotplug.isCurrent(edit.generation), var current = inlineSlotEdit, current.session == session else { return }
+        var message = refreshed ? edit.error : "sound list could not be refreshed"
+        if refreshed, let slot = current.slot, !sounds.contains(where: { $0.id == slot }) {
+            current.recordLocation(at: nil)
+            message = "sound placement could not be confirmed in the refreshed list"
+        }
+        _ = current.finish(at: current.slot, error: message,
+                           listed: refreshed ? Set(sounds.map(\.id)) : nil)
+        inlineSlotEdit = inlineSlotIsCurrent(current) ? current : nil
+        if current.slot == nil, let message { reportOperationError("move to slot: \(message)", token: edit.generation) }
     }
 
     /// Bulk move: selected sounds land on consecutive slots starting at
@@ -987,6 +1100,7 @@ final class AppState: ObservableObject {
     /// moved sounds.
     func moveSelection(startingAt start: UInt16) async {
         guard enterDevice() else { return }
+        inlineSlotEdit = nil
         defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
@@ -1019,6 +1133,7 @@ final class AppState: ObservableObject {
     /// Drag reorder: move to the target slot; swap with the occupant if taken.
     func moveOrSwap(id: UInt16, toSlot target: UInt16) async {
         guard enterDevice() else { return }
+        inlineSlotEdit = nil
         defer { leaveDevice() }
         guard let files, let root = soundsRootID, id != target else { return }
         let token = hotplug.currentGeneration()

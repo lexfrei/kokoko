@@ -813,6 +813,17 @@ struct E2E {
         } catch {
             check(false, "a bulk move puts the selection on consecutive slots in order — threw \(error)")
         }
+        let inlineMove = await moveToFreeSlot(files: files, root: soundsID, from: 240, to: 250, isCurrent: { true })
+        let inlineData = await data(250)
+        check(inlineMove == .moved && inlineData == [4, 4], "inline slot move uses the checked free-slot path")
+        let occupiedMove = await moveToFreeSlot(files: files, root: soundsID, from: 250, to: 220, isCurrent: { true })
+        let inlineKept = await data(250), occupiedKept = await data(220)
+        check(occupiedMove == .refused("slot 220 is occupied") && inlineKept == [4, 4] && occupiedKept == [3, 3],
+              "inline slot move never turns an occupied destination into a swap")
+        let zeroMove = await moveToFreeSlot(files: files, root: soundsID, from: 250, to: 0, isCurrent: { true })
+        check(zeroMove == .refused("slot zero is not a move destination"), "inline slot move rejects the zero sentinel")
+        let staleMove = await moveToFreeSlot(files: files, root: soundsID, from: 250, to: 251, isCurrent: { false })
+        check(staleMove == .stale, "inline slot move rejects an old device generation")
         do {
             try await files.move(fileID: 210, toParent: soundsID, newFileID: 220)
             check(false, "a move onto a taken slot is refused")
