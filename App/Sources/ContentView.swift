@@ -299,7 +299,7 @@ struct ContentView: View {
                     }
                 }
                 .tag(item.id)
-                .onDrop(of: [.plainText], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
+                .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
             }
         }
         .focused($focus, equals: .soundList)
@@ -680,12 +680,12 @@ struct SoundRowDrop: DropDelegate {
             RowDragDiagnostics.event("target reject=no-claim")
             return false
         }
-        guard let provider = info.itemProviders(for: [.plainText]).first else {
+        guard let provider = info.itemProviders(for: [rowMoveTextType]).first else {
             RowDragDiagnostics.event("target reject=no-text-provider")
             return false
         }
         let generation = state.rowDragGeneration
-        provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, error in
+        provider.loadDataRepresentation(forTypeIdentifier: rowMoveTextType.identifier) { data, error in
             RowDragDiagnostics.event("target text-complete data=\(data != nil) bytes=\(data?.count ?? 0)")
             RowDragDiagnostics.error("target text", error)
             Task { @MainActor in
@@ -716,7 +716,7 @@ struct SoundRowDrop: DropDelegate {
             RowDragDiagnostics.event("target validate slot=\(target.id) accepted=false reason=context-or-self")
             return false
         }
-        let accepted = !state.deviceBusy && info.hasItemsConforming(to: [.plainText])
+        let accepted = !state.deviceBusy && info.hasItemsConforming(to: [rowMoveTextType])
         RowDragDiagnostics.event("target validate slot=\(target.id) accepted=\(accepted)")
         return accepted
     }
