@@ -2,6 +2,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import KokokoLibrary
 
+let rowMoveTextType = UTType.utf8PlainText
+
 enum RowDragDiagnostics {
     static let enabled = ProcessInfo.processInfo.environment["KOKOKO_DRAG_DIAGNOSTICS"] == "1"
 
@@ -151,7 +153,7 @@ struct RowDragHandle: NSViewRepresentable {
     }
 }
 
-private final class RowPromise: NSFilePromiseProvider {
+final class RowPromise: NSFilePromiseProvider {
     var token: RowDragToken?
 
     override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {

@@ -1317,7 +1317,7 @@ final class AppState: ObservableObject {
             completion(Data(), nil)
             return nil
         }
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+        provider.registerDataRepresentation(forTypeIdentifier: rowMoveTextType.identifier,
                                             visibility: .all) { completion in
             RowDragDiagnostics.event("provider text-request")
             completion(Data(token.payload.utf8), nil)
