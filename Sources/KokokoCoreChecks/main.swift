@@ -38,6 +38,7 @@ struct KokokoCoreChecks {
         errorDescriptionChecks()
         eventListChecks()
         filterChecks()
+        await soundOverviewChecks()
         dropChecks()
         rowDragChecks()
         soundKeyboardChecks()
