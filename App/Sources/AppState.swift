@@ -34,11 +34,11 @@ struct PendingRestore {
 
 struct WaveformShown: Identifiable {
     let item: SoundItem
-    let pcm: [UInt8]
-    let channels: Int
-    let sampleRate: Int
+    let record: WaveformPeakRecord?
     let loopStart: Int?
     let loopEnd: Int?
+    let cached: Bool
+    let metadataConfirmed: Bool
     var id: UInt16 { item.id }
 }
 
@@ -114,11 +114,14 @@ final class AppState: ObservableObject {
     @Published var binToRemove: BinEntry?
     @Published var pendingRestore: PendingRestore?
     @Published var pendingSwap: PendingSwap?
-    @Published var waveformShown: WaveformShown?
-    /// PCM already read, by slot, with the format it was read in. Emptied at
-    /// the start of every reload(); a sound changed on the device itself
-    /// shows its new audio only after the next one.
-    private var pcmCache: [UInt16: (pcm: [UInt8], channels: Int, sampleRate: Int)] = [:]
+    @Published var waveformShown: WaveformShown? {
+        didSet { if waveformShown == nil { waveformIntent.invalidate() } }
+    }
+    private static let waveformCacheRoot = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("kokoko/waveform-peaks", isDirectory: true)
+    private var waveformCache = WaveformCache(root: waveformCacheRoot, model: "", serial: "")
+    private var waveformIntent = WaveformIntent()
     @Published private var deviceAdmission = DeviceAdmission()
     var deviceBusy: Bool { deviceAdmission.operation }
     private var deviceOccupied: Bool { deviceAdmission.occupied }
@@ -143,6 +146,7 @@ final class AppState: ObservableObject {
     /// through a swap still leaves each selected sound selected where it is.
     private func move(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                       root: UInt16) async throws {
+        invalidateWaveformContent(slots: [id, target])
         invalidateMetadataIntent(affecting: [id, target])
         try await files.move(fileID: id, toParent: root, newFileID: target)
         selection = remapSelection(selection, moves: [(from: id, to: target)])
@@ -456,7 +460,7 @@ final class AppState: ObservableObject {
         rowDrag = RowDragContext()
         rowDragGeneration = UUID()
         waveformShown = nil
-        pcmCache = [:]
+        waveformCache = WaveformCache(root: Self.waveformCacheRoot, model: "", serial: "")
     }
 
     private func rescanIfDue() {
@@ -507,6 +511,8 @@ final class AppState: ObservableObject {
                 self.library = DeviceLibrary(files: service)
                 self.settings = SettingsService(session: session)
                 deviceMeta = meta
+                waveformCache = WaveformCache(root: Self.waveformCacheRoot,
+                                              model: meta.baseSKU.isEmpty ? meta.sku : meta.baseSKU, serial: meta.serial)
                 connection = .connected(deviceName: pair.name,
                                         serial: meta.serial,
                                         osVersion: meta.osVersion)
@@ -536,7 +542,7 @@ final class AppState: ObservableObject {
             soundStorage.invalidate()
             return false
         }
-        pcmCache = [:]
+        waveformIntent.invalidate()
         let token = hotplug.currentGeneration()
         let request = soundStorage.begin(generation: token)
         soundsListed = false
@@ -619,6 +625,7 @@ final class AppState: ObservableObject {
                 let prepared = try prepareForUpload(fileData: data, fileName: url.lastPathComponent)
                 let name = normalizedDeviceFileName(url.lastPathComponent)
                 progress.update(op, "send \(name)")
+                invalidateWaveformContent()
                 invalidateMetadataIntent()
                 _ = try await uploadSound(files: files, parent: root, name: name, pcm: prepared.pcm,
                                           metadata: prepared.metadata) { done, total in
@@ -716,6 +723,7 @@ final class AppState: ObservableObject {
     /// otherwise be impossible to delete from the app.
     private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
         guard let library, enterDevice() else { return }
+        invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
         defer { leaveDevice() }
         let op = progress.begin()
@@ -755,6 +763,7 @@ final class AppState: ObservableObject {
             return
         }
         guard let library, enterDevice() else { return }
+        invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
         defer { leaveDevice() }
         let op = progress.begin("delete without copy")
@@ -780,6 +789,7 @@ final class AppState: ObservableObject {
 
     func restoreFromBin(_ entry: BinEntry) async {
         guard let library, enterDevice() else { return }
+        invalidateWaveformContent()
         invalidateMetadataIntent()
         defer { leaveDevice() }
         let op = progress.begin("restore \(entry.name)")
@@ -859,6 +869,7 @@ final class AppState: ObservableObject {
         let token = hotplug.currentGeneration()
         do {
             progress.update(op, "restore...")
+            invalidateWaveformContent()
             invalidateMetadataIntent()
             let report = try await library.restore(backup) { [weak self] name in
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
@@ -1131,6 +1142,7 @@ final class AppState: ObservableObject {
             }
             defer { leaveDevice() }
             let generation = edit.generation
+            invalidateWaveformContent(slots: [from, to])
             invalidateMetadataIntent(affecting: [from, to], listingMayChange: false)
             let result = await moveToFreeSlot(files: files, root: root, from: from, to: to,
                                               isCurrent: { await MainActor.run { self.hotplug.isCurrent(generation) } })
@@ -1454,36 +1466,76 @@ final class AppState: ObservableObject {
 
     // MARK: - misc
 
-    func showWaveform(_ item: SoundItem) async {
-        guard enterDevice() else { return }
+    private func invalidateWaveformContent(slots: Set<UInt16>? = nil) {
+        waveformIntent.invalidate()
+        waveformCache.invalidate(slots: slots)
+        if let shown = waveformShown, slots == nil || slots!.contains(shown.id) { waveformShown = nil }
+    }
+
+    func showWaveform(_ item: SoundItem, forceRefresh: Bool = false) async {
+        guard soundsListed, sounds.contains(where: { $0.node == item.node }), enterDevice() else { return }
         defer { leaveDevice() }
-        let op = progress.begin()
-        defer { progress.end(op) }
         guard let files else { return }
         let token = hotplug.currentGeneration()
+        if forceRefresh {
+            waveformCache.invalidate(slots: [item.id])
+            waveformShown = WaveformShown(item: item, record: nil, loopStart: nil, loopEnd: nil,
+                                          cached: false, metadataConfirmed: false)
+        }
+        let request = waveformIntent.begin(slot: item.id, generation: token)
+        let op = progress.begin()
+        defer { progress.end(op) }
+        var cached = forceRefresh ? nil : waveformCache.load(slot: item.id, size: Int(item.node.size))
+        if let cached {
+            waveformShown = WaveformShown(item: item, record: cached, loopStart: nil, loopEnd: nil,
+                                          cached: true, metadataConfirmed: false)
+        }
         do {
-            let meta = try await files.getMetadata(fileID: item.node.id)
-            let channels = meta["channels"]?.intValue ?? 1
-            let sampleRate = meta["samplerate"]?.intValue ?? deviceSampleRate
-            let pcm: [UInt8]
-            if let cached = pcmCache[item.id], cached.channels == channels, cached.sampleRate == sampleRate {
-                pcm = cached.pcm
+            let meta = try await files.getMetadata(fileID: item.id)
+            guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+            let channels = meta["channels"]?.intValue ?? cached?.channels ?? 1
+            let sampleRate = meta["samplerate"]?.intValue ?? cached?.sampleRate ?? deviceSampleRate
+            if cached != nil {
+                cached = waveformCache.load(slot: item.id, size: Int(item.node.size),
+                                            channels: channels, sampleRate: sampleRate)
+                if cached == nil {
+                    waveformShown = WaveformShown(item: item, record: nil, loopStart: nil, loopEnd: nil,
+                                                  cached: false, metadataConfirmed: true)
+                }
+            }
+            guard (1...2).contains(channels), (1...65535).contains(sampleRate) else {
+                throw DownloadFailure(errorDescription: "unsupported audio format")
+            }
+            let record: WaveformPeakRecord
+            if let cached {
+                record = cached
             } else {
                 progress.update(op, "recv \(item.displayName)")
-                pcm = try await files.getWhole(fileID: item.node.id) { done, total in
+                let pcm = try await files.getWhole(fileID: item.id) { done, total in
                     Task { @MainActor in
                         self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                     }
                 }.data
-                guard hotplug.isCurrent(token) else { return }
-                pcmCache[item.id] = (pcm, channels, sampleRate)
+                guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+                let computed = await Task.detached(priority: .userInitiated) {
+                    WaveformPeakRecord(pcm: pcm, channels: channels, sampleRate: sampleRate)
+                }.value
+                guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+                guard let computed else { throw DownloadFailure(errorDescription: "unsupported or incomplete audio format") }
+                record = computed
+                waveformCache.store(record, slot: item.id)
             }
-            progress.update(op, nil)
-            waveformShown = WaveformShown(item: item, pcm: pcm, channels: channels, sampleRate: sampleRate,
+            guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+            let confirmed = SoundItem(node: item.node, displayName: meta["name"]?.stringValue ?? item.displayName)
+            waveformShown = WaveformShown(item: confirmed, record: record,
                                           loopStart: meta["sound.loopstart"]?.intValue,
-                                          loopEnd: meta["sound.loopend"]?.intValue)
-        } catch {
+                                          loopEnd: meta["sound.loopend"]?.intValue,
+                                          cached: cached != nil, metadataConfirmed: true)
             progress.update(op, nil)
+        } catch {
+            guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+            progress.update(op, nil)
+            if waveformShown?.record == nil { waveformShown = nil }
             reportOperationError("waveform: \(error.localizedDescription)", token: token)
         }
     }
