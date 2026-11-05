@@ -205,86 +205,90 @@ struct ContentView: View {
     }
 
     private var soundList: some View {
-        VStack(spacing: 0) {
-            TextField("filter: name or slot", text: $state.filterText)
-                .focused($focus, equals: .filter)
-                .textFieldStyle(.plain)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            Divider()
-            soundRows
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                libraryOverview(proxy)
+                TextField("filter: name or slot", text: $state.filterText)
+                    .focused($focus, equals: .filter)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                Divider()
+                soundRows(proxy)
+            }
         }
     }
 
-    private var soundRows: some View {
-        let empty = soundListEmpty(total: state.sounds.count, visible: state.visibleSounds.count,
-                                   query: state.filterText, deviceBusy: state.deviceBusy, listed: state.soundsListed)
+    private func libraryOverview(_ proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(soundCountsText(total: state.listedSoundCount, shown: state.visibleSounds.count, fresh: state.soundsListed))
+            Text(state.soundStorage.text).foregroundStyle(.secondary)
+            if let message = state.soundStorage.message {
+                Text("storage unavailable").foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .accessibilityLabel("Storage unavailable: \(message)")
+                    .help(message)
+            }
+            if dynamicTypeSize.isAccessibilitySize {
+                ScrollView(.horizontal) { HStack { rangeBookmarks(proxy) } }
+            } else {
+                FlowLayout { rangeBookmarks(proxy) }
+            }
+            if state.soundsListed, !state.deviceBusy,
+               let empty = soundListEmpty(total: state.sounds.count, visible: state.visibleSounds.count,
+                                          query: state.filterText) {
+                Text(empty.text).foregroundStyle(.secondary)
+                if empty == .noSounds { barButton(.addSounds) { state.showImporter = true } }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+    private func rangeBookmarks(_ proxy: ScrollViewProxy) -> some View {
+        ForEach(SoundRange.all) { range in
+            Button { proxy.scrollTo(SoundSectionID.range(range.id), anchor: .top) } label: {
+                Text("[ \(range.label) ]")
+                    .frame(minWidth: 28, minHeight: minHitHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focused($focus, equals: .rangeJump(range.id))
+            .accessibilityLabel("Jump to slots \(range.label)")
+            .help("jump to slots \(range.label)")
+        }
+    }
+
+    private func soundRows(_ proxy: ScrollViewProxy) -> some View {
+        let visible = state.visibleSounds
+        let items = Dictionary(visible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let sections = soundSections(all: state.sounds.map(\.id), visible: Set(visible.map(\.id)))
         return List(selection: $state.selection) {
-            ForEach(state.visibleSounds) { item in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        RowDragHandle(item: item, state: state)
-                            .frame(width: 28, height: minHitHeight)
-                            .help("drag sound to reorder or export")
-                        slotField(item)
-                        if let edit = state.inlineRename, edit.id == item.id {
-                            VStack(alignment: .leading, spacing: 2) {
-                                TextField("sound name", text: renameDraft(edit))
-                                    .textFieldStyle(.plain)
-                                    .focused($focus, equals: .rename(item.id))
-                                    .accessibilityLabel("sound name, slot \(item.id)")
-                                    .disabled(edit.submitting)
-                                    .onSubmit { submitRename(edit) }
-                                    .onKeyPress(.escape, phases: .down) { press in
-                                        guard press.modifiers.isEmpty, edit.canCancel else { return .ignored }
-                                        if state.cancelInlineRename() { focus = .soundList }
-                                        return .handled
-                                    }
-                                if let error = edit.error {
-                                    Text(error).foregroundStyle(Color.errorText)
-                                }
-                            }
-                        } else {
-                            Text(item.displayName)
-                        }
-                        Spacer()
-                        if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
-                                                      deviceBusy: state.deviceBusy) {
-                            Text(marker)
-                        } else {
-                            Text(formatSize(item.node.size))
-                                .foregroundStyle(.secondary)
-                        }
-                        let commands = soundCommands(item)
-                        if collapsesRowActions {
-                            Menu {
-                                ForEach(commands, id: \.action) { command in
-                                    Button(command.action.accessibilityLabel, action: command.perform)
-                                }
-                            } label: {
-                                Text(RowAction.actions.glyph)
-                                    .frame(minWidth: 28, minHeight: minHitHeight)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .focused($focus, equals: .rowMenu(item.id))
-                            .disabled(state.deviceBusy)
-                            .accessibilityLabel(RowAction.actions.accessibilityLabel)
-                        } else {
-                            ForEach(commands, id: \.action) { command in
-                                rowButton(command.action, help: command.help, perform: command.perform)
-                                    .focused($focus, equals: .rowAction(item.id, command.action))
-                            }
+            ForEach(sections) { section in
+                Section {
+                    if section.slots.isEmpty {
+                        let status = section.emptyText(hasSnapshot: state.listedSoundCount != nil, fresh: state.soundsListed)
+                        Text(status)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("\(section.title): \(status)")
+                            .selectionDisabled()
+                    } else {
+                        ForEach(section.slots, id: \.self) { slot in
+                            if let item = items[slot] { soundRow(item) }
                         }
                     }
-                    slotNote(item)
-                    metadataDetails(item)
+                } header: {
+                    Text(section.title).id(section.id)
                 }
-                .tag(item.id)
-                .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
             }
         }
         .focused($focus, equals: .soundList)
+        .onChange(of: state.filterText) { _, query in
+            guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            let groups = soundSections(all: state.sounds.map(\.id), visible: Set(state.visibleSounds.map(\.id)))
+            if let first = groups.lazy.flatMap(\.slots).first { proxy.scrollTo(first, anchor: .top) }
+        }
         .onKeyPress(.space, phases: .down) { press in
             guard keyboard.target(phase: .down, modified: !press.modifiers.isEmpty) != nil else { return .ignored }
             state.auditionSelected()
@@ -295,18 +299,6 @@ struct ContentView: View {
                   let item = state.visibleSounds.first(where: { $0.id == id }) else { return .ignored }
             beginRename(item)
             return .handled
-        }
-        // Over the list rather than instead of it, so sounds can still be dropped onto it.
-        .overlay {
-            if let empty {
-                VStack(spacing: 12) {
-                    Text(empty.text)
-                        .foregroundStyle(.secondary)
-                    if empty == .noSounds {
-                        barButton(.addSounds) { state.showImporter = true }
-                    }
-                }
-            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { dropBanner(.soundList, targeted: soundListTargeted) }
         .onDrop(of: [.audio], delegate: ListDrop(target: .soundList, types: [.audio], state: state,
@@ -323,6 +315,71 @@ struct ContentView: View {
         .onDeleteCommand(perform: focus == .soundList && state.inlineRename == nil && state.inlineSlotEdit == nil && state.metadataEditing == nil && !state.modalOpen
                          && state.isEnabled(.deleteSelected) ? { state.perform(.deleteSelected) } : nil)
         #endif
+    }
+
+    private func soundRow(_ item: SoundItem) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                RowDragHandle(item: item, state: state)
+                    .frame(width: 28, height: minHitHeight)
+                    .help("drag sound to reorder or export")
+                slotField(item)
+                if let edit = state.inlineRename, edit.id == item.id {
+                    VStack(alignment: .leading, spacing: 2) {
+                        TextField("sound name", text: renameDraft(edit))
+                            .textFieldStyle(.plain)
+                            .focused($focus, equals: .rename(item.id))
+                            .accessibilityLabel("sound name, slot \(item.id)")
+                            .disabled(edit.submitting)
+                            .onSubmit { submitRename(edit) }
+                            .onKeyPress(.escape, phases: .down) { press in
+                                guard press.modifiers.isEmpty, edit.canCancel else { return .ignored }
+                                if state.cancelInlineRename() { focus = .soundList }
+                                return .handled
+                            }
+                        if let error = edit.error {
+                            Text(error).foregroundStyle(Color.errorText)
+                        }
+                    }
+                } else {
+                    Text(item.displayName)
+                }
+                Spacer()
+                if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
+                                              deviceBusy: state.deviceBusy) {
+                    Text(marker)
+                } else {
+                    Text(formatSize(item.node.size))
+                        .foregroundStyle(.secondary)
+                }
+                let commands = soundCommands(item)
+                if collapsesRowActions {
+                    Menu {
+                        ForEach(commands, id: \.action) { command in
+                            Button(command.action.accessibilityLabel, action: command.perform)
+                        }
+                    } label: {
+                        Text(RowAction.actions.glyph)
+                            .frame(minWidth: 28, minHeight: minHitHeight)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focused($focus, equals: .rowMenu(item.id))
+                    .disabled(state.deviceBusy)
+                    .accessibilityLabel(RowAction.actions.accessibilityLabel)
+                } else {
+                    ForEach(commands, id: \.action) { command in
+                        rowButton(command.action, help: command.help, perform: command.perform)
+                            .focused($focus, equals: .rowAction(item.id, command.action))
+                    }
+                }
+            }
+            slotNote(item)
+            metadataDetails(item)
+        }
+        .tag(item.id)
+        .id(item.id)
+        .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
     }
 
     @ViewBuilder private func slotField(_ item: SoundItem) -> some View {

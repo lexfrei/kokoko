@@ -1,5 +1,6 @@
 #if os(macOS) && DEBUG
 import AppKit
+import KokokoLibrary
 import SwiftUI
 
 @MainActor
@@ -11,7 +12,7 @@ enum RowDragHitChecks {
             print("\(condition ? "ok  " : "FAIL") \(message)")
             if !condition { failures += 1 }
         }
-        for selected: Set<Int> in [[], [0], [0, 1]] {
+        for selected: Set<Int> in [[], [1], [1, 2]] {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300),
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
@@ -68,36 +69,47 @@ enum RowDragHitChecks {
 
         var body: some View {
             List(selection: $selected) {
-                ForEach(0..<3) { id in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Fixture().frame(width: 28, height: 28)
-                            if selected == [id] {
-                                TextField("slot", text: $slot)
-                                    .textFieldStyle(.plain)
-                                    .frame(width: 64)
-                                    .focused($focus, equals: .slot(id))
-                            } else {
-                                Button("000") {}.buttonStyle(.plain)
-                                    .frame(width: 64)
-                                    .focused($focus, equals: .slot(id))
+                ForEach(soundSections(all: [1, 2, 3], visible: [1, 2, 3])) { section in
+                    Section {
+                        if section.slots.isEmpty {
+                            Text("empty").selectionDisabled()
+                        } else {
+                            ForEach(section.slots, id: \.self) { slot in
+                                let id = Int(slot)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Fixture().frame(width: 28, height: 28)
+                                        if selected == [id] {
+                                            TextField("slot", text: $slot)
+                                                .textFieldStyle(.plain)
+                                                .frame(width: 64)
+                                                .focused($focus, equals: .slot(id))
+                                        } else {
+                                            Button("000") {}.buttonStyle(.plain)
+                                                .frame(width: 64)
+                                                .focused($focus, equals: .slot(id))
+                                        }
+                                        Text("row \(id)")
+                                        Spacer()
+                                        Button("play") {}.focused($focus, equals: .button(id))
+                                    }
+                                    if selected == [id] {
+                                        Divider()
+                                        HStack {
+                                            Text("sound.bpm")
+                                            TextField("", text: $bpm)
+                                                .textFieldStyle(.plain)
+                                                .focused($focus, equals: .metadata(id))
+                                        }
+                                    }
+                                }
+                                .tag(id)
+                                .onDrop(of: [rowMoveTextType], delegate: Drop())
                             }
-                            Text("row \(id)")
-                            Spacer()
-                            Button("play") {}.focused($focus, equals: .button(id))
                         }
-                        if selected == [id] {
-                            Divider()
-                            HStack {
-                                Text("sound.bpm")
-                                TextField("", text: $bpm)
-                                    .textFieldStyle(.plain)
-                                    .focused($focus, equals: .metadata(id))
-                            }
-                        }
+                    } header: {
+                        Text(section.title).id(section.id)
                     }
-                    .tag(id)
-                    .onDrop(of: [rowMoveTextType], delegate: Drop())
                 }
             }
             .focused($focus, equals: .list)

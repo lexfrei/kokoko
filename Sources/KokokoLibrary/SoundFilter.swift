@@ -20,7 +20,7 @@ public func visibleSelection(_ selection: Set<UInt16>,
     return selection.intersection(visible.map(\.slot))
 }
 
-/// Why the sound list shows no rows, said in place of them.
+/// Why the sound snapshot has no matching sounds, independent of section marks.
 public enum SoundListEmpty: Equatable, Sendable {
     case noSounds
     case noMatch(String)
@@ -33,7 +33,7 @@ public enum SoundListEmpty: Equatable, Sendable {
     }
 }
 
-/// With no sounds at all, the filter is not what hides them. An empty list
+/// With no sounds at all, the filter is not what hides them. An empty snapshot
 /// is called empty only once a listing has succeeded and the device is not
 /// busy, since otherwise it may be unread or still loading.
 public func soundListEmpty(total: Int, visible: Int, query: String, deviceBusy: Bool = false,

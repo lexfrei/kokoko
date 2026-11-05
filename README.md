@@ -5,7 +5,8 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 ## What it does
 
 - Finds a connected device on its own and shows its name, serial and OS version. If teenage engineering's release list is reachable, it also shows whether a newer firmware exists.
-- Lists the sounds on the device with slot number, name and size, and filters the list by name or slot.
+- Lists the sounds with slot number, name and size, and filters by name or slot. Ten numeric range marks, from 001-099 through 900-999, keep the list continuous and give empty ranges a jump target. Jumping does not filter or select sounds; slots outside those ranges remain visible under other slots.
+- Shows total and filtered sound counts, plus the device's reported used/free/total storage in B, KiB or MiB. Missing values stay unknown rather than using a fixed capacity or PCM-size estimate. Writes mark storage stale; list refreshes read it again. Metadata saves, failed renames and project imports can leave storage stale until Refresh.
 - Adds sounds from audio files, picked or dropped onto the list. WAV files already in the device format (16-bit, 46875 Hz, mono or stereo) are sent as they are. Other audio is converted to 16-bit at 46875 Hz first, and audio that needs converting is refused if it is longer than 40 seconds. Audio with more than two channels is refused rather than mixed down.
 - Plays a one-second preview of a sound on the device.
 - Draws a sound's waveform from its `[~]` button, with its loop points marked when it has them. The drawing is for viewing; loop points are edited from `[m]`.
