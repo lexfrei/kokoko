@@ -115,19 +115,39 @@ final class AppState: ObservableObject {
     @Published var pendingRestore: PendingRestore?
     @Published var pendingSwap: PendingSwap?
     @Published var waveformShown: WaveformShown? {
-        didSet { if waveformShown == nil { waveformIntent.invalidate() } }
+        didSet {
+            if waveformShown == nil {
+                waveformIntent.invalidate()
+                waveformLease?.cancel()
+            }
+        }
     }
     private static let waveformCacheRoot = FileManager.default
         .urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("kokoko/waveform-peaks", isDirectory: true)
-    private var waveformCache = WaveformCache(root: waveformCacheRoot, model: "", serial: "")
+    private let waveformCache: WaveformCacheStore
+    private var waveformCacheSession: UUID?
+    private var waveformLease: WaveformCacheLease?
+    private struct WaveformLookup {
+        let item: SoundItem
+        let generation: Int
+        let session: UUID
+        let request: WaveformRows.Request
+    }
+    private var waveformLookups: [WaveformLookup] = []
+    private var waveformLookupTask: Task<Void, Never>?
     private var waveformIntent = WaveformIntent()
+    @Published private(set) var waveformRows = WaveformRows()
     @Published private var deviceAdmission = DeviceAdmission()
     var deviceBusy: Bool { deviceAdmission.operation }
     private var deviceOccupied: Bool { deviceAdmission.occupied }
     /// The sound a delete into the bin failed on, offered for a delete without a copy.
     @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String, generation: Int)?
     @Published var bulkMoveStart = ""
+
+    init(waveformCache: WaveformCacheStore? = nil) {
+        self.waveformCache = waveformCache ?? WaveformCacheStore(root: Self.waveformCacheRoot)
+    }
 
     var visibleSounds: [SoundItem] {
         sounds.filter { soundMatches(name: $0.displayName, slot: $0.id, query: filterText) }
@@ -146,7 +166,7 @@ final class AppState: ObservableObject {
     /// through a swap still leaves each selected sound selected where it is.
     private func move(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                       root: UInt16) async throws {
-        invalidateWaveformContent(slots: [id, target])
+        await invalidateWaveformContent(slots: [id, target])
         invalidateMetadataIntent(affecting: [id, target])
         try await files.move(fileID: id, toParent: root, newFileID: target)
         selection = remapSelection(selection, moves: [(from: id, to: target)])
@@ -325,7 +345,7 @@ final class AppState: ObservableObject {
     var modalOpen: Bool {
         showImporter || picker != .none || exportDocument != nil
             || unbinnedDelete != nil || binToRemove != nil
-            || pendingRestore != nil || pendingSwap != nil || waveformShown != nil
+            || pendingRestore != nil || pendingSwap != nil
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
@@ -460,7 +480,9 @@ final class AppState: ObservableObject {
         rowDrag = RowDragContext()
         rowDragGeneration = UUID()
         waveformShown = nil
-        waveformCache = WaveformCache(root: Self.waveformCacheRoot, model: "", serial: "")
+        waveformCacheSession = nil
+        waveformLookups = []
+        waveformRows.invalidate(slots: nil)
     }
 
     private func rescanIfDue() {
@@ -511,8 +533,10 @@ final class AppState: ObservableObject {
                 self.library = DeviceLibrary(files: service)
                 self.settings = SettingsService(session: session)
                 deviceMeta = meta
-                waveformCache = WaveformCache(root: Self.waveformCacheRoot,
-                                              model: meta.baseSKU.isEmpty ? meta.sku : meta.baseSKU, serial: meta.serial)
+                let cacheSession = await waveformCache.configure(model: meta.baseSKU.isEmpty ? meta.sku : meta.baseSKU,
+                                                                  serial: meta.serial)
+                guard hotplug.isCurrent(token) else { return }
+                waveformCacheSession = cacheSession
                 connection = .connected(deviceName: pair.name,
                                         serial: meta.serial,
                                         osVersion: meta.osVersion)
@@ -542,7 +566,8 @@ final class AppState: ObservableObject {
             soundStorage.invalidate()
             return false
         }
-        waveformIntent.invalidate()
+        waveformShown = nil
+        waveformRows.invalidate(slots: nil)
         let token = hotplug.currentGeneration()
         let request = soundStorage.begin(generation: token)
         soundsListed = false
@@ -625,7 +650,7 @@ final class AppState: ObservableObject {
                 let prepared = try prepareForUpload(fileData: data, fileName: url.lastPathComponent)
                 let name = normalizedDeviceFileName(url.lastPathComponent)
                 progress.update(op, "send \(name)")
-                invalidateWaveformContent()
+                await invalidateWaveformContent()
                 invalidateMetadataIntent()
                 _ = try await uploadSound(files: files, parent: root, name: name, pcm: prepared.pcm,
                                           metadata: prepared.metadata) { done, total in
@@ -723,7 +748,7 @@ final class AppState: ObservableObject {
     /// otherwise be impossible to delete from the app.
     private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
         guard let library, enterDevice() else { return }
-        invalidateWaveformContent(slots: ids)
+        await invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
         defer { leaveDevice() }
         let op = progress.begin()
@@ -763,7 +788,7 @@ final class AppState: ObservableObject {
             return
         }
         guard let library, enterDevice() else { return }
-        invalidateWaveformContent(slots: ids)
+        await invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
         defer { leaveDevice() }
         let op = progress.begin("delete without copy")
@@ -789,7 +814,7 @@ final class AppState: ObservableObject {
 
     func restoreFromBin(_ entry: BinEntry) async {
         guard let library, enterDevice() else { return }
-        invalidateWaveformContent()
+        await invalidateWaveformContent()
         invalidateMetadataIntent()
         defer { leaveDevice() }
         let op = progress.begin("restore \(entry.name)")
@@ -869,7 +894,7 @@ final class AppState: ObservableObject {
         let token = hotplug.currentGeneration()
         do {
             progress.update(op, "restore...")
-            invalidateWaveformContent()
+            await invalidateWaveformContent()
             invalidateMetadataIntent()
             let report = try await library.restore(backup) { [weak self] name in
                 Task { @MainActor in self?.progress.update(op, "restore \(name)") }
@@ -921,6 +946,8 @@ final class AppState: ObservableObject {
     }
 
     private func invalidateInlineEditors() {
+        if let shown = waveformShown,
+           view != .sounds || !visibleSounds.contains(where: { $0.node == shown.item.node }) { waveformShown = nil }
         if let edit = inlineRename, !inlineRenameIsCurrent(edit) { inlineRename = nil }
         if let edit = inlineSlotEdit, !inlineSlotIsCurrent(edit) { inlineSlotEdit = nil }
         if let edit = metadataEditing, !metadataIsCurrent(edit) { metadataEditing = nil }
@@ -934,6 +961,7 @@ final class AppState: ObservableObject {
         guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
               visibleSounds.contains(where: { $0.id == item.id }), inlineRename?.submitting != true,
               inlineSlotEdit?.submitting != true else { return }
+        waveformShown = nil
         inlineSlotEdit = nil
         selection = [item.id]
         inlineRename = InlineRename(id: item.id, generation: hotplug.currentGeneration(), name: item.displayName)
@@ -1015,6 +1043,7 @@ final class AppState: ObservableObject {
         guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
               visibleSounds.contains(where: { $0.id == item.id }), let files, enterDevice() else { return nil }
         defer { leaveDevice() }
+        waveformShown = nil
         selection = [item.id]
         let edit = InlineMetadataEdit(id: item.id, name: item.displayName, generation: hotplug.currentGeneration())
         metadataEditing = edit
@@ -1111,6 +1140,7 @@ final class AppState: ObservableObject {
         guard isConnected, !deviceBusy, !modalOpen, statusDetails.isEmpty, view == .sounds,
               visibleSounds.contains(where: { $0.id == item.id }), inlineRename?.submitting != true,
               inlineSlotEdit?.submitting != true else { return }
+        waveformShown = nil
         inlineRename = nil
         selection = [item.id]
         inlineSlotEdit = InlineSlotEdit(id: item.id, generation: hotplug.currentGeneration())
@@ -1142,7 +1172,7 @@ final class AppState: ObservableObject {
             }
             defer { leaveDevice() }
             let generation = edit.generation
-            invalidateWaveformContent(slots: [from, to])
+            await invalidateWaveformContent(slots: [from, to])
             invalidateMetadataIntent(affecting: [from, to], listingMayChange: false)
             let result = await moveToFreeSlot(files: files, root: root, from: from, to: to,
                                               isCurrent: { await MainActor.run { self.hotplug.isCurrent(generation) } })
@@ -1466,38 +1496,100 @@ final class AppState: ObservableObject {
 
     // MARK: - misc
 
-    private func invalidateWaveformContent(slots: Set<UInt16>? = nil) {
+    private func invalidateWaveformContent(slots: Set<UInt16>? = nil) async {
         waveformIntent.invalidate()
-        waveformCache.invalidate(slots: slots)
+        waveformLease?.cancel()
+        waveformRows.invalidate(slots: slots)
         if let shown = waveformShown, slots == nil || slots!.contains(shown.id) { waveformShown = nil }
+        if let session = waveformCacheSession { await waveformCache.invalidate(slots: slots, session: session) }
+    }
+
+    func prepareWaveformRow(_ item: SoundItem, epoch: UUID) {
+        guard epoch == waveformRows.epoch, isConnected, soundsListed, view == .sounds, let session = waveformCacheSession,
+              sounds.contains(where: { $0.node == item.node }) else { return }
+        waveformLookups.removeAll { !waveformRows.isCurrent($0.request) || !hotplug.isCurrent($0.generation) }
+        guard waveformLookups.count < 64,
+              let request = waveformRows.beginLookup(slot: item.id, size: Int(item.node.size)) else { return }
+        waveformLookups.append(WaveformLookup(item: item, generation: hotplug.currentGeneration(),
+                                              session: session, request: request))
+        guard waveformLookupTask == nil else { return }
+        waveformLookupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !waveformLookups.isEmpty {
+                let lookup = waveformLookups.removeFirst()
+                guard waveformLookupIsCurrent(lookup) else {
+                    waveformRows.cancelLookup(lookup.request)
+                    continue
+                }
+                let record = await waveformCache.load(session: lookup.session, slot: lookup.item.id,
+                                                       size: Int(lookup.item.node.size))
+                guard waveformLookupIsCurrent(lookup) else {
+                    waveformRows.cancelLookup(lookup.request)
+                    continue
+                }
+                waveformRows.finishLookup(lookup.request, record: record)
+            }
+            waveformLookupTask = nil
+        }
+    }
+
+    func releaseWaveformRow(_ item: SoundItem, epoch: UUID) {
+        guard epoch == waveformRows.epoch else { return }
+        waveformRows.forget(slot: item.id, size: Int(item.node.size), epoch: epoch)
+        waveformLookups.removeAll { $0.item.node == item.node }
+        if waveformShown?.item.node == item.node { waveformShown = nil }
+    }
+
+    private func waveformLookupIsCurrent(_ lookup: WaveformLookup) -> Bool {
+        hotplug.isCurrent(lookup.generation) && waveformCacheSession == lookup.session
+            && waveformRows.isCurrent(lookup.request) && soundsListed && view == .sounds
+            && visibleSounds.contains(where: { $0.node == lookup.item.node })
+    }
+
+    private func waveformIsCurrent(_ request: WaveformIntent.Request, lease: WaveformCacheLease) -> Bool {
+        lease.isCurrent && waveformIntent.isCurrent(request, generation: hotplug.currentGeneration())
     }
 
     func showWaveform(_ item: SoundItem, forceRefresh: Bool = false) async {
-        guard soundsListed, sounds.contains(where: { $0.node == item.node }), enterDevice() else { return }
-        defer { leaveDevice() }
-        guard let files else { return }
-        let token = hotplug.currentGeneration()
-        if forceRefresh {
-            waveformCache.invalidate(slots: [item.id])
-            waveformShown = WaveformShown(item: item, record: nil, loopStart: nil, loopEnd: nil,
-                                          cached: false, metadataConfirmed: false)
+        guard inlineRename == nil, inlineSlotEdit == nil, metadataEditing == nil else {
+            noteError("finish the inline edit before opening a waveform")
+            return
         }
+        guard isConnected, view == .sounds, !modalOpen, statusDetails.isEmpty, soundsListed,
+              visibleSounds.contains(where: { $0.node == item.node }), enterDevice() else { return }
+        defer { leaveDevice() }
+        guard let files, let cacheSession = waveformCacheSession else { return }
+        let token = hotplug.currentGeneration()
+        waveformLease?.cancel()
+        let lease = WaveformCacheLease()
+        waveformLease = lease
         let request = waveformIntent.begin(slot: item.id, generation: token)
         let op = progress.begin()
         defer { progress.end(op) }
-        var cached = forceRefresh ? nil : waveformCache.load(slot: item.id, size: Int(item.node.size))
-        if let cached {
-            waveformShown = WaveformShown(item: item, record: cached, loopStart: nil, loopEnd: nil,
-                                          cached: true, metadataConfirmed: false)
+        let local = forceRefresh ? nil : waveformRows.snapshot(slot: item.id, size: Int(item.node.size))?.record
+        waveformShown = WaveformShown(item: item, record: local, loopStart: nil, loopEnd: nil,
+                                      cached: local != nil, metadataConfirmed: false)
+        if forceRefresh {
+            waveformRows.invalidate(slots: [item.id])
+            await waveformCache.invalidate(slots: [item.id], session: cacheSession)
         }
+        guard waveformIsCurrent(request, lease: lease), let cacheToken = await waveformCache.token(session: cacheSession),
+              waveformIsCurrent(request, lease: lease) else { return }
+        var cached = forceRefresh ? nil : await waveformCache.load(session: cacheSession, slot: item.id, size: Int(item.node.size))
+        guard waveformIsCurrent(request, lease: lease) else { return }
+        waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: cached)
+        waveformShown = WaveformShown(item: item, record: cached, loopStart: nil, loopEnd: nil,
+                                      cached: cached != nil, metadataConfirmed: false)
         do {
             let meta = try await files.getMetadata(fileID: item.id)
-            guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+            guard waveformIsCurrent(request, lease: lease) else { return }
             let channels = meta["channels"]?.intValue ?? cached?.channels ?? 1
             let sampleRate = meta["samplerate"]?.intValue ?? cached?.sampleRate ?? deviceSampleRate
             if cached != nil {
-                cached = waveformCache.load(slot: item.id, size: Int(item.node.size),
-                                            channels: channels, sampleRate: sampleRate)
+                cached = await waveformCache.load(session: cacheSession, slot: item.id, size: Int(item.node.size),
+                                                  channels: channels, sampleRate: sampleRate)
+                guard waveformIsCurrent(request, lease: lease) else { return }
+                waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: cached)
                 if cached == nil {
                     waveformShown = WaveformShown(item: item, record: nil, loopStart: nil, loopEnd: nil,
                                                   cached: false, metadataConfirmed: true)
@@ -1516,16 +1608,18 @@ final class AppState: ObservableObject {
                         self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                     }
                 }.data
-                guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+                guard waveformIsCurrent(request, lease: lease) else { return }
                 let computed = await Task.detached(priority: .userInitiated) {
                     WaveformPeakRecord(pcm: pcm, channels: channels, sampleRate: sampleRate)
                 }.value
-                guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+                guard waveformIsCurrent(request, lease: lease) else { return }
                 guard let computed else { throw DownloadFailure(errorDescription: "unsupported or incomplete audio format") }
                 record = computed
-                waveformCache.store(record, slot: item.id)
+                guard await waveformCache.store(record, slot: item.id, token: cacheToken, lease: lease),
+                      waveformIsCurrent(request, lease: lease) else { return }
             }
-            guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+            guard waveformIsCurrent(request, lease: lease) else { return }
+            waveformRows.remember(slot: item.id, size: Int(item.node.size), record: record, cached: cached != nil)
             let confirmed = SoundItem(node: item.node, displayName: meta["name"]?.stringValue ?? item.displayName)
             waveformShown = WaveformShown(item: confirmed, record: record,
                                           loopStart: meta["sound.loopstart"]?.intValue,
@@ -1533,7 +1627,7 @@ final class AppState: ObservableObject {
                                           cached: cached != nil, metadataConfirmed: true)
             progress.update(op, nil)
         } catch {
-            guard waveformIntent.isCurrent(request, generation: hotplug.currentGeneration()) else { return }
+            guard waveformIsCurrent(request, lease: lease) else { return }
             progress.update(op, nil)
             if waveformShown?.record == nil { waveformShown = nil }
             reportOperationError("waveform: \(error.localizedDescription)", token: token)

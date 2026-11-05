@@ -60,6 +60,14 @@ public struct WaveformRows: Sendable {
         return true
     }
 
+    public mutating func reconcileCache(slot: UInt16, size: Int, record: WaveformPeakRecord?) {
+        guard let record else {
+            invalidate(slots: [slot])
+            return
+        }
+        if snapshot(slot: slot, size: size)?.record != record { remember(slot: slot, size: size, record: record) }
+    }
+
     public mutating func remember(slot: UInt16, size: Int, record: WaveformPeakRecord?, cached: Bool = true) {
         let snapshot = record.flatMap { $0.size == size ? WaveformRowSnapshot(record: $0, cached: cached) : nil }
         entries[slot] = Entry(size: size, snapshot: snapshot)
