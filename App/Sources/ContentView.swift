@@ -60,9 +60,6 @@ struct ContentView: View {
         } message: { pending in
             Text(pending.prompt)
         }
-        .sheet(item: $state.waveformShown) { shown in
-            WaveformSheet(state: state, shown: shown)
-        }
         .confirmationDialog("remove from bin for good?", isPresented: binRemoveBinding,
                             presenting: state.binToRemove) { entry in
             Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
@@ -318,7 +315,8 @@ struct ContentView: View {
     }
 
     private func soundRow(_ item: SoundItem) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let epoch = state.waveformRows.epoch
+        return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 RowDragHandle(item: item, state: state)
                     .frame(width: 28, height: minHitHeight)
@@ -345,6 +343,7 @@ struct ContentView: View {
                     Text(item.displayName)
                 }
                 Spacer()
+                waveformButton(item)
                 if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
                                               deviceBusy: state.deviceBusy) {
                     Text(marker)
@@ -376,10 +375,47 @@ struct ContentView: View {
             }
             slotNote(item)
             metadataDetails(item)
+            if let shown = state.waveformShown, shown.id == item.id {
+                WaveformDetail(state: state, shown: shown, focus: $focus) { closeWaveform(item.id) }
+            }
         }
+        .onAppear { state.prepareWaveformRow(item, epoch: epoch) }
+        .onDisappear { state.releaseWaveformRow(item, epoch: epoch) }
+        .onChange(of: item) { _, _ in state.prepareWaveformRow(item, epoch: epoch) }
+        .onChange(of: state.waveformRows.epoch) { _, current in state.prepareWaveformRow(item, epoch: current) }
+        .onChange(of: state.soundsListed) { _, listed in if listed { state.prepareWaveformRow(item, epoch: epoch) } }
         .tag(item.id)
         .id(item.id)
         .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
+    }
+
+    private func waveformButton(_ item: SoundItem) -> some View {
+        let snapshot = state.waveformRows.snapshot(slot: item.id, size: Int(item.node.size))
+        return Button {
+            if state.waveformShown?.id == item.id {
+                closeWaveform(item.id)
+            } else {
+                Task { await state.showWaveform(item) }
+            }
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                if !collapsesRowActions { WaveformThumbnail(snapshot: snapshot, compact: false) }
+                WaveformThumbnail(snapshot: snapshot, compact: true)
+            }
+        }
+        .buttonStyle(.plain)
+        .focused($focus, equals: .rowAction(item.id, .waveform))
+        .disabled(state.deviceBusy)
+        .accessibilityLabel("Show waveform, slot \(item.id)")
+        .accessibilityValue(snapshot?.description ?? "waveform not loaded")
+        .help("show waveform: " + (snapshot?.description ?? "waveform not loaded"))
+    }
+
+    private func closeWaveform(_ id: UInt16) {
+        guard state.waveformShown?.id == id else { return }
+        state.waveformShown = nil
+        if focus == nil || focus == .waveformPlay(id) || focus == .waveformRefresh(id)
+            || focus == .waveformClose(id) || focus == .rowAction(id, .waveform) { focus = .soundList }
     }
 
     @ViewBuilder private func slotField(_ item: SoundItem) -> some View {
@@ -642,7 +678,6 @@ struct ContentView: View {
             },
             RowCommand(action: .rename, help: "rename") { beginRename(item) },
             RowCommand(action: .metadata, help: "edit metadata") { beginMetadata(item) },
-            RowCommand(action: .waveform, help: "show waveform") { Task { await state.showWaveform(item) } },
             RowCommand(action: .delete, help: "delete from device") { Task { await state.delete(item) } },
         ]
     }
