@@ -82,6 +82,7 @@ struct KokokoCoreChecks {
         projectArchiveValidationChecks()
         archiveNameChecks()
         waveformChecks()
+        do { try waveformCacheChecks() } catch { check(false, "peak cache: \(error)") }
         confirmationChecks()
         do {
             try audioChecks()
