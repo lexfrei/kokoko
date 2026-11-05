@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SoundFocus: Hashable, Sendable {
-    case soundList, filter, bulkMove
+    case soundList, filter, bulkMove, rangeJump(Int)
     case slotNumber(UInt16), slot(UUID), slotRefresh(UUID), rename(UInt16), rowAction(UInt16, RowAction), rowMenu(UInt16)
     case metadataField(UUID, String), metadataSave(UUID), metadataCancel(UUID), metadataRetry(UUID)
 }

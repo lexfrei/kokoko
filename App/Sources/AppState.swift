@@ -62,6 +62,8 @@ final class AppState: ObservableObject {
     }
     /// Old row addresses are unusable after an unrefreshed move or a missing source.
     @Published private(set) var soundsListed = false
+    @Published private(set) var listedSoundCount: Int?
+    @Published private(set) var soundStorage = SoundStorageState()
     @Published var filterText = "" {
         didSet {
             if filterText != oldValue {
@@ -437,6 +439,8 @@ final class AppState: ObservableObject {
         soundsRootID = nil
         sounds = []
         soundsListed = false
+        listedSoundCount = nil
+        soundStorage = SoundStorageState()
         projects = []
         selection = []
         unbinnedDelete = nil
@@ -527,35 +531,59 @@ final class AppState: ObservableObject {
     /// False when the listing failed, so `sounds` may be stale.
     @discardableResult
     func reload() async -> Bool {
-        guard let files else { return false }
+        guard let files else {
+            soundsListed = false
+            soundStorage.invalidate()
+            return false
+        }
         pcmCache = [:]
-        // A disconnect while listing makes the result belong to a device that left.
         let token = hotplug.currentGeneration()
+        let request = soundStorage.begin(generation: token)
+        soundsListed = false
+        let root: UInt16
         do {
-            let root = try await resolve("/sounds")
-            // Uploads need the root even when the listing below fails.
-            if hotplug.isCurrent(token) { soundsRootID = root }
-            let nodes = try await files.list(nodeID: root)
-            var items: [SoundItem] = []
-            for node in nodes where node.isFile {
-                let meta = try? await files.getMetadata(fileID: node.id)
-                let display = meta?["name"]?.stringValue ?? node.name
-                items.append(SoundItem(node: node, displayName: display))
-            }
-            guard hotplug.isCurrent(token) else { return false }
-            if var edit = inlineSlotEdit, edit.submitting, edit.generation == token {
-                let carried = edit.reconcile(occupied: Set(items.map(\.id)))
-                inlineSlotEdit = edit
-                selection = remapSelection(selection, moves: carried)
-            }
-            sounds = items
-            soundsListed = true
-            errorLine.clear()
-            return true
+            root = try await resolve("/sounds")
         } catch {
+            guard hotplug.isCurrent(token) else { return false }
+            let storage: Result<SoundStorage, any Error>
+            if let knownRoot = soundsRootID {
+                storage = await readSoundStorage(files: files, root: knownRoot)
+            } else {
+                storage = .failure(error)
+            }
+            _ = soundStorage.finish(request: request, generation: hotplug.currentGeneration(), result: storage)
             reportOperationError("list failed: \(error.localizedDescription)", token: token)
             return false
         }
+        guard hotplug.isCurrent(token) else { return false }
+        soundsRootID = root
+        let read = await readSoundDirectory(files: files, root: root)
+        guard hotplug.isCurrent(token) else { return false }
+        _ = soundStorage.finish(request: request, generation: token, result: read.storage)
+        let nodes: [FSNode]
+        switch read.nodes {
+        case .success(let listed): nodes = listed
+        case .failure(let error):
+            reportOperationError("list failed: \(error.localizedDescription)", token: token)
+            return false
+        }
+        var items: [SoundItem] = []
+        for node in nodes where node.isFile {
+            let meta = try? await files.getMetadata(fileID: node.id)
+            let display = meta?["name"]?.stringValue ?? node.name
+            items.append(SoundItem(node: node, displayName: display))
+        }
+        guard hotplug.isCurrent(token) else { return false }
+        if var edit = inlineSlotEdit, edit.submitting, edit.generation == token {
+            let carried = edit.reconcile(occupied: Set(items.map(\.id)))
+            inlineSlotEdit = edit
+            selection = remapSelection(selection, moves: carried)
+        }
+        sounds = items
+        listedSoundCount = items.count
+        soundsListed = true
+        errorLine.clear()
+        return true
     }
 
     private func resolve(_ path: String) async throws -> UInt16 {
@@ -874,6 +902,7 @@ final class AppState: ObservableObject {
     }
 
     private func invalidateMetadataIntent(affecting ids: Set<UInt16>? = nil, listingMayChange: Bool = true) {
+        soundStorage.invalidate()
         if listingMayChange { soundsListed = false }
         guard let edit = metadataEditing else { return }
         if let ids, !ids.contains(edit.id) { return }
@@ -1036,6 +1065,7 @@ final class AppState: ObservableObject {
             defer { leaveDevice() }
             let op = progress.begin("save metadata")
             defer { progress.end(op) }
+            soundStorage.invalidate()
             let result = await saveMetadataDraft(files: files, fileID: edit.id, form: form,
                                                  refreshBeforeWrite: refreshBeforeWrite,
                                                  isCurrent: { await MainActor.run {
