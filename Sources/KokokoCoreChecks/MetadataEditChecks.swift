@@ -86,6 +86,16 @@ extension KokokoCoreChecks {
         check(saved.message == nil, "metadata save: a confirmed write reports no error")
         eq(saved.current, stored, "metadata save: the values are read back after a write")
 
+        let mismatch = await saveMetadataSteps(["sound.bpm": .int(121)], set: { _ in },
+                                               get: { ["sound.bpm": .int(120)] })
+        check(mismatch.message != nil, "metadata save: acknowledgement without matching readback is not success")
+        let normalized = await saveMetadataSteps(["sound.bpm": .int(121)], set: { _ in },
+                                                 get: { ["sound.bpm": .double(121.0)] })
+        check(normalized.message == nil, "metadata save: integral JSON numbers compare after normalization")
+        let wrongType = await saveMetadataSteps(["sound.rootnote": .int(1)], set: { _ in },
+                                                get: { ["sound.rootnote": .bool(true)] })
+        check(wrongType.message != nil, "metadata save: a boolean is not confirmation of a number")
+
         let refused = await saveMetadataSteps(["sound.bpm": .int(121)], set: { _ in
             throw SessionError.deviceError(.specificError(16), message: nil)
         }, get: { ["sound.bpm": .int(120)] })
@@ -144,6 +154,17 @@ extension KokokoCoreChecks {
             vep.refuseMetadataSet = false
             check(refused.message?.hasPrefix("the device refused") == true, "metadata vep: a refused edit says so")
             eq(refused.current?["sound.bpm"], .int(133), "metadata vep: a refused edit leaves the stored value")
+            var draft = MetadataEditForm(metadata: try await files.getMetadata(fileID: kick))
+            draft.text["sound.bpm"] = " 0140 "
+            let inline = await saveMetadataDraft(files: files, fileID: kick, form: draft,
+                                                 refreshBeforeWrite: false, isCurrent: { true })
+            if case .saved(let confirmed) = inline {
+                eq(confirmed.text["sound.bpm"], " 0140 ", "metadata vep: checked draft save preserves raw formatting")
+                eq(confirmed.changes, [:], "metadata vep: checked readback leaves no duplicate write")
+            } else { check(false, "metadata vep: checked draft save succeeds") }
+            let stored = try await files.getMetadata(fileID: kick)
+            eq(stored["sound.bpm"], .int(140), "metadata vep: checked draft value reaches the device")
+            eq(stored["channels"], .int(1), "metadata vep: checked draft does not write untouched format keys")
         } catch {
             check(false, "metadata vep: \(error.localizedDescription)")
         }
