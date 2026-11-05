@@ -19,18 +19,25 @@ struct WaveformSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("waveform: \(shown.item.displayName)")
+            Text(shown.record == nil ? "audio not loaded" : shown.cached ? "cached audio · unverified" : "audio read from device")
+                .foregroundStyle(.secondary)
             GeometryReader { geometry in
-                let waveform = Waveform(pcm: shown.pcm, channels: shown.channels, sampleRate: shown.sampleRate,
-                                        columns: max(Int(geometry.size.width / cell.width), 1),
-                                        loopStart: shown.loopStart, loopEnd: shown.loopEnd)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(marks(waveform)).lineLimit(1)
-                    Canvas { context, size in draw(waveform, in: context, size: size) }
-                        .frame(height: cell.height * Self.barLines)
-                    Text(waveform.loopDescription).foregroundStyle(.secondary)
+                if let record = shown.record {
+                    let waveform = Waveform(record: record, columns: max(Int(geometry.size.width / cell.width), 1),
+                                            loopStart: shown.loopStart, loopEnd: shown.loopEnd)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(marks(waveform)).lineLimit(1)
+                        Canvas { context, size in draw(waveform, in: context, size: size) }
+                            .frame(height: cell.height * Self.barLines)
+                        Text(shown.metadataConfirmed ? waveform.loopDescription : "loop metadata not read")
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel((shown.cached ? "Cached, unverified. " : "")
+                                        + (shown.metadataConfirmed ? waveform.summary : "Waveform. Loop metadata not read"))
+                } else {
+                    Text("reading waveform…").foregroundStyle(.secondary)
                 }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(waveform.summary)
             }
             .frame(height: cell.height * (Self.barLines + 2))
             HStack {
@@ -42,6 +49,9 @@ struct WaveformSheet: View {
                 .buttonStyle(.plain)
                 .disabled(state.deviceBusy)
                 .accessibilityLabel(RowAction.play.accessibilityLabel)
+                barButton(.refresh) { Task { await state.showWaveform(shown.item, forceRefresh: true) } }
+                    .disabled(state.deviceBusy)
+                    .accessibilityLabel("Read this sound's audio again")
                 Spacer()
                 barButton(.close) { state.waveformShown = nil }
             }
