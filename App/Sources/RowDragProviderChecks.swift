@@ -51,7 +51,7 @@ enum RowDragProviderChecks {
         return failures == 0 ? 0 : 1
     }
 
-    private final class PromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
+    final class PromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
         var writes = 0
 
         func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider, fileNameForType fileType: String) -> String {

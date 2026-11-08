@@ -19,6 +19,9 @@ struct KokokoApp: App {
         if CommandLine.arguments.contains("--check-drag-provider") {
             exit(RowDragProviderChecks.run())
         }
+        if CommandLine.arguments.contains("--check-native-row-drop") {
+            exit(NativeRowDropChecks.run())
+        }
         #endif
         #if os(macOS)
         // SPM smoke runs have no app bundle; without this the window stays backgrounded.

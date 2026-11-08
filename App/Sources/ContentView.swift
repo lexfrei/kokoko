@@ -9,6 +9,10 @@ struct ContentView: View {
     // Classic property wrapper on purpose: macro-based @State/@EnvironmentObject
     // need Xcode's SwiftUIMacros plugin; this stays typecheckable with CLT.
     @ObservedObject var state: AppState
+    #if os(macOS) && DEBUG
+    var rowDropCheck: Bool?
+    var rowDropCheckFocus: Binding<SoundFocus?> = .constant(nil)
+    #endif
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
     @State private var targetedRow: UInt16?
@@ -45,7 +49,18 @@ struct ContentView: View {
                       defaultFilename: state.exportName) { _ in
             state.exportDocument = nil
         }
+        #if os(macOS) && DEBUG
+        .onChange(of: rowDropCheckFocus.wrappedValue) { _, value in
+            if rowDropCheck != nil { focus = value }
+        }
+        .onChange(of: focus) { _, value in
+            if rowDropCheck != nil { rowDropCheckFocus.wrappedValue = value }
+        }
+        #endif
         .task {
+            #if os(macOS) && DEBUG
+            guard rowDropCheck == nil else { return }
+            #endif
             state.watchDevices()
             if case .idle = state.connection {
                 await state.scan()
@@ -315,6 +330,24 @@ struct ContentView: View {
     }
 
     private func soundRow(_ item: SoundItem) -> some View {
+        Group {
+            #if os(macOS) && DEBUG
+            if rowDropCheck == true {
+                NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item))
+            } else {
+                soundRowContent(item)
+                    .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
+            }
+            #else
+            soundRowContent(item)
+                .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
+            #endif
+        }
+        .tag(item.id)
+        .id(item.id)
+    }
+
+    private func soundRowContent(_ item: SoundItem) -> some View {
         let epoch = state.waveformRows.epoch
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
@@ -384,9 +417,6 @@ struct ContentView: View {
         .onChange(of: item) { _, _ in state.prepareWaveformRow(item, epoch: epoch) }
         .onChange(of: state.waveformRows.epoch) { _, current in state.prepareWaveformRow(item, epoch: current) }
         .onChange(of: state.soundsListed) { _, listed in if listed { state.prepareWaveformRow(item, epoch: epoch) } }
-        .tag(item.id)
-        .id(item.id)
-        .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
     }
 
     private func waveformButton(_ item: SoundItem) -> some View {
