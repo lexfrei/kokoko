@@ -889,9 +889,7 @@ struct ContentView: View {
                     .focused($focus, equals: .bulkMove)
                     .frame(width: 56)
                 barButton(.moveSelection) {
-                    if let start = UInt16(state.bulkMoveStart) {
-                        Task { await state.moveSelection(startingAt: start) }
-                    }
+                    Task { await state.moveSelectionFromDraft() }
                 }
                 .disabled(state.deviceBusy)
                 barButton(.downloadSelection) { state.picker = .downloadFolder(Array(state.selection)) }

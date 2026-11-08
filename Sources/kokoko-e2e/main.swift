@@ -862,7 +862,9 @@ struct E2E {
             check(false, "a move puts the sound in the new slot and frees the old one — threw \(error)")
         }
         do {
-            try await run(planSwap(220, 221, occupied: Set(try await files.list(nodeID: soundsID).map(\.id))))
+            let occupied = Set(try await files.list(nodeID: soundsID).map(\.id))
+            if let plan = planSwap(220, 221, occupied: occupied) { try await run(plan) }
+            else { check(false, "a swap has a free sound slot for scratch") }
             let swappedLow = await data(220), swappedHigh = await data(221)
             check(swappedLow == [3, 3] && swappedHigh == [2, 2], "a swap trades the two sounds' slots")
         } catch {
@@ -888,7 +890,7 @@ struct E2E {
         check(occupiedMove == .refused("slot 220 is occupied") && inlineKept == [4, 4] && occupiedKept == [3, 3],
               "inline slot move never turns an occupied destination into a swap")
         let zeroMove = await moveToFreeSlot(files: files, root: soundsID, from: 250, to: 0, isCurrent: { true })
-        check(zeroMove == .refused("slot zero is not a move destination"), "inline slot move rejects the zero sentinel")
+        check(zeroMove == .refused(SoundMoveError.invalidSlot.localizedDescription), "inline slot move rejects the zero sentinel")
         let staleMove = await moveToFreeSlot(files: files, root: soundsID, from: 250, to: 251, isCurrent: { false })
         check(staleMove == .stale, "inline slot move rejects an old device generation")
         do {

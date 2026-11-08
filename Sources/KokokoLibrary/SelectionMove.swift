@@ -1,41 +1,45 @@
 import Foundation
 
-/// Moves that put the selected sounds, in slot order, on consecutive free
-/// slots from `start`, skipping slots held by unselected sounds. Every
-/// selected sound first moves out to a temporary slot counting down from
-/// 65000, so targets that are themselves selected never collide. Nil when
-/// the targets would wrap or run into the temporary slots.
+/// Conservative application policy for sound moves, not global filesystem node IDs.
+public let soundMoveSlots: ClosedRange<UInt16> = 1...999
+
+public enum SoundMoveError: LocalizedError {
+    case invalidSlot
+
+    public var errorDescription: String? { "sound move slots must be from 1 to 999" }
+}
+
+/// Places the selection in slot order, skipping unselected occupants. Each sound
+/// needs a free scratch slot outside the final targets; nil refuses the whole plan.
 public func planBulkMove(selected: [UInt16], occupied: Set<UInt16>,
                          start: UInt16) -> [(from: UInt16, to: UInt16)]? {
     let ids = selected.sorted()
     let selectedSet = Set(ids)
-    var moveOut: [(from: UInt16, to: UInt16)] = []
-    var temp: UInt16 = 65000
-    for id in ids {
-        while occupied.contains(temp) { temp &-= 1 }
-        moveOut.append((id, temp))
-        temp &-= 1
-    }
-    let lowestTemp = moveOut.last?.to ?? UInt16.max
-
-    var moveIn: [(from: UInt16, to: UInt16)] = []
+    guard soundMoveSlots.contains(start), ids.allSatisfy(soundMoveSlots.contains),
+          selectedSet.count == ids.count, selectedSet.isSubset(of: occupied) else { return nil }
+    var targets: [UInt16] = []
     var target = Int(start)
-    for pair in moveOut {
-        while target < Int(lowestTemp), occupied.contains(UInt16(target)),
+    for _ in ids {
+        while target <= Int(soundMoveSlots.upperBound), occupied.contains(UInt16(target)),
               !selectedSet.contains(UInt16(target)) {
             target += 1
         }
-        guard target < Int(lowestTemp) else { return nil }
-        moveIn.append((pair.to, UInt16(target)))
+        guard target <= Int(soundMoveSlots.upperBound) else { return nil }
+        targets.append(UInt16(target))
         target += 1
     }
-    return moveOut + moveIn
+    let reserved = occupied.union(targets)
+    let scratch = Array(soundMoveSlots.reversed().filter { !reserved.contains($0) }.prefix(ids.count))
+    guard scratch.count == ids.count else { return nil }
+    return zip(ids, scratch).map { (from: $0, to: $1) }
+        + zip(scratch, targets).map { (from: $0, to: $1) }
 }
 
 /// Moves that take back `done`, newest first, so every slot a move vacated
-/// is free again when its sound returns.
+/// is free again when its sound returns. Invalid sound slots refuse the whole undo.
 public func undoMoves(_ done: [(from: UInt16, to: UInt16)]) -> [(from: UInt16, to: UInt16)] {
-    done.reversed().map { (from: $0.to, to: $0.from) }
+    guard done.allSatisfy({ soundMoveSlots.contains($0.from) && soundMoveSlots.contains($0.to) }) else { return [] }
+    return done.reversed().map { (from: $0.to, to: $0.from) }
 }
 
 /// Whether a move whose reply failed ran anyway, judged from the slots the
@@ -61,11 +65,12 @@ public func rollbackMoves(_ done: [(from: UInt16, to: UInt16)],
     return safe
 }
 
-/// Moves that swap the sounds in slots `a` and `b` through a temporary slot,
-/// the first free one counting down from 65000.
-public func planSwap(_ a: UInt16, _ b: UInt16, occupied: Set<UInt16>) -> [(from: UInt16, to: UInt16)] {
-    var temp: UInt16 = 65000
-    while occupied.contains(temp) { temp &-= 1 }
+/// Swaps two occupied sound slots through a free sound slot, or refuses the whole plan.
+public func planSwap(_ a: UInt16, _ b: UInt16, occupied: Set<UInt16>) -> [(from: UInt16, to: UInt16)]? {
+    guard soundMoveSlots.contains(a), soundMoveSlots.contains(b),
+          occupied.contains(a), occupied.contains(b) else { return nil }
+    guard a != b else { return [] }
+    guard let temp = soundMoveSlots.reversed().first(where: { !occupied.contains($0) }) else { return nil }
     return [(a, temp), (b, a), (temp, b)]
 }
 

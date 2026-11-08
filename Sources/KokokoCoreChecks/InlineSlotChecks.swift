@@ -19,12 +19,18 @@ extension KokokoCoreChecks {
                 !initial.isCurrent(selection: selection, visible: visible, tab: tab, generation: generation),
                 "inline slot: changed selection, visibility, tab or device invalidates the edit")
         }
-        for text in ["", " ", "0", "-1", "+12", "1.5", "12x", "65536", "１２", " 20", "20\n"] {
+        for text in ["", " ", "0", "-1", "+12", "1.5", "12x", "1000", "1001", "65000", "65535", "65536", "１２", " 20", "20\n"] {
             var edit = initial
             edit.draft = text
-            eq(edit.prepare(), .invalid, "inline slot: only ASCII digits in a nonzero UInt16 slot are accepted")
+            eq(edit.prepare(), .invalid, "inline slot: only ASCII digits in sound slots 1 through 999 are accepted")
             check(edit.error != nil && !edit.submitting && edit.canCancel, "inline slot: invalid draft stays editable")
             check(edit.blocksFilterChange, "inline slot: invalid target text protects range and search changes")
+        }
+        for source: UInt16 in [0, 1000, 1001, 65000] {
+            var edit = InlineSlotEdit(id: source, generation: 4)
+            edit.draft = "20"
+            eq(edit.prepare(), .invalid, "inline slot: an out-of-domain source cannot prepare MOVE")
+            check(edit.error != nil && !edit.submitting, "inline slot: invalid source has a visible refusal")
         }
         var unchanged = initial
         eq(unchanged.prepare(), .unchanged, "inline slot: same slot sends no MOVE")
@@ -32,8 +38,8 @@ extension KokokoCoreChecks {
         eq(unchanged.prepare(), .unchanged, "inline slot: leading zeros do not force a move")
         check(!unchanged.blocksFilterChange, "inline slot: equivalent padded input can close without a write")
         var upper = initial
-        upper.draft = "65535"
-        eq(upper.prepare(), .write(from: 12, to: 65535), "inline slot: maximum UInt16 slot does not wrap")
+        upper.draft = "999"
+        eq(upper.prepare(), .write(from: 12, to: 999), "inline slot: last sound slot is accepted")
         var edit = initial
         edit.draft = "0020"
         eq(edit.prepare(), .write(from: 12, to: 20), "inline slot: Return prepares a free-slot request")
@@ -118,14 +124,22 @@ extension KokokoCoreChecks {
             }
             eq(await fixture.moves, 1, "slot move: a failed reply never triggers an automatic retry")
         }
-        for target: UInt16 in [0, 12, 21] {
+        for target: UInt16 in [0, 12, 21, 1000, 1001, 65000] {
             let fixture = SlotMoveFixture(mode: .success)
             _ = await moveToFreeSlotSteps(
                 from: 12, to: target,
                 list: { try await fixture.list() },
                 move: { try await fixture.move() },
                 isCurrent: { await fixture.current })
-            eq(await fixture.moves, 0, "slot move: zero, unchanged and occupied targets do not write")
+            eq(await fixture.moves, 0, "slot move: invalid, unchanged and occupied targets do not write")
+        }
+        for source: UInt16 in [0, 1000, 1001, 65000] {
+            let fixture = SlotMoveFixture(mode: .success, occupied: [source])
+            let result = await moveToFreeSlotSteps(
+                from: source, to: 20, list: { try await fixture.list() },
+                move: { try await fixture.move() }, isCurrent: { await fixture.current })
+            if case .refused = result {} else { check(false, "slot move: invalid source is refused") }
+            eq(await fixture.moves, 0, "slot move: invalid source sends no MOVE")
         }
         let stale = SlotMoveFixture(mode: .success, invalidateAfterList: true)
         eq(

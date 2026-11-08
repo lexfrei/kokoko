@@ -28,7 +28,7 @@ public struct InlineSlotEdit: Sendable {
 
     private var destination: UInt16? {
         guard !draft.isEmpty, draft.utf8.allSatisfy({ (48...57).contains($0) }),
-              let target = UInt16(draft), target != 0 else { return nil }
+              let target = UInt16(draft), soundMoveSlots.contains(target) else { return nil }
         return target
     }
 
@@ -41,8 +41,12 @@ public struct InlineSlotEdit: Sendable {
     public mutating func prepare() -> SlotEditSubmission {
         guard !submitting else { return .waiting }
         guard let slot else { return .invalid }
+        guard soundMoveSlots.contains(slot) else {
+            error = SoundMoveError.invalidSlot.localizedDescription
+            return .invalid
+        }
         guard let target = destination else {
-            error = "enter a slot from 1 to 65535 using digits only"
+            error = "enter a slot from 1 to 999 using digits only"
             return .invalid
         }
         error = nil

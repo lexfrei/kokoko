@@ -4,7 +4,7 @@ import KokokoLibrary
 
 extension KokokoCoreChecks {
     static func waveformStoreChecks() async {
-        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kokoko-store-check-" + UUID().uuidString)
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/kokoko-store-check-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WaveformCacheStore(root: root)
         let session = await store.configure(model: "EP", serial: "one")

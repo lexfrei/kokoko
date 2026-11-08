@@ -163,7 +163,9 @@ Set (paged, when the JSON exceeds `chunk_size - 8`): init `[07 04 00 file_id:u16
 
 Request: `[0C file_id:u16 parent_id:u16 new_file_id:u16]`.
 
-Reply: `[old_file_id:u16 parent_id:u16 new_file_id:u16]`. The tool tolerates a timeout here and re-reads state afterwards.
+Reply: `[old_file_id:u16 parent_id:u16 new_file_id:u16]`. A missing reply is not proof that a move failed; kokoko re-reads the listing before rollback or retry.
+
+kokoko restricts sound moves, including scratch and rollback slots, to 1...999 as a conservative application policy across the supported EP family. This is not a verified firmware limit for EP-1320 or EP-40. Global filesystem node IDs are a separate domain: `/sounds` itself can be node 1000. Swaps need one free sound slot; bulk moves need one free scratch slot per selected sound, outside the final target slots. A plan that cannot reserve those slots is refused before any MOVE.
 
 ### Events (device-initiated, require INIT subscribe flag)
 
@@ -265,3 +267,9 @@ Probe runs over USB-C, 2026-10-30: a read-only pass, a write test, then a settin
 - Full write path verified: PUT upload lands with a device-assigned slot name (`032.pcm` for a file sent as `kokoko-test`), GET readback is byte-identical, DELETE removes it. Display names live in metadata `name`; the wire filename is rewritten to `NNN.pcm`.
 - Directories under `/sounds` are rejected by firmware: `can only create files`. Sample organization is a flat pool plus pad assignment via `{"sym": node_id}` metadata.
 - Settings (command 6): the settings dump sent init `[01 <page_size>]`, and the device answered command not found, so get-all and set were not sent.
+
+Controlled MOVE tests over direct USB, 2026-11-08, using one synthetic 936-byte PCM sound auto-assigned to slot 32:
+
+- INFO for slot 32 reported flags 29 (`0x1D`), without MOVE. Moving it under parent 1000 to slot 1001 received no acknowledgement; the device displayed a firmware fault and emitted `main[331]: err sound 24 2_5_1`.
+- After reboot, all 936 source bytes were intact in slot 32. INFO confirmed that slot 999 was free. One MOVE of the same source to slot 999 returned OK; GET from 999 matched all 936 bytes, with no fault observed.
+- These observations distinguish the two destinations and show that the absent MOVE flag is not a universal refusal. They do not establish that every destination above 999 faults, or verify swaps, bulk moves, or other EP models. No MOVE to root node 1000 or slot 65000 was tested; kokoko no longer uses 65000 as scratch.
