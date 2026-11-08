@@ -58,6 +58,12 @@ struct PendingSwap {
     }
 }
 
+private struct SoundMoveFailure: LocalizedError {
+    let cause: any Error
+    let recovery: String
+    var errorDescription: String? { "\(cause.localizedDescription); \(recovery)" }
+}
+
 enum FileProcessing: Equatable, Sendable {
     case processed, notStarted
 }
@@ -298,9 +304,13 @@ final class AppState: ObservableObject {
     private func move(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                       root: UInt16) async throws {
         guard soundMoveSlots.contains(id), soundMoveSlots.contains(target) else { throw SoundMoveError.invalidSlot }
+        let generation = rowDragGeneration
+        guard self.files === files else { throw SessionError.disconnected }
         await invalidateWaveformContent(slots: [id, target])
         invalidateMetadataIntent(affecting: [id, target])
+        guard self.files === files, rowDragGeneration == generation else { throw SessionError.disconnected }
         try await files.move(fileID: id, toParent: root, newFileID: target)
+        guard self.files === files, rowDragGeneration == generation else { throw SessionError.disconnected }
         selection = remapSelection(selection, moves: [(from: id, to: target)])
     }
 
@@ -309,48 +319,72 @@ final class AppState: ObservableObject {
     /// landed; the reload that follows would otherwise prune it.
     private func moveOne(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                          root: UInt16) async throws {
+        let generation = rowDragGeneration
         do {
             try await move(files, id, to: target, root: root)
         } catch {
             let occupied = (try? await files.list(nodeID: root)).map { Set($0.map(\.id)) }
+            guard self.files === files, rowDragGeneration == generation else { throw error }
             selection = selectionAfterFailedMove(selection, move: (from: id, to: target), occupied: occupied)
             throw error
         }
     }
 
-    /// Runs `steps` in order. When one fails, re-reads the slots and undoes
-    /// as much as they allow, stopping at the first undo that is unsafe or
-    /// refused; if the re-read fails, nothing is undone. Then rethrows the
-    /// original error. A failed reply does not mean the move did not run,
-    /// hence the re-read instead of a blind undo.
     private func runMoves(_ steps: [(from: UInt16, to: UInt16)], files: DeviceFileService,
                           root: UInt16, op: ProgressLine.Operation? = nil) async throws {
         guard steps.allSatisfy({ soundMoveSlots.contains($0.from) && soundMoveSlots.contains($0.to) }) else {
             throw SoundMoveError.invalidSlot
         }
+        let generation = rowDragGeneration
         var done: [(from: UInt16, to: UInt16)] = []
         do {
             for (index, step) in steps.enumerated() {
+                guard self.files === files, rowDragGeneration == generation else { throw SessionError.disconnected }
                 if let op { progress.update(op, "move \(index + 1)/\(steps.count)") }
                 try await move(files, step.from, to: step.to, root: root)
                 done.append(step)
             }
         } catch {
-            guard let nodes = try? await files.list(nodeID: root) else { throw error }
+            guard self.files === files, rowDragGeneration == generation else { throw error }
+            guard let nodes = try? await files.list(nodeID: root) else {
+                throw SoundMoveFailure(cause: error, recovery: "rollback not started: placement unknown; refresh before another move")
+            }
+            guard self.files === files, rowDragGeneration == generation else { throw error }
             let occupied = Set(nodes.map(\.id))
             let failed = steps[done.count]
             if stepLanded(failed, occupied: occupied) {
                 selection = remapSelection(selection, moves: [failed])
                 done.append(failed)
             }
+            let failure = error
             let undo = rollbackMoves(done, occupied: occupied)
             for (index, step) in undo.enumerated() {
+                guard self.files === files, rowDragGeneration == generation else { throw error }
                 if let op { progress.update(op, "undo \(index + 1)/\(undo.count)") }
                 do {
                     try await move(files, step.from, to: step.to, root: root)
                 } catch {
-                    break
+                    guard self.files === files, rowDragGeneration == generation else { throw error }
+                    let current = try? await files.list(nodeID: root)
+                    guard self.files === files, rowDragGeneration == generation else { throw error }
+                    guard let current else {
+                        throw SoundMoveFailure(cause: failure, recovery: "rollback stopped: placement unknown; refresh before another move")
+                    }
+                    let slots = Set(current.map(\.id))
+                    let placement: String
+                    if stepLanded(step, occupied: slots) {
+                        selection = remapSelection(selection, moves: [step])
+                        placement = "reverse move reached slot \(step.to) despite its failed reply"
+                    } else if slots.contains(step.from), !slots.contains(step.to) {
+                        placement = "sound remains in slot \(step.from)"
+                    } else {
+                        placement = "placement unknown; refresh before another move"
+                    }
+                    throw SoundMoveFailure(cause: failure, recovery: "rollback stopped: \(placement)")
                 }
+            }
+            if undo.count < done.count {
+                throw SoundMoveFailure(cause: failure, recovery: "rollback incomplete: remaining moves are unsafe")
             }
             throw error
         }
@@ -1552,6 +1586,7 @@ final class AppState: ObservableObject {
         defer { progress.end(op) }
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
         let token = hotplug.currentGeneration()
+        let generation = rowDragGeneration
         guard soundMoveSlots.contains(start), selection.allSatisfy(soundMoveSlots.contains) else {
             reportOperationError("bulk move: \(SoundMoveError.invalidSlot.localizedDescription)", token: token)
             return
@@ -1567,6 +1602,7 @@ final class AppState: ObservableObject {
             progress.update(op, nil)
             await reload()
         } catch {
+            guard self.files === files, rowDragGeneration == generation else { return }
             progress.update(op, nil)
             await reloadAfterFailedMove("bulk move: \(error.localizedDescription)", token: token)
         }
@@ -1611,6 +1647,7 @@ final class AppState: ObservableObject {
         }
         guard let files, let root = soundsRootID else { return }
         let token = hotplug.currentGeneration()
+        let generation = rowDragGeneration
         do {
             let nodes = try await files.list(nodeID: root)
             guard self.files === files, rowDragGeneration == pending.generation, hotplug.isCurrent(token),
@@ -1637,6 +1674,7 @@ final class AppState: ObservableObject {
             try await runMoves(plan, files: files, root: root)
             await reload()
         } catch {
+            guard self.files === files, rowDragGeneration == generation else { return }
             await reloadAfterFailedMove("swap: \(error.localizedDescription)", token: token)
         }
     }
@@ -1648,6 +1686,7 @@ final class AppState: ObservableObject {
         defer { leaveDevice() }
         guard let files, let root = soundsRootID else { return }
         let token = hotplug.currentGeneration()
+        let generation = rowDragGeneration
         guard soundMoveSlots.contains(id), soundMoveSlots.contains(target) else {
             reportOperationError("move: \(SoundMoveError.invalidSlot.localizedDescription)", token: token)
             return
@@ -1670,6 +1709,7 @@ final class AppState: ObservableObject {
             }
             await reload()
         } catch {
+            guard self.files === files, rowDragGeneration == generation else { return }
             await reloadAfterFailedMove("move: \(error.localizedDescription)", token: token)
         }
     }

@@ -68,6 +68,7 @@ enum WaveformValidityChecks {
     static func runSoundMoves() async -> Int32 {
         NSApplication.shared.setActivationPolicy(.prohibited)
         await inlineSwap()
+        await rollbackRecovery()
         await soundMoveSafety()
         print(failures == 0 ? "sound moves: all checks passed" : "sound moves: \(failures) check(s) failed")
         return failures == 0 ? 0 : 1
@@ -186,6 +187,95 @@ enum WaveformValidityChecks {
             window.close()
             await ui.close()
         }
+    }
+
+    private static func rollbackRecovery() async {
+        func sound(_ id: UInt16) -> SoundItem {
+            SoundItem(node: FSNode(id: id, parentID: 10, name: String(id), flags: 29, size: 4), displayName: "sound")
+        }
+        for (forward, undo, expected): (Int, WaveformWire.MoveFault, Set<UInt16>) in [
+            (2, .landedTimeout, [1, 2]), (2, .timeout, [2, 999]), (2, .refused, [2, 999]),
+            (3, .landedTimeout, [2, 999])
+        ] {
+            let f = await Fixture(listed: [sound(1), sound(2)])
+            f.wire.setListedSlots([1, 2])
+            f.wire.moveFaults([forward: .refused, forward + 1: undo])
+            f.state.selection = [1, 2]
+            await f.state.moveOrSwap(id: 1, toSlot: 2)
+            check(Set(f.state.sounds.map(\.id)) == expected && f.state.selection == expected,
+                  "rollback app: selection follows confirmed placement after \(forward)/\(undo)")
+            check(f.wire.moveOrder.count == forward + 1 && f.wire.safeMoves,
+                  "rollback app: failed undo stops without retry or occupied-target writes")
+            check(f.state.lastError != nil, "rollback app: original failure remains visible")
+            await f.close()
+        }
+        let lost = await Fixture(listed: [sound(1), sound(2)])
+        lost.wire.setListedSlots([1, 2])
+        lost.wire.moveFaults([2: .landedTimeout, 3: .landedTimeout])
+        lost.state.selection = [1, 2]
+        await lost.state.moveOrSwap(id: 1, toSlot: 2)
+        check(lost.state.selection == [2, 999] && Set(lost.state.sounds.map(\.id)) == [2, 999],
+              "rollback app: lost forward and reverse replies each remap exactly once")
+        check(lost.wire.moveOrder.count == 3 && lost.wire.safeMoves, "rollback app: landed lost reply is never retried")
+        await lost.close()
+
+        let bulk = await Fixture(listed: [sound(1), sound(2)])
+        bulk.wire.setListedSlots([1, 2])
+        bulk.wire.moveFaults([4: .refused, 5: .landedTimeout])
+        bulk.state.selection = [1, 2]
+        await bulk.state.moveSelection(startingAt: 10)
+        check(bulk.state.selection == [998, 999] && Set(bulk.state.sounds.map(\.id)) == [998, 999],
+              "rollback app: a longer plan carries the selection back to scratch after a lost undo reply")
+        check(bulk.wire.moveOrder.count == 5 && bulk.wire.safeMoves, "rollback app: longer plan stops at failed reverse reply")
+        await bulk.close()
+
+        for failedList in [2, 3] {
+            let f = await Fixture(listed: [sound(1), sound(2)])
+            f.wire.setListedSlots([1, 2])
+            f.wire.moveFaults([2: .refused, 3: .landedTimeout])
+            f.wire.failLists([failedList])
+            f.state.selection = [1]
+            await f.state.moveOrSwap(id: 1, toSlot: 2)
+            check(f.wire.moveOrder.count == (failedList == 2 ? 2 : 3) && f.wire.safeMoves,
+                  "rollback app: failed recovery listing schedules no further MOVE")
+            check(f.state.lastError?.contains("placement unknown") == true,
+                  "rollback app: unreadable recovery listing reports unknown placement")
+            await f.close()
+        }
+
+        for lostReply in [false, true] {
+            let stale = await Fixture(listed: [sound(1), sound(2)])
+            stale.wire.setListedSlots([1, 2])
+            stale.wire.moveFaults(lostReply ? [2: .refused, 3: .landedTimeout] : [2: .refused])
+            stale.wire.holdMove(at: 3)
+            stale.state.selection = [1]
+            let task = Task { await stale.state.moveOrSwap(id: 1, toSlot: 2) }
+            check(await held(stale.wire), "rollback app: reverse MOVE reaches the wire barrier")
+            stale.state.forgetDevice()
+            stale.state.sounds = [sound(999)]
+            stale.state.selection = [999]
+            stale.wire.resume()
+            await task.value
+            check(stale.state.selection == [999] && stale.wire.moveOrder.count == 3,
+                  "rollback app: old reverse completion cannot remap a new device selection")
+            await stale.close()
+        }
+        let reread = await Fixture(listed: [sound(1), sound(2)])
+        reread.wire.setListedSlots([1, 2])
+        reread.wire.moveFaults([2: .refused])
+        reread.wire.holdList(at: 2)
+        reread.state.selection = [1]
+        let recovery = Task { await reread.state.moveOrSwap(id: 1, toSlot: 2) }
+        check(await held(reread.wire), "rollback app: forward failure reaches recovery LIST barrier")
+        reread.state.forgetDevice()
+        reread.state.sounds = [sound(999)]
+        reread.state.selection = [999]
+        reread.wire.resume()
+        await recovery.value
+        check(reread.state.selection == [999] && reread.wire.moveOrder.count == 2,
+              "rollback app: stale recovery listing cannot schedule undo or remap new selection")
+        await reread.close()
+
     }
 
     private static func soundMoveSafety() async {
@@ -1139,7 +1229,21 @@ enum WaveformValidityChecks {
     }
 
     private final class WaveformWire: MIDIWire, @unchecked Sendable {
-        private enum Hold { case metadata, pcm }
+        enum MoveFault { case refused, timeout, landedTimeout }
+        private enum Hold { case metadata, pcm, move, list }
+        private var heldList: Int?
+        func holdList(at attempt: Int) { lock.withLock { heldList = attempt } }
+        private var faults: [Int: MoveFault] = [:]
+        private var moves: [(UInt16, UInt16)] = []
+        private var unsafe = false
+        private var listCount = 0
+        private var failedLists: Set<Int> = []
+        private var heldMove: Int?
+        func moveFaults(_ faults: [Int: MoveFault]) { lock.withLock { self.faults = faults } }
+        func failLists(_ attempts: Set<Int>) { lock.withLock { failedLists = attempts } }
+        func holdMove(at attempt: Int) { lock.withLock { heldMove = attempt } }
+        var moveOrder: [(UInt16, UInt16)] { lock.withLock { moves } }
+        var safeMoves: Bool { lock.withLock { !unsafe } }
         private let lock = NSLock()
         private var handler: (@Sendable ([UInt8]) -> Void)?
         private var metadata: [String: JSONValue] = [:]
@@ -1208,6 +1312,11 @@ enum WaveformValidityChecks {
                 case (FileSub.list, _):
                     let page = readU16(request.payload, 1)
                     let parent = readU16(request.payload, 3)
+                    if parent == 10, page == 0 {
+                        listCount += 1
+                        if heldList == listCount { kind = .list; hold = .list }
+                        if failedLists.contains(listCount) { status = 3; break }
+                    }
                     appendU16(page, to: &payload)
                     if page == 0, parent == 0 || parent == 10 {
                         for id in parent == 0 ? [UInt16(10)] : (listedSlots ?? [1]) {
@@ -1219,14 +1328,24 @@ enum WaveformValidityChecks {
                     }
                 case (FileSub.move, _):
                     let from = readU16(request.payload, 1), to = readU16(request.payload, 5)
+                    moves.append((from, to))
+                    if heldMove == moves.count { kind = .move; hold = .move }
+                    let fault = faults[moves.count]
                     guard var slots = listedSlots, slots.contains(from), !slots.contains(to),
                           readU16(request.payload, 3) == 10, (1...999).contains(from), (1...999).contains(to) else {
+                        unsafe = true
                         status = 3
                         break
                     }
+                    if fault == .refused { status = 3; break }
+                    if fault == .timeout { throw SessionError.timeout(command: request.command, requestID: request.requestID) }
                     slots.removeAll { $0 == from }
                     slots.append(to)
                     listedSlots = slots
+                    if fault == .landedTimeout {
+                        if kind == .move { status = 3 }
+                        else { throw SessionError.timeout(command: request.command, requestID: request.requestID) }
+                    }
                     payload = Array(request.payload.dropFirst())
                 case (FileSub.get, 0):
                     count += 1
