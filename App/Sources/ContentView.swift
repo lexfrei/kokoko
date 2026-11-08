@@ -989,9 +989,9 @@ struct ContentView: View {
     /// Copies every dropped file inside its provider callback, then hands the
     /// copies over in drop order once all callbacks finished, one batch, so
     /// uploads run sequentially on the single device session.
-    private func receiveDrop(_ providers: [NSItemProvider],
+    func receiveDrop(_ providers: [NSItemProvider],
                              load: (NSItemProvider, @escaping @Sendable (URL?, Error?) -> Void) -> Void,
-                             then handle: @escaping @MainActor ([URL]) async -> Void) -> Bool {
+                             then handle: @escaping @MainActor ([URL]) async -> FileProcessing) -> Bool {
         let staging: DropStaging
         do {
             staging = try DropStaging(count: providers.count)
@@ -1016,8 +1016,14 @@ struct ContentView: View {
         let total = providers.count
         group.notify(queue: .main) {
             Task { @MainActor in
-                await handle(staging.urls)
-                staging.discard()
+                let outcome = await handle(staging.urls)
+                if outcome == .processed || staging.urls.isEmpty {
+                    staging.discard()
+                } else if FileManager.default.fileExists(atPath: staging.directory.path) {
+                    state.noteError("drop not started; files kept at \(staging.directory.path)")
+                } else {
+                    state.noteError("drop not started; staged files are unavailable")
+                }
                 // After the handler, whose trailing reload may clear earlier errors;
                 // appended so an error from the handler itself stays visible.
                 // Not tied to the device generation: these files could not be

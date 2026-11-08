@@ -23,6 +23,11 @@ enum WaveformValidityChecks {
         await observationLifetimes()
         await listingLifetimes()
         await readbackLifetimes()
+        await foregroundAdmission()
+        await fileAdmissionOwnership()
+        await processedDropOwnership()
+        await folderAdmissionOwnership()
+        await changedForegroundTarget()
         await invalidation()
         print(failures == 0 ? "waveform validity: all checks passed" : "waveform validity: \(failures) check(s) failed")
         return failures == 0 ? 0 : 1
@@ -49,7 +54,7 @@ enum WaveformValidityChecks {
             cacheSession = await cache.configure(model: "fixture", serial: "fixture")
             state = AppState(listedSounds: [item], waveformCache: cache,
                              files: files, cacheSession: cacheSession,
-                             listingMetadata: listingMetadata.map { [item.id: $0] } ?? [:])
+                             listingMetadata: listingMetadata.map { [item.id: $0] } ?? [:], soundRootID: 10)
             state.connection = .connected(deviceName: "fixture", serial: "fixture", osVersion: "test")
             wire.setMetadata(metadata)
             do { try await files.initialize(subscribe: false) }
@@ -364,6 +369,242 @@ enum WaveformValidityChecks {
         await f.close()
     }
 
+    private static func foregroundAdmission() async {
+        for failure in [false, true] { await foregroundAdmission(metadataFails: failure) }
+    }
+
+    private static func foregroundAdmission(metadataFails: Bool) async {
+        let f = await Fixture()
+        f.state.noteError("earlier operation error")
+        guard let background = f.state.beginWaveformRead() else {
+            check(false, "foreground admission: idle accepts background reservation")
+            await f.close()
+            return
+        }
+        f.wire.holdPCM()
+        let reading = Task { @MainActor in
+            defer { f.state.endWaveformRead(background) }
+            _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+        }
+        check(await held(f.wire), "foreground admission: real bounded GET reaches held PCM")
+        check(!f.state.deviceBusy && f.state.isEnabled(.downloadSelected) == false,
+              "foreground admission: background reservation alone does not impersonate user work")
+        f.state.selection = [1]
+        check(f.state.isEnabled(.downloadSelected), "foreground admission: menu remains usable during background-only occupancy")
+        f.state.requestAudition(item)
+        f.state.beginInlineSlot(item)
+        if let edit = f.state.inlineSlotEdit {
+            f.state.inlineSlotEdit?.draft = "2"
+            check(!(await f.state.commitInlineSlot(session: edit.session)) && f.state.inlineSlotEdit?.draft == "2",
+                  "foreground admission: refused slot action retains draft without replay")
+        } else { check(false, "foreground admission: slot draft opens without consuming background ownership") }
+        f.state.inlineSlotEdit = nil
+        f.state.beginInlineRename(item)
+        if let edit = f.state.inlineRename {
+            f.state.inlineRename?.draft = "renamed"
+            check(!(await f.state.commitInlineRename(session: edit.session)) && f.state.inlineRename?.draft == "renamed",
+                  "foreground admission: refused rename retains draft without replay")
+        } else { check(false, "foreground admission: rename draft opens without consuming background ownership") }
+        f.state.inlineRename = nil
+        let pendingError = f.state.lastError
+        let download = Task { @MainActor in await f.state.download(item) }
+        check(await waiting(f.state), "foreground admission: explicit file action waits with a truthful status")
+        check(f.state.lastError == pendingError, "foreground admission: background and pending ownership do not clear earlier errors")
+        let refused = await f.state.download(item)
+        if case .failure(let failure) = refused {
+            check(failure.errorDescription?.contains("not queued") == true, "foreground admission: second action is explicitly refused, not queued")
+        } else { check(false, "foreground admission: second action cannot execute") }
+        check(f.wire.reads == 1, "foreground admission: no second GET starts during held background read")
+        if metadataFails { f.wire.failMetadata() }
+        f.wire.holdMetadata(fileID: 1)
+        f.wire.resume()
+        await reading.value
+        check(await held(f.wire), "foreground admission: promoted foreground reaches its real metadata barrier")
+        f.state.endWaveformRead(background)
+        check(f.state.beginWaveformRead() == nil, "foreground admission: foreground owns device despite stale callback and before next background admission")
+        f.wire.resume()
+        switch await download.value {
+        case .success(let result):
+            check(!metadataFails && result.wav.count > pcm.count, "foreground admission: waiting file action retains its captured sound and returns WAV bytes")
+        case .failure:
+            check(metadataFails && f.state.lastError?.contains("earlier operation error") == false,
+                  "foreground admission: stale background callback cannot finish foreground first-error lifecycle")
+        }
+        check(f.wire.reads == (metadataFails ? 1 : 2), "foreground admission: only successful foreground validation adds a second GET")
+        check(!f.wire.requests.contains(where: { $0.first == FileSub.playback || $0.first == FileSub.move || $0 == [FileSub.metadata, 1] }),
+              "foreground admission: refused preview, slot and rename never execute after read release")
+        if let next = f.state.beginWaveformRead() {
+            f.state.noteError("preserved after read")
+            let error = f.state.lastError
+            f.state.endWaveformRead(background)
+            check(f.state.beginWaveformRead() == nil, "foreground admission: stale background completion cannot steal current reservation")
+            f.state.endWaveformRead(next)
+            check(f.state.lastError == error, "foreground admission: background release never finishes user error lifecycle")
+        } else { check(false, "foreground admission: later background read may begin after foreground completion") }
+        await f.close()
+    }
+
+    private static func fileAdmissionOwnership() async {
+        for reset in [false, true] {
+            let f = await Fixture()
+            try? FileManager.default.createDirectory(at: f.root, withIntermediateDirectories: true)
+            let source = f.root.appendingPathComponent("sound.wav")
+            try? Data([1, 2, 3]).write(to: source)
+            var opened = 0
+            var closed = 0
+            f.state.beginFileScopeForCheck = { _ in opened += 1; return true }
+            f.state.endFileScopeForCheck = { _ in closed += 1 }
+            guard let background = f.state.beginWaveformRead() else { await f.close(); continue }
+            f.wire.holdPCM()
+            let reading = Task { @MainActor in
+                defer { f.state.endWaveformRead(background) }
+                _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+            }
+            check(await held(f.wire), "file ownership: real GET is held before file action")
+            let upload = Task { @MainActor in await f.state.upload(urls: [source]) }
+            check(await waiting(f.state), "file ownership: upload owns its source scope while waiting")
+            check(opened == 1 && closed == 0 && FileManager.default.fileExists(atPath: source.path),
+                  "file ownership: waiting source and acquired scope remain retained")
+            var staged: [URL] = []
+            let view = ContentView(state: f.state, suppressDeviceObservationForCheck: true)
+            let provider = NSItemProvider()
+            check(view.receiveDrop([provider], load: { _, done in done(source, nil) }, then: { urls in
+                staged = urls
+                return await f.state.upload(urls: urls)
+            }), "file ownership: real drop receiver stages conflicting file action")
+            for _ in 0..<1000 {
+                if f.state.lastError?.contains("files kept at") == true { break }
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+            check(staged.count == 1 && staged.allSatisfy { FileManager.default.fileExists(atPath: $0.path) },
+                  "file ownership: refused drop keeps actual staged bytes")
+            if let recovery = staged.first?.deletingLastPathComponent().deletingLastPathComponent() {
+                check(f.state.lastError?.contains(recovery.path) == true, "file ownership: refusal names an existing recovery directory")
+                try? FileManager.default.removeItem(at: recovery)
+            }
+            if reset { f.state.forgetDevice() } else { upload.cancel() }
+            check(await upload.value == .notStarted, "file ownership: cancel/reset before admission never processes source")
+            check(opened == closed && FileManager.default.fileExists(atPath: source.path),
+                  "file ownership: cancellation balances scope callbacks and preserves picker original")
+            f.wire.resume()
+            await reading.value
+            check(f.wire.reads == 1 && !f.state.deviceBusy, "file ownership: cancelled owner never replays after background release")
+            await f.close()
+        }
+    }
+
+    private static func processedDropOwnership() async {
+        for connected in [true, false] {
+            let f = await Fixture()
+            try? FileManager.default.createDirectory(at: f.root, withIntermediateDirectories: true)
+            let source = f.root.appendingPathComponent("invalid.wav")
+            try? Data([1, 2, 3]).write(to: source)
+            if !connected { f.state.forgetDevice() }
+            var staged: [URL] = []
+            var outcome: FileProcessing?
+            let view = ContentView(state: f.state, suppressDeviceObservationForCheck: true)
+            _ = view.receiveDrop([NSItemProvider()], load: { _, done in done(source, nil) }, then: { urls in
+                staged = urls
+                let result = await f.state.upload(urls: urls)
+                outcome = result
+                return result
+            })
+            for _ in 0..<1000 {
+                if outcome != nil { break }
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+            check(outcome == (connected ? .processed : .notStarted), "file ownership: processed outcome includes reported per-file failure, not success")
+            check(staged.count == 1 && staged.allSatisfy { FileManager.default.fileExists(atPath: $0.path) != connected },
+                  "file ownership: staging is discarded only after actual processing, never for no device")
+            check(FileManager.default.fileExists(atPath: source.path), "file ownership: original source is never consumed")
+            if !connected, let recovery = staged.first?.deletingLastPathComponent().deletingLastPathComponent() {
+                check(f.state.lastError?.contains(recovery.path) == true, "file ownership: no-device refusal retains a real recovery directory")
+                try? FileManager.default.removeItem(at: recovery)
+            }
+            await f.close()
+        }
+    }
+
+    private static func folderAdmissionOwnership() async {
+        let f = await Fixture()
+        let folder = f.root.appendingPathComponent("output")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var opened = 0
+        var closed = 0
+        f.state.beginFileScopeForCheck = { _ in opened += 1; return true }
+        f.state.endFileScopeForCheck = { _ in closed += 1 }
+        guard let background = f.state.beginWaveformRead() else { await f.close(); return }
+        f.wire.holdPCM()
+        let reading = Task { @MainActor in
+            defer { f.state.endWaveformRead(background) }
+            _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+        }
+        check(await held(f.wire), "folder ownership: real GET is held")
+        let requests = f.wire.requests
+        let backup = Task { @MainActor in await f.state.backupToFolder(folder) }
+        check(await waiting(f.state) && opened == 1 && closed == 0, "folder ownership: selected folder scope spans admission wait")
+        backup.cancel()
+        await backup.value
+        check(opened == closed && FileManager.default.fileExists(atPath: folder.path), "folder ownership: cancellation balances scope and leaves chosen folder intact")
+        f.wire.resume()
+        await reading.value
+        check(f.wire.requests == requests, "folder ownership: cancelled backup does not replay protocol work")
+        check((try? FileManager.default.contentsOfDirectory(atPath: folder.path))?.isEmpty == true,
+              "folder ownership: cancelled action writes no backup")
+        await f.close()
+    }
+
+    private static func changedForegroundTarget() async {
+        for reset in [false, true] { await changedForegroundTarget(resetAfterPromotion: reset) }
+        await changedForegroundTarget(resetAfterPromotion: false, cancelAfterPromotion: true)
+    }
+
+    private static func changedForegroundTarget(resetAfterPromotion: Bool, cancelAfterPromotion: Bool = false) async {
+        let f = await Fixture()
+        guard let background = f.state.beginWaveformRead() else { await f.close(); return }
+        f.wire.holdPCM()
+        let download = Task { @MainActor in await f.state.download(item) }
+        let reading = Task { @MainActor in
+            defer {
+                f.state.endWaveformRead(background)
+                if resetAfterPromotion { f.state.forgetDevice() }
+                if cancelAfterPromotion { download.cancel() }
+            }
+            _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+        }
+        check(await held(f.wire), "foreground target: real GET is held")
+        let requests = f.wire.requests
+        check(await waiting(f.state), "foreground target: captured node waits")
+        if !resetAfterPromotion && !cancelAfterPromotion {
+            f.state.sounds = [SoundItem(node: FSNode(id: 1, parentID: 10, name: "replacement", flags: 0xff, size: 8), displayName: "replacement")]
+        }
+        f.wire.resume()
+        await reading.value
+        if case .failure(let failure) = await download.value {
+            if cancelAfterPromotion {
+                check(failure.errorDescription == "file action not started: cancelled or device changed",
+                      "foreground target: post-promotion cancellation is refused by the admission guard")
+            } else {
+                check(failure.errorDescription?.contains("changed") == true, "foreground target: changed node refuses before any foreground read")
+            }
+        } else { check(false, "foreground target: changed or cancelled target cannot execute") }
+        check(f.wire.requests == requests && f.wire.reads == 1 && !f.state.deviceBusy,
+              "foreground target: stale or cancelled action releases promoted admission without foreground MIDI")
+        if let next = f.state.beginWaveformRead() {
+            check(true, "foreground target: another owner can reserve device after the refused handoff")
+            f.state.endWaveformRead(next)
+        } else { check(false, "foreground target: refused handoff does not leak admission") }
+        await f.close()
+    }
+
+    private static func waiting(_ state: AppState) async -> Bool {
+        for _ in 0..<1000 {
+            if state.progressText?.contains("waiting for current audio read") == true { return true }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return false
+    }
+
     private static func invalidation() async {
         for (disconnect, metadataHeld) in [(false, false), (false, true), (true, false), (true, true)] {
             let f = await Fixture()
@@ -402,6 +643,8 @@ enum WaveformValidityChecks {
         private var holdFileID: UInt16?
         private var pending: [UInt8]?
         private var count = 0
+        private var commands: [[UInt8]] = []
+        var requests: [[UInt8]] { lock.withLock { commands } }
         var reads: Int { lock.withLock { count } }
         var hasHeldResponse: Bool { lock.withLock { pending != nil } }
 
@@ -423,6 +666,7 @@ enum WaveformValidityChecks {
         func send(_ bytes: [UInt8]) async throws {
             guard let request = TEFrame.parse(bytes), request.payload.count >= 2 else { throw WireError.noDevice }
             let response = try lock.withLock { () throws -> ([UInt8]?, (@Sendable ([UInt8]) -> Void)?) in
+                commands.append(Array(request.payload.prefix(2)))
                 var payload: [UInt8] = []
                 var status: UInt8 = 0
                 var kind: Hold?

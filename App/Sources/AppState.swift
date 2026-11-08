@@ -49,6 +49,10 @@ struct PendingSwap {
     let summary: SwapSummary
 }
 
+enum FileProcessing: Equatable, Sendable {
+    case processed, notStarted
+}
+
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
 @MainActor
 final class AppState: ObservableObject {
@@ -158,7 +162,8 @@ final class AppState: ObservableObject {
     private var waveformIntent = WaveformIntent()
     @Published private(set) var waveformRows = WaveformRows()
     @Published private var deviceAdmission = DeviceAdmission()
-    var deviceBusy: Bool { deviceAdmission.operation }
+    private var foregroundWaiter: (owner: UUID, continuation: CheckedContinuation<Bool, Never>)?
+    var deviceBusy: Bool { deviceAdmission.operation || deviceAdmission.foregroundWaiting }
     private var deviceOccupied: Bool { deviceAdmission.occupied }
     /// The sound a delete into the bin failed on, offered for a delete without a copy.
     @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String, generation: Int)?
@@ -169,14 +174,18 @@ final class AppState: ObservableObject {
     }
 
     #if DEBUG
+    var beginFileScopeForCheck: ((URL) -> Bool)?
+    var endFileScopeForCheck: ((URL) -> Void)?
+
     convenience init(listedSounds: [SoundItem], waveformCache: WaveformCacheStore? = nil,
                      files: DeviceFileService? = nil, cacheSession: UUID? = nil,
                      listingMetadata: [UInt16: [String: JSONValue]] = [:],
-                     waveformRecords: [UInt16: WaveformPeakRecord] = [:]) {
+                     waveformRecords: [UInt16: WaveformPeakRecord] = [:], soundRootID: UInt16? = nil) {
         self.init(waveformCache: waveformCache)
         self.files = files
         if let files { library = DeviceLibrary(files: files) }
         waveformCacheSession = cacheSession
+        soundsRootID = soundRootID
         for item in listedSounds {
             waveformMetadata[item.id] = listingMetadata[item.id].flatMap { ConfirmedWaveformMetadata(item: item, values: $0) }
             if let record = waveformRecords[item.id] {
@@ -335,12 +344,94 @@ final class AppState: ObservableObject {
         return true
     }
 
+    private static let fileNotQueuedText = "device busy: another action is running or waiting; this action was not queued"
+
+    private func enterFileDevice(generation: Int, files: DeviceFileService) async -> Bool {
+        guard !Task.isCancelled, hotplug.isCurrent(generation), self.files === files else {
+            noteError("file action not started: cancelled or device changed")
+            return false
+        }
+        switch deviceAdmission.requestForeground() {
+        case .refused:
+            noteError(Self.fileNotQueuedText)
+            return false
+        case .started:
+            errorLine.start()
+            return true
+        case .waiting(let owner):
+            let waiting = progress.begin("waiting for current audio read")
+            defer { progress.end(waiting) }
+            let admitted: Bool = await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if Task.isCancelled {
+                        _ = deviceAdmission.cancelForeground(owner)
+                        continuation.resume(returning: false)
+                    } else {
+                        foregroundWaiter = (owner, continuation)
+                    }
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in self?.cancelFileWaiter(owner) }
+            }
+            guard admitted else { return false }
+            guard !Task.isCancelled, hotplug.isCurrent(generation), self.files === files else {
+                leaveDevice()
+                noteError("file action not started: cancelled or device changed")
+                return false
+            }
+            errorLine.start()
+            return true
+        }
+    }
+
+    private func cancelFileWaiter(_ owner: UUID) {
+        guard deviceAdmission.cancelForeground(owner), let waiting = foregroundWaiter, waiting.owner == owner else { return }
+        foregroundWaiter = nil
+        waiting.continuation.resume(returning: false)
+        noteError("file action cancelled before starting")
+    }
+
+    func beginWaveformRead() -> UUID? { deviceAdmission.beginBackground() }
+
+    func endWaveformRead(_ owner: UUID) {
+        switch deviceAdmission.endBackground(owner) {
+        case .stale: break
+        case .idle: deviceAvailable()
+        case .foreground(let token):
+            if let waiting = foregroundWaiter, waiting.owner == token {
+                foregroundWaiter = nil
+                waiting.continuation.resume(returning: true)
+            } else {
+                _ = deviceAdmission.endOperation()
+                deviceAvailable()
+            }
+        }
+    }
+
+    private func beginFileScope(_ url: URL) -> Bool {
+        #if DEBUG
+        if let beginFileScopeForCheck { return beginFileScopeForCheck(url) }
+        #endif
+        return url.startAccessingSecurityScopedResource()
+    }
+
+    private func endFileScope(_ url: URL) {
+        #if DEBUG
+        if let endFileScopeForCheck { endFileScopeForCheck(url); return }
+        #endif
+        url.stopAccessingSecurityScopedResource()
+    }
+
     private func leaveDevice() {
         if deviceAdmission.endOperation() { deviceReleased() }
     }
 
     private func deviceReleased() {
         errorLine.finish()
+        deviceAvailable()
+    }
+
+    private func deviceAvailable() {
         if let tab = tabLoad.deviceReleased(showing: view, needsLoad: tabNeedsLoad(view)) {
             Task { await loadOpenedTab(tab) }
         }
@@ -416,7 +507,7 @@ final class AppState: ObservableObject {
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
-        command.isEnabled(tab: view, connected: isConnected, busy: deviceOccupied, selection: selection.count,
+        command.isEnabled(tab: view, connected: isConnected, busy: deviceAdmission.userOccupied, selection: selection.count,
                           modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || inlineSlotEdit != nil || metadataEditing != nil || !statusDetails.isEmpty)))
     }
 
@@ -520,6 +611,7 @@ final class AppState: ObservableObject {
     }
 
     func forgetDevice() {
+        if let owner = foregroundWaiter?.owner { cancelFileWaiter(owner) }
         waveformContentEpoch = UUID()
         // Operations still running on the old session fail when it closes, not after their timeouts.
         if let old = session { Task { await old.close() } }
@@ -700,27 +792,21 @@ final class AppState: ObservableObject {
 
     // MARK: - upload
 
-    func upload(urls: [URL]) async {
-        guard enterDevice() else { return }
+    @discardableResult
+    func upload(urls: [URL]) async -> FileProcessing {
+        let scoped = urls.filter { beginFileScope($0) }
+        defer { scoped.forEach { endFileScope($0) } }
+        let token = hotplug.currentGeneration()
+        guard let files else { noteError("upload: no device connected"); return .notStarted }
+        guard let root = soundsRootID else { noteError("upload: the sounds folder was not found"); return .notStarted }
+        guard await enterFileDevice(generation: token, files: files) else { return .notStarted }
         defer { leaveDevice() }
+        guard soundsRootID == root else { noteError("upload: the sounds folder changed; action not started"); return .notStarted }
         let op = progress.begin()
         defer { progress.end(op) }
-        // A drop, or a panel that stayed open across an unplug, reaches here
-        // with sounds the user picked; leaving without a word loses them.
-        guard let files else {
-            reportLocalError("upload: no device connected")
-            return
-        }
-        guard let root = soundsRootID else {
-            reportLocalError("upload: the sounds folder was not found")
-            return
-        }
-        let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
             do {
-                let accessing = url.startAccessingSecurityScopedResource()
-                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 let data = try Data(contentsOf: url)
                 progress.update(op, "prep \(url.lastPathComponent)")
                 let prepared = try prepareForUpload(fileData: data, fileName: url.lastPathComponent)
@@ -746,6 +832,7 @@ final class AppState: ObservableObject {
         if let text = batchFailureText("upload", failures: failures, total: urls.count) {
             reportOperationError(text, token: token)
         }
+        return .processed
     }
 
     // MARK: - download (single + batch)
@@ -757,12 +844,20 @@ final class AppState: ObservableObject {
     /// The failure carries its own text, since the error line may hold other
     /// operations' errors or drop this one for a device that has left.
     func download(_ item: SoundItem) async -> Result<(name: String, wav: [UInt8]), DownloadFailure> {
-        guard enterDevice() else { return .failure(DownloadFailure(errorDescription: Self.busyText)) }
+        let token = hotplug.currentGeneration()
+        guard let files, sounds.contains(where: { $0.node == item.node }) else {
+            return .failure(DownloadFailure(errorDescription: "download: no device connected or sound changed"))
+        }
+        guard await enterFileDevice(generation: token, files: files) else {
+            return .failure(DownloadFailure(errorDescription: lastError ?? Self.fileNotQueuedText))
+        }
         defer { leaveDevice() }
+        guard sounds.contains(where: { $0.node == item.node }) else {
+            noteError("download: sound changed; action not started")
+            return .failure(DownloadFailure(errorDescription: "download: sound changed; action not started"))
+        }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return .failure(DownloadFailure(errorDescription: "download: no device connected")) }
-        let token = hotplug.currentGeneration()
         let observationIsCurrent = waveformObservationGuard(for: item, generation: token)
         do {
             progress.update(op, "recv \(item.displayName)")
@@ -794,15 +889,20 @@ final class AppState: ObservableObject {
     }
 
     func downloadManyToFolder(_ ids: [UInt16], folder: URL) async {
-        guard enterDevice() else { return }
+        let accessing = beginFileScope(folder)
+        defer { if accessing { endFileScope(folder) } }
+        let token = hotplug.currentGeneration()
+        let nodes = ids.compactMap { id in sounds.first(where: { $0.id == id })?.node }
+        guard let files, nodes.count == ids.count else { noteError("batch download: no device connected or sounds changed"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
         defer { leaveDevice() }
+        guard let library, nodes.allSatisfy({ node in sounds.contains(where: { $0.node == node }) }) else {
+            noteError("batch download: sounds changed; action not started")
+            return
+        }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let library else { return }
-        let token = hotplug.currentGeneration()
         do {
-            let accessing = folder.startAccessingSecurityScopedResource()
-            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             let wavs = try await library.downloadMany(ids) { [weak self] done, total in
                 Task { @MainActor in self?.progress.update(op, "recv \(done)/\(total)") }
             }
@@ -831,15 +931,22 @@ final class AppState: ObservableObject {
     /// without a bin copy: a sound the device cannot read back would
     /// otherwise be impossible to delete from the app.
     private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
-        guard let library, enterDevice() else { return }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        let nodes = sounds.filter { ids.contains($0.id) }.map(\.node)
+        guard let files, nodes.count == ids.count else { noteError("delete: no device connected or sounds changed"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
+        defer { leaveDevice() }
+        guard let library, soundsRootID == root, nodes.allSatisfy({ node in sounds.contains(where: { $0.node == node }) }) else {
+            noteError("delete: sounds or folder changed; action not started")
+            return
+        }
         await invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
-        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         let ordered = Array(ids)
         let started = StartedIndex()
-        let token = hotplug.currentGeneration()
         do {
             try await library.deleteMany(ordered, into: bin) { [weak self] done, total in
                 started.set(done)
@@ -867,14 +974,20 @@ final class AppState: ObservableObject {
     /// `generation` is the device the offer was made for; a later device
     /// gets nothing deleted, since the same slot number names another sound.
     func deleteWithoutBin(_ ids: Set<UInt16>, generation: Int) async {
-        guard hotplug.isCurrent(generation) else {
-            noteError("the device changed, nothing was deleted")
+        let root = soundsRootID
+        let nodes = sounds.filter { ids.contains($0.id) }.map(\.node)
+        guard hotplug.isCurrent(generation), let files, nodes.count == ids.count else {
+            noteError("the device or sounds changed, nothing was deleted")
             return
         }
-        guard let library, enterDevice() else { return }
+        guard await enterFileDevice(generation: generation, files: files) else { return }
+        defer { leaveDevice() }
+        guard let library, soundsRootID == root, nodes.allSatisfy({ node in sounds.contains(where: { $0.node == node }) }) else {
+            noteError("the sounds or folder changed, nothing was deleted")
+            return
+        }
         await invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
-        defer { leaveDevice() }
         let op = progress.begin("delete without copy")
         defer { progress.end(op) }
         do {
@@ -897,13 +1010,19 @@ final class AppState: ObservableObject {
     }
 
     func restoreFromBin(_ entry: BinEntry) async {
-        guard let library, enterDevice() else { return }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        guard let files else { noteError("bin restore: no device connected"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
+        defer { leaveDevice() }
+        guard let library, soundsRootID == root, binEntries.contains(where: { $0.id == entry.id }) else {
+            noteError("bin restore: entry or device folder changed; action not started")
+            return
+        }
         await invalidateWaveformContent()
         invalidateMetadataIntent()
-        defer { leaveDevice() }
         let op = progress.begin("restore \(entry.name)")
         defer { progress.end(op) }
-        let token = hotplug.currentGeneration()
         do {
             _ = try await library.restore(entry, from: bin)
             await reload()
@@ -926,15 +1045,17 @@ final class AppState: ObservableObject {
     // MARK: - backup / restore
 
     func backupToFolder(_ folder: URL, scope: DeviceLibrary.Scope = .everything) async {
-        guard enterDevice() else { return }
+        let accessing = beginFileScope(folder)
+        defer { if accessing { endFileScope(folder) } }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        guard let files else { noteError("backup: no device connected"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
         defer { leaveDevice() }
+        guard let library, soundsRootID == root else { noteError("backup: device folders changed; action not started"); return }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let library else { return }
-        let token = hotplug.currentGeneration()
         do {
-            let accessing = folder.startAccessingSecurityScopedResource()
-            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             progress.update(op, "backup...")
             let backup = try await library.backup(deviceSKU: deviceMeta.sku,
                                                   osVersion: deviceMeta.osVersion,
@@ -970,12 +1091,14 @@ final class AppState: ObservableObject {
     }
 
     func restore(_ backup: DeviceBackup) async {
-        guard enterDevice() else { return }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        guard let files else { noteError("restore: no device connected"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
         defer { leaveDevice() }
+        guard let library, soundsRootID == root else { noteError("restore: device folders changed; action not started"); return }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let library else { return }
-        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "restore...")
             await invalidateWaveformContent()
@@ -1436,12 +1559,13 @@ final class AppState: ObservableObject {
 
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
-        guard enterDevice() else { return nil }
+        let token = hotplug.currentGeneration()
+        guard let files, projects.contains(project) else { noteError("project download: no device connected or project changed"); return nil }
+        guard await enterFileDevice(generation: token, files: files) else { return nil }
         defer { leaveDevice() }
+        guard projects.contains(project) else { noteError("project download: project changed; action not started"); return nil }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return nil }
-        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv P\(project.name)")
             let tar = try await files.getWhole(fileID: project.id).data
@@ -1459,13 +1583,16 @@ final class AppState: ObservableObject {
     }
 
     /// Upload .tar project archives; each name carries the target slot (P01..P09).
-    func uploadProjects(urls: [URL]) async {
-        guard enterDevice() else { return }
+    @discardableResult
+    func uploadProjects(urls: [URL]) async -> FileProcessing {
+        let scoped = urls.filter { beginFileScope($0) }
+        defer { scoped.forEach { endFileScope($0) } }
+        let token = hotplug.currentGeneration()
+        guard let files else { noteError("project upload: no device connected"); return .notStarted }
+        guard await enterFileDevice(generation: token, files: files) else { return .notStarted }
         defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return }
-        let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
             do {
@@ -1480,6 +1607,7 @@ final class AppState: ObservableObject {
         if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
             reportOperationError(text, token: token)
         }
+        return .processed
     }
 
     private struct ProjectUploadError: LocalizedError {
@@ -1488,8 +1616,6 @@ final class AppState: ObservableObject {
 
     private func sendProject(url: URL, files: DeviceFileService,
                              op: ProgressLine.Operation) async throws {
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         guard let slot = projectSlot(droppedArchiveName: url.lastPathComponent) else {
             throw ProjectUploadError(errorDescription: "project archive must be named like P01.tar")
         }
