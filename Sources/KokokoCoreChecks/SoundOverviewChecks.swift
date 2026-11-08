@@ -46,7 +46,8 @@ extension KokokoCoreChecks {
         eq(filtered[1].emptyText(hasSnapshot: true, fresh: true), "no matches", "overview: filter hides contents without calling the range empty")
         eq(soundCountsText(total: nil, shown: 0, fresh: false), "sounds ? / shown ?", "overview: unknown listing is not an empty device")
         eq(soundCountsText(total: 0, shown: 0, fresh: true), "sounds 0 / shown 0", "overview: a known empty listing is explicit")
-        eq(soundCountsText(total: 9, shown: 3, fresh: false), "sounds 9 / shown 3 (stale)", "overview: old counts are never presented as fresh")
+        eq(soundCountsText(total: 9, shown: 3, fresh: false), "sounds ? / shown ?", "overview: invalidated count UI and AX text stays neutral and unknown")
+        eq(soundCountsText(total: 9, shown: 3, fresh: true), "sounds 9 / shown 3", "overview: confirmed count summary text is unchanged")
     }
 
     private static func soundScopeChecks() {
@@ -116,18 +117,27 @@ extension KokokoCoreChecks {
         eq(storageByteText(nil), "?", "storage: absent values stay unknown")
         eq(storageByteText(-1), "?", "storage: formatter never displays a negative capacity")
         eq(storageByteText(0), "0 B", "storage: zero has explicit byte units")
+        eq(SoundStorage(metadata: ["max_capacity": .int(0), "free_space_in_bytes": .int(0)]).text,
+           "used 0 B / free 0 B / total 0 B", "storage: confirmed zero remains distinct from an unknown summary")
         eq(storageByteText(1024), "1.0 KiB", "storage: scaled units are explicitly binary")
         eq(storageByteText(1_048_576), "1.0 MiB", "storage: capacity formatting has no SKU lookup")
 
+        var unknownState = SoundStorageState()
+        unknownState.invalidate()
+        eq(unknownState.text, "used ? / free ? / total ?", "storage: invalidating an unknown summary never invents zero")
+        eq(unknownState.message, nil, "storage: invalidation alone is not a user-facing error")
         var state = SoundStorageState()
         let first = state.begin(generation: 1)
         check(state.finish(request: first, generation: 1, result: .success(known)), "storage: matching read installs a snapshot")
+        eq(state.text, known.text, "storage: confirmed summary UI and AX text is unchanged")
         state.invalidate()
         check(state.stale && state.value == known, "storage: own writes mark a previous value stale")
+        eq(state.text, "used ? / free ? / total ?", "storage: invalidated summary UI and AX text hides old figures without jargon")
         let old = state.begin(generation: 1)
         let current = state.begin(generation: 1)
         check(!state.finish(request: old, generation: 1, result: .success(known)), "storage: late read cannot replace a newer request")
         check(state.finish(request: current, generation: 1, result: .success(partial)), "storage: current partial snapshot is accepted")
+        eq(state.text, "used ? / free ? / total 1000 B", "storage: authoritative partial fields remain visible, unknown is never zero")
         check(
             state.value?.freeBytes == nil && state.value?.usedBytes == nil,
             "storage: new partial metadata is never mixed with old fields")
@@ -138,6 +148,9 @@ extension KokokoCoreChecks {
             state.finish(request: reconnect, generation: 2, result: .failure(OverviewReadError.storage)),
             "storage: a failed current read is recorded")
         check(state.value == nil && state.message != nil, "storage: failure is unknown, not zero or old success")
+        let failure = state.message
+        state.invalidate()
+        eq(state.message, failure, "storage: later invalidation preserves the actual read error")
     }
 
     private static func soundOverviewVirtualChecks() async {

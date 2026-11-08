@@ -17,9 +17,9 @@ enum RowDragHitChecks {
                 let thumbnail = NSHostingView(rootView: WaveformThumbnail(snapshot: snapshot, compact: compact))
                 thumbnail.layoutSubtreeIfNeeded()
                 check(abs(thumbnail.fittingSize.width - CGFloat(WaveformMiniature.width(compact: compact))) < 0.5,
-                      "waveform thumbnail: fixed width, compact \(compact), cached \(snapshot != nil)")
+                      "waveform thumbnail: fixed width, compact \(compact), snapshot \(snapshot != nil)")
                 check(abs(thumbnail.fittingSize.height - minHitHeight) < 0.5,
-                      "waveform thumbnail: fixed hit height, compact \(compact), cached \(snapshot != nil)")
+                      "waveform thumbnail: fixed hit height, compact \(compact), snapshot \(snapshot != nil)")
             }
         }
         for expanded in [false, true] {

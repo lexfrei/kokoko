@@ -8,8 +8,7 @@ public enum WaveformMiniature {
 
 public struct WaveformRowSnapshot: Equatable, Sendable {
     public let record: WaveformPeakRecord
-    public let cached: Bool
-    public var description: String { cached ? "cached audio, unverified" : "audio read from device" }
+    public var description: String { "Waveform" }
 }
 
 public struct WaveformRows: Sendable {
@@ -68,8 +67,8 @@ public struct WaveformRows: Sendable {
         if snapshot(slot: slot, size: size)?.record != record { remember(slot: slot, size: size, record: record) }
     }
 
-    public mutating func remember(slot: UInt16, size: Int, record: WaveformPeakRecord?, cached: Bool = true) {
-        let snapshot = record.flatMap { $0.size == size ? WaveformRowSnapshot(record: $0, cached: cached) : nil }
+    public mutating func remember(slot: UInt16, size: Int, record: WaveformPeakRecord?) {
+        let snapshot = record.flatMap { $0.size == size ? WaveformRowSnapshot(record: $0) : nil }
         entries[slot] = Entry(size: size, snapshot: snapshot)
         order.removeAll { $0 == slot }
         order.append(slot)

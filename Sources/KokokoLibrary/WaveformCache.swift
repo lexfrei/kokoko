@@ -1,5 +1,26 @@
 import CryptoKit
 import Foundation
+import KokokoCore
+
+public struct WaveformDescriptor: Equatable, Sendable {
+    public let size: Int
+    public let channels: Int
+    public let sampleRate: Int
+
+    public init?(size: Int, metadata: [String: JSONValue]) {
+        guard size >= 0, size <= Int(UInt32.max),
+              let channels = metadata["channels"]?.intValue, (1...2).contains(channels),
+              let rate = metadata["samplerate"]?.intValue, (1...65535).contains(rate),
+              size.isMultiple(of: channels * 2) else { return nil }
+        self.size = size
+        self.channels = channels
+        sampleRate = rate
+    }
+
+    public func matches(_ record: WaveformPeakRecord) -> Bool {
+        record.size == size && record.channels == channels && record.sampleRate == sampleRate && record.encoding == "s16le"
+    }
+}
 
 public struct WaveformPeakRecord: Codable, Equatable, Sendable {
     public let frameCount: Int

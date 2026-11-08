@@ -25,6 +25,12 @@ struct KokokoApp: App {
         if CommandLine.arguments.contains("--check-range-tabs") {
             exit(SoundRangeTabChecks.run())
         }
+        if CommandLine.arguments.contains("--check-waveform-validity") {
+            NSApplication.shared.setActivationPolicy(.prohibited)
+            Task { @MainActor in exit(await WaveformValidityChecks.run()) }
+            RunLoop.main.run()
+            exit(1)
+        }
         #endif
         #if os(macOS)
         // SPM smoke runs have no app bundle; without this the window stays backgrounded.

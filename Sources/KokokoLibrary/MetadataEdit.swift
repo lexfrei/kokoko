@@ -31,6 +31,7 @@ public struct MetadataEditForm: Equatable, Sendable {
     private var initial: [String: String]
     private var baseline: [String: JSONValue]
     private var unconfirmed = Set<String>()
+    public var confirmedMetadata: [String: JSONValue] { baseline }
 
     public init(metadata: [String: JSONValue]) {
         var text: [String: String] = [:]

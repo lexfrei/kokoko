@@ -44,6 +44,12 @@ public actor WaveformCacheStore {
         return cache.load(slot: slot, size: size, channels: channels, sampleRate: sampleRate)
     }
 
+    public func load(session: UUID, slot: UInt16, descriptor: WaveformDescriptor?) -> WaveformPeakRecord? {
+        guard let descriptor else { return nil }
+        return load(session: session, slot: slot, size: descriptor.size,
+                    channels: descriptor.channels, sampleRate: descriptor.sampleRate)
+    }
+
     @discardableResult
     public func store(_ record: WaveformPeakRecord, slot: UInt16, token: Token, lease: WaveformCacheLease) -> Bool {
         guard token.session == session, token.content == content, lease.isCurrent else { return false }

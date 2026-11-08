@@ -60,8 +60,8 @@ public func soundSections(all: [UInt16], visible: Set<UInt16>, range: SoundRange
 }
 
 public func soundCountsText(total: Int?, shown: Int, fresh: Bool) -> String {
-    guard let total else { return "sounds ? / shown ?" }
-    return "sounds \(total) / shown \(shown)" + (fresh ? "" : " (stale)")
+    guard fresh, let total else { return "sounds ? / shown ?" }
+    return "sounds \(total) / shown \(shown)"
 }
 
 public struct SoundStorage: Equatable, Sendable {
@@ -112,7 +112,7 @@ public struct SoundStorageState: Sendable {
     public init() {}
 
     public var text: String {
-        (value?.text ?? "used ? / free ? / total ?") + (stale ? " (stale)" : "")
+        stale ? "used ? / free ? / total ?" : value?.text ?? "used ? / free ? / total ?"
     }
 
     public mutating func begin(generation: Int) -> UUID {
@@ -130,7 +130,6 @@ public struct SoundStorageState: Sendable {
     public mutating func invalidate() {
         request = nil
         stale = value != nil
-        message = value == nil ? "storage needs refresh" : nil
     }
 
     public mutating func finish(request: UUID, generation: Int, result: Result<SoundStorage, any Error>) -> Bool {

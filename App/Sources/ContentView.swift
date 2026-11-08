@@ -478,7 +478,7 @@ struct ContentView: View {
     }
 
     private func waveformButton(_ item: SoundItem) -> some View {
-        let snapshot = state.waveformRows.snapshot(slot: item.id, size: Int(item.node.size))
+        let snapshot = state.waveformSnapshot(for: item)
         return Button {
             if state.waveformShown?.id == item.id {
                 closeWaveform(item.id)
