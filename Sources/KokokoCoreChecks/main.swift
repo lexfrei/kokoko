@@ -55,6 +55,7 @@ struct KokokoCoreChecks {
         recycleBinChecks()
         jsonValueChecks()
         fileServiceErrorChecks()
+        await boundedReadChecks()
         await pairingChecks()
         await virtualDeviceChecks()
         await uploadSoundChecks()

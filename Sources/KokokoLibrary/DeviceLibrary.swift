@@ -551,9 +551,9 @@ public enum BackupStore {
 extension DeviceFileService {
     /// `get` that fails with `FileServiceError.truncated` when the data is not the
     /// size the device announced; `get` alone hands a short read back as is.
-    public func getWhole(fileID: UInt16,
+    public func getWhole(fileID: UInt16, maximumBytes: Int? = nil,
                          progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> (name: String, data: [UInt8]) {
-        let read = try await get(fileID: fileID, progress: progress)
+        let read = try await get(fileID: fileID, maximumBytes: maximumBytes, progress: progress)
         return (read.name, try wholeData(read.data, announced: read.size, fileID: fileID))
     }
 }
