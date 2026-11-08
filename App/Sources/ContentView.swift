@@ -467,6 +467,14 @@ struct ContentView: View {
                 waveformButton(item, columns: columns)
                     #if os(macOS) && DEBUG
                     .background { columnGeometry("wave") }
+                    .background {
+                        if let probe = columnProbeForCheck {
+                            SoundViewportProbe(slot: item.id,
+                                               blocked: state.modalOpen || !state.statusDetails.isEmpty || state.view != .sounds) {
+                                probe.viewports[$0] = $1
+                            }
+                        }
+                    }
                     #endif
                 Group {
                     if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,

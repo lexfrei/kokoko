@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class SoundColumnProbe {
     var frames: [UInt16: [String: CGRect]] = [:]
+    var viewports: [UInt16: SoundViewportSample] = [:]
 }
 
 struct SoundColumnFramesKey: PreferenceKey {
@@ -29,6 +30,9 @@ enum NativeRowDropChecks {
         transport()
         containment()
         sharedColumns()
+        viewportPolicy()
+        viewportGeometry()
+        viewportList()
         print(failures == 0 ? "native row drop: all checks passed" : "native row drop: \(failures) check(s) failed")
         return failures == 0 ? 0 : 1
     }
@@ -199,6 +203,123 @@ enum NativeRowDropChecks {
         check(!destination.receive(board, source: source, generation: generation), "native drop: already-busy state rejects")
         check(delegate.writes == 0, "native drop: local reads never fulfill WAV promise")
         check(NSApplication.shared.windows.isEmpty, "native drop: transport checks create no windows")
+    }
+
+    private static func viewportPolicy() {
+        let rect = CGRect(x: 0, y: 0, width: 96, height: 28)
+        var sample = SoundViewportSample(rect: rect, clipped: rect, attached: true, active: true,
+                                         shown: true, hidden: false, blocked: false, clipCount: 2, tracksScroll: true)
+        check(sample.eligible, "viewport policy only: positive facts permit an intersecting waveform")
+        sample.clipped = CGRect(x: 20, y: 0, width: 76, height: 28)
+        check(sample.eligible, "viewport policy only: partial horizontal intersection remains eligible")
+        for field in 0..<7 {
+            var refused = sample
+            switch field {
+            case 0: refused.attached = false
+            case 1: refused.active = false
+            case 2: refused.shown = false
+            case 3: refused.hidden = true
+            case 4: refused.blocked = true
+            case 5: refused.clipped = .zero
+            default: refused.tracksScroll = false
+            }
+            check(!refused.eligible, "viewport policy only: missing visibility or public invalidation signal refuses work")
+        }
+    }
+
+    private static func viewportGeometry() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let horizontal = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        horizontal.hasHorizontalScroller = true
+        let wide = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
+        horizontal.documentView = wide
+        let vertical = NSScrollView(frame: wide.bounds)
+        vertical.hasVerticalScroller = true
+        wide.addSubview(vertical)
+        let tall = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 1000))
+        vertical.documentView = tall
+        let view = ViewportView(frame: NSRect(x: 100, y: 500, width: 96, height: 28))
+        tall.addSubview(view)
+        window.contentView = horizontal
+        var latest: SoundViewportSample?
+        view.slot = 1
+        view.report = { _, value in latest = value }
+        view.observe()
+        view.sample()
+        vertical.contentView.scroll(to: .zero)
+        horizontal.contentView.scroll(to: .zero)
+        settle(horizontal)
+        check(latest?.clipCount == 2 && latest?.tracksScroll == true, "viewport geometry: actual public vertical and horizontal clip ancestors provide notifications")
+        check(latest?.clipped.isEmpty == true && latest?.eligible == false, "viewport geometry: offscreen row has zero eligibility")
+        let before = view.samples
+        vertical.contentView.scroll(to: NSPoint(x: 0, y: 480))
+        vertical.reflectScrolledClipView(vertical.contentView)
+        settle(horizontal)
+        check(view.samples > before, "viewport geometry: real vertical bounds notification invalidates probe without polling")
+        check((latest?.clipped.width ?? 0) > 0 && (latest?.clipped.height ?? 0) > 0,
+              "viewport geometry: actual hidden-window clipping proves a positive intersection, not eligibility")
+        check(latest?.eligible == false && latest?.shown == false, "viewport geometry: hidden window never becomes eligible despite positive geometry")
+        let verticalSamples = view.samples
+        horizontal.contentView.scroll(to: NSPoint(x: 150, y: 0))
+        horizontal.reflectScrolledClipView(horizontal.contentView)
+        settle(horizontal)
+        check(view.samples > verticalSamples, "viewport geometry: real horizontal bounds notification invalidates probe")
+        check((latest?.clipped.width ?? 0) > 0 && (latest?.clipped.width ?? 96) < 96,
+              "viewport geometry: horizontal ancestor clips the actual partial waveform")
+        horizontal.contentView.scroll(to: NSPoint(x: 300, y: 0))
+        horizontal.reflectScrolledClipView(horizontal.contentView)
+        settle(horizontal)
+        check(latest?.clipped.isEmpty == true && latest?.eligible == false, "viewport geometry: horizontally offscreen waveform has zero eligibility")
+        view.removeFromSuperview()
+        settle(horizontal)
+        check(latest?.attached == false && latest?.eligible == false, "viewport geometry: detach withdraws eligibility")
+        view.stop()
+        check(latest?.attached == false && view.slot == nil, "viewport geometry: reuse teardown clears the old row report")
+        check(!window.isVisible && !window.isKeyWindow, "viewport geometry: no window activation or screen visibility was used")
+        window.close()
+    }
+
+    private static func viewportList() {
+        let items = (1...40).map { value in
+            SoundItem(node: FSNode(id: UInt16(value), parentID: 10, name: "\(value)", flags: 0xff, size: 4), displayName: "sound")
+        }
+        let wire = ColumnWire()
+        let files = DeviceFileService(session: SysExSession(wire: wire, identityCode: 0x10))
+        let state = AppState(listedSounds: items, files: files)
+        state.connection = .connected(deviceName: "fixture", serial: "fixture", osVersion: "test")
+        state.setSoundRange(SoundRange.all[0])
+        let probe = SoundColumnProbe()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 650),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ContentView(state: state, suppressDeviceObservationForCheck: true,
+                                                       columnProbeForCheck: probe))
+        window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: 840, height: 650)
+        settle(host)
+        check((probe.viewports[1]?.clipped.height ?? 0) > 0, "viewport list: actual first production waveform intersects list clip")
+        check(probe.viewports.values.allSatisfy { !$0.eligible }, "viewport list: materialized and prefetched rows in hidden window all have zero eligibility")
+        if let table = descendants(host).compactMap({ $0 as? NSTableView }).first {
+            table.scrollRowToVisible(table.numberOfRows - 1)
+            settle(host)
+            if !table.visibleRect.contains(table.rect(ofRow: table.numberOfRows - 1)) {
+                table.scrollRowToVisible(table.numberOfRows - 1)
+                settle(host)
+            }
+            check((probe.viewports[40]?.clipped.height ?? 0) > 0, "viewport list: public table scroll reports actual last production waveform")
+            check(probe.viewports[1]?.clipped.isEmpty != false, "viewport list: scrolled-away or reused first row withdraws its positive intersection")
+            check(probe.viewports.values.allSatisfy { !$0.eligible }, "viewport list: scrolling never fabricates active visible window facts")
+        } else {
+            check(false, "viewport list: actual public table exists")
+        }
+        state.statusDetails.insert(UUID())
+        settle(host)
+        check(probe.viewports[40]?.blocked == true, "viewport list: known app presentation blocks row eligibility")
+        check(wire.sends == 0, "viewport list: layout, materialization and scrolling issue zero protocol commands")
+        window.close()
+        settle(host)
     }
 
     private static func sharedColumns() {

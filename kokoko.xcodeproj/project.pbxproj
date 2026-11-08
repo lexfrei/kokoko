@@ -10,6 +10,7 @@
 		0E2A9F1BD0D2BBABD872BB78 /* KokokoMIDI in Frameworks */ = {isa = PBXBuildFile; productRef = 07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */; };
 		0E9994F30A2E687C200FE2CE /* KokokoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 89C9A501F569AFA0A05B79F4 /* KokokoCore */; };
 		17CCD6726062B0BDAA867022 /* KokokoAudio in Frameworks */ = {isa = PBXBuildFile; productRef = C579E177800EB81009DB221C /* KokokoAudio */; };
+		1878F0EE4AD340A536EE84E2 /* SoundViewportProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D6DC4FF7BCBA6D9E5F5CDA /* SoundViewportProbe.swift */; };
 		19BFDA0C28927BFFE900BAD8 /* NativeRowDropChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC1C935F8F5CA08915FB24B /* NativeRowDropChecks.swift */; };
 		2E04CB6B6A110226A7AEE16D /* WaveformValidityChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA05119AD7B975FBC4F63CD0 /* WaveformValidityChecks.swift */; };
 		385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */; };
@@ -27,6 +28,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		06D6DC4FF7BCBA6D9E5F5CDA /* SoundViewportProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundViewportProbe.swift; sourceTree = "<group>"; };
 		17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		3BB95217652E72FB05A4DFE2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		48CBF57372D137143311E4AE /* DataDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataDocument.swift; sourceTree = "<group>"; };
@@ -90,6 +92,7 @@
 				D593B607E257101755000CB1 /* RowDragProviderChecks.swift */,
 				D76ACB2792656943F3451600 /* SettingsView.swift */,
 				BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */,
+				06D6DC4FF7BCBA6D9E5F5CDA /* SoundViewportProbe.swift */,
 				DA05119AD7B975FBC4F63CD0 /* WaveformValidityChecks.swift */,
 				17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */,
 			);
@@ -182,6 +185,7 @@
 				B50228115382A61988D625A5 /* RowDragProviderChecks.swift in Sources */,
 				FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */,
 				D576915409FB199A7F525291 /* SoundRangeTabChecks.swift in Sources */,
+				1878F0EE4AD340A536EE84E2 /* SoundViewportProbe.swift in Sources */,
 				2E04CB6B6A110226A7AEE16D /* WaveformValidityChecks.swift in Sources */,
 				385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */,
 			);
