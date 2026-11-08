@@ -12,6 +12,7 @@ struct ContentView: View {
     #if os(macOS) && DEBUG
     var rowDropCheck: Bool?
     var rowDropCheckFocus: Binding<SoundFocus?> = .constant(nil)
+    var suppressDeviceObservationForCheck = false
     #endif
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
@@ -51,15 +52,15 @@ struct ContentView: View {
         }
         #if os(macOS) && DEBUG
         .onChange(of: rowDropCheckFocus.wrappedValue) { _, value in
-            if rowDropCheck != nil { focus = value }
+            if rowDropCheck != nil || suppressDeviceObservationForCheck { focus = value }
         }
         .onChange(of: focus) { _, value in
-            if rowDropCheck != nil { rowDropCheckFocus.wrappedValue = value }
+            if rowDropCheck != nil || suppressDeviceObservationForCheck { rowDropCheckFocus.wrappedValue = value }
         }
         #endif
         .task {
             #if os(macOS) && DEBUG
-            guard rowDropCheck == nil else { return }
+            guard rowDropCheck == nil && !suppressDeviceObservationForCheck else { return }
             #endif
             state.watchDevices()
             if case .idle = state.connection {
@@ -331,13 +332,17 @@ struct ContentView: View {
 
     private func soundRow(_ item: SoundItem) -> some View {
         Group {
-            #if os(macOS) && DEBUG
-            if rowDropCheck == true {
-                NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item))
-            } else {
+            #if os(macOS)
+            #if DEBUG
+            if rowDropCheck == false {
                 soundRowContent(item)
                     .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
+            } else {
+                NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item))
             }
+            #else
+            NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item))
+            #endif
             #else
             soundRowContent(item)
                 .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
@@ -973,36 +978,36 @@ struct SoundRowDrop: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         targeted = nil
-        RowDragDiagnostics.event("target perform slot=\(target.id)")
+        RowDragDiagnostics.event("swiftui target perform slot=\(target.id)")
         guard let token = state.rowDrag.claim(target: target.id, busy: state.deviceBusy) else {
-            RowDragDiagnostics.event("target reject=no-claim")
+            RowDragDiagnostics.event("swiftui target reject=no-claim")
             return false
         }
         guard let provider = info.itemProviders(for: [rowMoveTextType]).first else {
-            RowDragDiagnostics.event("target reject=no-text-provider")
+            RowDragDiagnostics.event("swiftui target reject=no-text-provider")
             return false
         }
         let generation = state.rowDragGeneration
         provider.loadDataRepresentation(forTypeIdentifier: rowMoveTextType.identifier) { data, error in
-            RowDragDiagnostics.event("target text-complete data=\(data != nil) bytes=\(data?.count ?? 0)")
-            RowDragDiagnostics.error("target text", error)
+            RowDragDiagnostics.event("swiftui target text-complete data=\(data != nil) bytes=\(data?.count ?? 0)")
+            RowDragDiagnostics.error("swiftui target text", error)
             Task { @MainActor in
                 guard generation == state.rowDragGeneration else {
-                    RowDragDiagnostics.event("target reject=device-changed")
+                    RowDragDiagnostics.event("swiftui target reject=device-changed")
                     return
                 }
                 guard let data, let text = String(data: data, encoding: .utf8), token.matches(text) else {
-                    RowDragDiagnostics.event("target reject=payload-mismatch")
+                    RowDragDiagnostics.event("swiftui target reject=payload-mismatch")
                     state.noteError("reorder: \(error?.localizedDescription ?? "invalid drag payload")")
                     return
                 }
                 guard !state.deviceBusy, state.sounds.contains(where: { $0.id == token.id }),
                       state.sounds.contains(where: { $0.id == target.id }) else {
-                    RowDragDiagnostics.event("target reject=busy-or-missing-sound")
+                    RowDragDiagnostics.event("swiftui target reject=busy-or-missing-sound")
                     state.noteError("reorder: device busy or sound no longer available")
                     return
                 }
-                RowDragDiagnostics.event("target request-swap slot=\(target.id)")
+                RowDragDiagnostics.event("swiftui target request-swap slot=\(target.id)")
                 state.requestSwap(id: token.id, onto: target)
             }
         }
@@ -1011,11 +1016,11 @@ struct SoundRowDrop: DropDelegate {
 
     func validateDrop(info: DropInfo) -> Bool {
         guard let token = state.rowDrag.active, token.id != target.id else {
-            RowDragDiagnostics.event("target validate slot=\(target.id) accepted=false reason=context-or-self")
+            RowDragDiagnostics.event("swiftui target validate slot=\(target.id) accepted=false reason=context-or-self")
             return false
         }
         let accepted = !state.deviceBusy && info.hasItemsConforming(to: [rowMoveTextType])
-        RowDragDiagnostics.event("target validate slot=\(target.id) accepted=\(accepted)")
+        RowDragDiagnostics.event("swiftui target validate slot=\(target.id) accepted=\(accepted)")
         return accepted
     }
 }

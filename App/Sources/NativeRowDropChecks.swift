@@ -57,7 +57,42 @@ enum NativeRowDropChecks {
         check(destination.registeredDraggedTypes.contains(marker), "native drop: destination registers private marker")
         state.rowDrag.begin(token)
         let generation = state.rowDragGeneration
-        check(destination.receive(board, source: source, generation: generation), "native drop: actual writer reaches native receiver")
+        var highlighted: UInt16?
+        destination.targeted = Binding(get: { highlighted }, set: { highlighted = $0 })
+        let info = DragInfo(pasteboard: board, source: source)
+        check(destination.draggingEntered(info) == .move && highlighted == 2, "native drop: eligible native entry highlights target")
+        check(state.rowDrag.active == token, "native drop: hover never claims context")
+        let adjacent = NativeRowDropView()
+        adjacent.state = state
+        adjacent.item = items[2]
+        adjacent.targeted = destination.targeted
+        check(adjacent.draggingEntered(info) == .move && highlighted == 3, "native drop: adjacent destination takes feedback ownership")
+        destination.draggingExited(info)
+        check(highlighted == 3, "native drop: late exit does not clear another destination's feedback")
+        adjacent.draggingExited(info)
+        check(highlighted == nil, "native drop: feedback owner clears its own target")
+        _ = destination.draggingEntered(info)
+        let handlesEnd = destination.responds(to: #selector(NativeRowDropView.draggingEnded(_:)))
+        check(handlesEnd, "native drop: destination handles optional end callback")
+        if handlesEnd { destination.draggingEnded(info) }
+        check(highlighted == nil, "native drop: ended operation clears feedback")
+        check(!destination.performDragOperation(info), "native drop: ended operation cannot perform later")
+        state.pendingSwap = nil
+        state.rowDrag.begin(token)
+        info.draggingSourceOperationMask = .copy
+        check(destination.draggingEntered(info).isEmpty && highlighted == nil, "native drop: copy-only source is not offered a move")
+        check(!destination.performDragOperation(info), "native drop: copy-only source cannot perform a move")
+        state.pendingSwap = nil
+        state.rowDrag.begin(token)
+        info.draggingSourceOperationMask = [.copy, .move]
+        _ = destination.draggingEntered(info)
+        destination.draggingExited(info)
+        check(!destination.prepareForDragOperation(info), "native drop: exited destination cannot prepare without reentry")
+        check(destination.draggingEntered(info) == .move && destination.prepareForDragOperation(info),
+              "native drop: native callback chain prepares eligible row")
+        check(destination.performDragOperation(info), "native drop: actual writer reaches native callback receiver")
+        destination.concludeDragOperation(info)
+        check(highlighted == nil, "native drop: accepted operation leaves no feedback")
         check(state.pendingSwap?.id == 1 && state.pendingSwap?.target == 2, "native drop: requests existing confirmation only")
         state.rowDrag.end(token)
         check(state.pendingSwap?.id == 1, "native drop: ending claimed context keeps accepted confirmation")
@@ -133,7 +168,9 @@ enum NativeRowDropChecks {
         reusedItem.setDataProvider(changedTarget, forTypes: [.string])
         board.clearContents()
         check(board.writeObjects([reusedItem]), "native drop: writes target-reuse fixture")
+        check(destination.draggingEntered(info) == .move && highlighted == 2, "native drop: target-reuse fixture begins highlighted")
         check(!destination.receive(board, source: source, generation: generation), "native drop: target reuse during read rejects")
+        check(highlighted == nil, "native drop: target reuse clears the original feedback")
         check(state.pendingSwap == nil && state.rowDrag.active == token, "native drop: target reuse does not consume context")
         destination.item = items[1]
         let busyText = DeferredText(bytes: bytes) { _ = state.enterDevice() }
@@ -178,7 +215,7 @@ enum NativeRowDropChecks {
                           "containment: row text is outside grip, native \(native)")
                 }
                 let containers = descendants(host).compactMap { $0 as? NativeRowDropView }
-                check(containers.count == (native ? 3 : 0), "containment: native ancestors exist only in prototype")
+                check(containers.count == (native ? 3 : 0), "containment: destination ancestry matches row route")
                 check(model.state.selection == selection, "containment: mounting preserves selection")
                 if native {
                     for handle in handles {
@@ -237,6 +274,9 @@ enum NativeRowDropChecks {
                 model.state.waveformShown = WaveformShown(item: items[0], record: record, loopStart: nil,
                                                           loopEnd: nil, cached: false, metadataConfirmed: true)
                 settle(host)
+                let updatedHandles = descendants(host).compactMap { $0 as? RowDragHandle.Handle }
+                check(updatedHandles.map(ObjectIdentifier.init) == handles.map(ObjectIdentifier.init),
+                      "containment: editor and waveform updates retain actual source views, native \(native)")
                 if native {
                     let current = descendants(host).compactMap { $0 as? NativeRowDropView }
                     check(current.map(ObjectIdentifier.init) == identities, "containment: updates retain native container identity")
@@ -288,6 +328,37 @@ enum NativeRowDropChecks {
         view.subviews.flatMap { [$0] + descendants($0) }
     }
 
+    private final class DragInfo: NSObject, NSDraggingInfo {
+        let draggingPasteboard: NSPasteboard
+        let draggingSource: Any?
+        let draggingDestinationWindow: NSWindow? = nil
+        var draggingSourceOperationMask: NSDragOperation = [.copy, .move]
+        let draggingLocation = NSPoint.zero
+        let draggedImageLocation = NSPoint.zero
+        let draggedImage: NSImage? = nil
+        let draggingSequenceNumber = 1
+        var draggingFormation = NSDraggingFormation.none
+        var animatesToDestination = false
+        var numberOfValidItemsForDrop = 1
+        let springLoadingHighlight = NSSpringLoadingHighlight.none
+
+        @MainActor init(pasteboard: NSPasteboard, source: Any?) {
+            draggingPasteboard = pasteboard
+            draggingSource = source
+        }
+
+        func slideDraggedImage(to screenPoint: NSPoint) { preconditionFailure("unexpected drag-image movement") }
+        override func namesOfPromisedFilesDropped(atDestination dropDestination: URL) -> [String]? {
+            preconditionFailure("unexpected promised-file request")
+        }
+        func resetSpringLoading() { preconditionFailure("unexpected spring loading") }
+        func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions, for view: NSView?,
+                                    classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+                                    using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {
+            preconditionFailure("unexpected drag-image enumeration")
+        }
+    }
+
     private final class DeferredText: NSObject, NSPasteboardItemDataProvider {
         let bytes: Data
         let provide: () -> Void
@@ -317,7 +388,8 @@ enum NativeRowDropChecks {
         @ObservedObject var model: Model
         let native: Bool
         var body: some View {
-            ContentView(state: model.state, rowDropCheck: native, rowDropCheckFocus: $model.focus)
+            ContentView(state: model.state, rowDropCheck: native ? nil : false, rowDropCheckFocus: $model.focus,
+                        suppressDeviceObservationForCheck: true)
                 .environment(\.colorScheme, .dark)
                 .environment(\.dynamicTypeSize, model.typeSize)
                 .disabled(model.disabled)

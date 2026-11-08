@@ -28,7 +28,7 @@ struct NativeRowDrop<Content: View>: NSViewControllerRepresentable {
     }
 
     static func dismantleNSViewController(_ controller: NativeRowDropController, coordinator: ()) {
-        controller.destination.clearTarget()
+        controller.destination.endTracking()
     }
 }
 
@@ -60,6 +60,7 @@ final class NativeRowDropView: NSView {
     var item: SoundItem?
     var targeted: Binding<UInt16?> = .constant(nil)
     private var generation: UUID?
+    private var highlightedSlot: UInt16?
 
     init() {
         super.init(frame: .zero)
@@ -78,23 +79,36 @@ final class NativeRowDropView: NSView {
     }
 
     func receive(_ pasteboard: NSPasteboard, source: Any?, generation: UUID) -> Bool {
-        defer {
-            clearTarget()
-            self.generation = nil
-        }
+        defer { endTracking() }
         guard let state, let item, let token = state.rowDrag.active,
+              eligible(source, token: token, generation: generation) else {
+            RowDragDiagnostics.event("native target reject=context")
+            return false
+        }
+        guard let items = pasteboard.pasteboardItems, items.count == 1,
+              let candidate = items.first, candidate.types.contains(Self.marker) else {
+            RowDragDiagnostics.event("native target reject=pasteboard-shape")
+            return false
+        }
+        RowDragDiagnostics.event("native target item types=\(candidate.types.map(\.rawValue))")
+        guard let data = candidate.data(forType: .string), let text = String(data: data, encoding: .utf8) else {
+            RowDragDiagnostics.event("native target reject=text-unavailable")
+            return false
+        }
+        RowDragDiagnostics.event("native target text bytes=\(data.count) matches=\(token.matches(text))")
+        guard token.matches(text), self.state === state, self.item == item,
               eligible(source, token: token, generation: generation),
-              let items = pasteboard.pasteboardItems, items.count == 1,
-              let candidate = items.first, candidate.types.contains(Self.marker),
-              let data = candidate.data(forType: .string), let text = String(data: data, encoding: .utf8),
-              token.matches(text), self.state === state, self.item == item,
-              eligible(source, token: token, generation: generation),
-              state.rowDrag.claim(target: item.id, busy: state.deviceBusy) == token else { return false }
+              state.rowDrag.claim(target: item.id, busy: state.deviceBusy) == token else {
+            RowDragDiagnostics.event("native target reject=authentication-or-state-change")
+            return false
+        }
+        RowDragDiagnostics.event("native target request-swap slot=\(item.id)")
         state.requestSwap(id: token.id, onto: item)
         return true
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        RowDragDiagnostics.event("native target enter slot=\(item?.id.description ?? "nil")")
         generation = state?.rowDragGeneration
         return draggingUpdated(sender)
     }
@@ -107,7 +121,8 @@ final class NativeRowDropView: NSView {
             clearTarget()
             return []
         }
-        targeted.wrappedValue = item?.id
+        highlightedSlot = item?.id
+        targeted.wrappedValue = highlightedSlot
         return .move
     }
 
@@ -116,20 +131,32 @@ final class NativeRowDropView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard let generation else { return false }
+        RowDragDiagnostics.event("native target perform slot=\(item?.id.description ?? "nil")")
+        guard let generation, sender.draggingSourceOperationMask.contains(.move) else {
+            RowDragDiagnostics.event("native target reject=tracking-or-operation")
+            endTracking()
+            return false
+        }
         return receive(sender.draggingPasteboard, source: sender.draggingSource, generation: generation)
     }
 
-    override func draggingExited(_ sender: (any NSDraggingInfo)?) { clearTarget() }
-    override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) { clearTarget() }
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) { endTracking() }
+    override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) { endTracking() }
+    override func draggingEnded(_ sender: any NSDraggingInfo) { endTracking() }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { clearTarget() }
+        if window == nil { endTracking() }
     }
 
-    func clearTarget() {
-        if targeted.wrappedValue == item?.id { targeted.wrappedValue = nil }
+    func endTracking() {
+        clearTarget()
+        generation = nil
+    }
+
+    private func clearTarget() {
+        if let highlightedSlot, targeted.wrappedValue == highlightedSlot { targeted.wrappedValue = nil }
+        highlightedSlot = nil
     }
 }
 #endif
