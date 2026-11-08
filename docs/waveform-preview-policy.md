@@ -18,7 +18,7 @@ Invalidated sound counts and used/free/total storage show `?` rather than old nu
 
 ## Scope of this change
 
-This is the validity and neutral-presentation stage only. It does not add shared column geometry, viewport detection, timers, automatic audio filling, a GET size limit, admission waiters or streaming changes. Shared aligned columns with verified viewport eligibility, then automatic bounded fills with foreground-operation priority, remain required work. A manual visible-fill control is not a substitute for them.
+This policy covers validity and neutral presentation. [Shared row columns and bounded viewport checks](sound-columns.md) are documented separately. Automatic bounded fills with foreground-operation priority remain required work; no timer, automatic audio filling, GET size limit, admission waiter or streaming change is implemented here. UIKit scroll eligibility needs runtime validation before automatic filling can be enabled there. A manual visible-fill control is not a substitute.
 
 ## Checks
 

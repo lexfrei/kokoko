@@ -7,6 +7,19 @@ import KokokoLibrary
 import UniformTypeIdentifiers
 
 @MainActor
+final class SoundColumnProbe {
+    var frames: [UInt16: [String: CGRect]] = [:]
+    var viewports: [UInt16: SoundViewportSample] = [:]
+}
+
+struct SoundColumnFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, newest in newest })
+    }
+}
+
+@MainActor
 enum NativeRowDropChecks {
     private static var failures = 0
     private static var baselineFocus: [String: Bool] = [:]
@@ -16,6 +29,10 @@ enum NativeRowDropChecks {
         NSApplication.shared.setActivationPolicy(.prohibited)
         transport()
         containment()
+        sharedColumns()
+        viewportPolicy()
+        viewportGeometry()
+        viewportList()
         print(failures == 0 ? "native row drop: all checks passed" : "native row drop: \(failures) check(s) failed")
         return failures == 0 ? 0 : 1
     }
@@ -186,6 +203,263 @@ enum NativeRowDropChecks {
         check(!destination.receive(board, source: source, generation: generation), "native drop: already-busy state rejects")
         check(delegate.writes == 0, "native drop: local reads never fulfill WAV promise")
         check(NSApplication.shared.windows.isEmpty, "native drop: transport checks create no windows")
+    }
+
+    private static func viewportPolicy() {
+        let rect = CGRect(x: 0, y: 0, width: 96, height: 28)
+        var sample = SoundViewportSample(rect: rect, clipped: rect, attached: true, active: true,
+                                         shown: true, hidden: false, blocked: false, clipCount: 2, tracksScroll: true)
+        check(sample.eligible, "viewport policy only: positive facts permit an intersecting waveform")
+        sample.clipped = CGRect(x: 20, y: 0, width: 76, height: 28)
+        check(sample.eligible, "viewport policy only: partial horizontal intersection remains eligible")
+        for field in 0..<7 {
+            var refused = sample
+            switch field {
+            case 0: refused.attached = false
+            case 1: refused.active = false
+            case 2: refused.shown = false
+            case 3: refused.hidden = true
+            case 4: refused.blocked = true
+            case 5: refused.clipped = .zero
+            default: refused.tracksScroll = false
+            }
+            check(!refused.eligible, "viewport policy only: missing visibility or public invalidation signal refuses work")
+        }
+    }
+
+    private static func viewportGeometry() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let horizontal = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        horizontal.hasHorizontalScroller = true
+        let wide = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
+        horizontal.documentView = wide
+        let vertical = NSScrollView(frame: wide.bounds)
+        vertical.hasVerticalScroller = true
+        wide.addSubview(vertical)
+        let tall = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 1000))
+        vertical.documentView = tall
+        let view = ViewportView(frame: NSRect(x: 100, y: 500, width: 96, height: 28))
+        tall.addSubview(view)
+        window.contentView = horizontal
+        var latest: SoundViewportSample?
+        view.slot = 1
+        view.report = { _, value in latest = value }
+        view.observe()
+        view.sample()
+        vertical.contentView.scroll(to: .zero)
+        horizontal.contentView.scroll(to: .zero)
+        settle(horizontal)
+        check(latest?.clipCount == 2 && latest?.tracksScroll == true, "viewport geometry: actual public vertical and horizontal clip ancestors provide notifications")
+        check(latest?.clipped.isEmpty == true && latest?.eligible == false, "viewport geometry: offscreen row has zero eligibility")
+        let before = view.samples
+        vertical.contentView.scroll(to: NSPoint(x: 0, y: 480))
+        vertical.reflectScrolledClipView(vertical.contentView)
+        settle(horizontal)
+        check(view.samples > before, "viewport geometry: real vertical bounds notification invalidates probe without polling")
+        check((latest?.clipped.width ?? 0) > 0 && (latest?.clipped.height ?? 0) > 0,
+              "viewport geometry: actual hidden-window clipping proves a positive intersection, not eligibility")
+        check(latest?.eligible == false && latest?.shown == false, "viewport geometry: hidden window never becomes eligible despite positive geometry")
+        let verticalSamples = view.samples
+        horizontal.contentView.scroll(to: NSPoint(x: 150, y: 0))
+        horizontal.reflectScrolledClipView(horizontal.contentView)
+        settle(horizontal)
+        check(view.samples > verticalSamples, "viewport geometry: real horizontal bounds notification invalidates probe")
+        check((latest?.clipped.width ?? 0) > 0 && (latest?.clipped.width ?? 96) < 96,
+              "viewport geometry: horizontal ancestor clips the actual partial waveform")
+        horizontal.contentView.scroll(to: NSPoint(x: 300, y: 0))
+        horizontal.reflectScrolledClipView(horizontal.contentView)
+        settle(horizontal)
+        check(latest?.clipped.isEmpty == true && latest?.eligible == false, "viewport geometry: horizontally offscreen waveform has zero eligibility")
+        view.removeFromSuperview()
+        settle(horizontal)
+        check(latest?.attached == false && latest?.eligible == false, "viewport geometry: detach withdraws eligibility")
+        view.stop()
+        check(latest?.attached == false && view.slot == nil, "viewport geometry: reuse teardown clears the old row report")
+        check(!window.isVisible && !window.isKeyWindow, "viewport geometry: no window activation or screen visibility was used")
+        window.close()
+    }
+
+    private static func viewportList() {
+        let items = (1...40).map { value in
+            SoundItem(node: FSNode(id: UInt16(value), parentID: 10, name: "\(value)", flags: 0xff, size: 4), displayName: "sound")
+        }
+        let wire = ColumnWire()
+        let files = DeviceFileService(session: SysExSession(wire: wire, identityCode: 0x10))
+        let state = AppState(listedSounds: items, files: files)
+        state.connection = .connected(deviceName: "fixture", serial: "fixture", osVersion: "test")
+        state.setSoundRange(SoundRange.all[0])
+        let probe = SoundColumnProbe()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 650),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ContentView(state: state, suppressDeviceObservationForCheck: true,
+                                                       columnProbeForCheck: probe))
+        window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: 840, height: 650)
+        settle(host)
+        check((probe.viewports[1]?.clipped.height ?? 0) > 0, "viewport list: actual first production waveform intersects list clip")
+        check(probe.viewports.values.allSatisfy { !$0.eligible }, "viewport list: materialized and prefetched rows in hidden window all have zero eligibility")
+        if let table = descendants(host).compactMap({ $0 as? NSTableView }).first {
+            table.scrollRowToVisible(table.numberOfRows - 1)
+            settle(host)
+            if !table.visibleRect.contains(table.rect(ofRow: table.numberOfRows - 1)) {
+                table.scrollRowToVisible(table.numberOfRows - 1)
+                settle(host)
+            }
+            check((probe.viewports[40]?.clipped.height ?? 0) > 0, "viewport list: public table scroll reports actual last production waveform")
+            check(probe.viewports[1]?.clipped.isEmpty != false, "viewport list: scrolled-away or reused first row withdraws its positive intersection")
+            check(probe.viewports.values.allSatisfy { !$0.eligible }, "viewport list: scrolling never fabricates active visible window facts")
+        } else {
+            check(false, "viewport list: actual public table exists")
+        }
+        state.statusDetails.insert(UUID())
+        settle(host)
+        check(probe.viewports[40]?.blocked == true, "viewport list: known app presentation blocks row eligibility")
+        check(wire.sends == 0, "viewport list: layout, materialization and scrolling issue zero protocol commands")
+        window.close()
+        settle(host)
+    }
+
+    private static func sharedColumns() {
+        for cell: CGFloat in [8, 16, 28] {
+            let compact = SoundColumns(width: 420, cell: CGSize(width: cell, height: cell * 2))
+            let fit = SoundColumns(width: compact.minimumWidth + 1, cell: CGSize(width: cell, height: cell * 2))
+            check(compact.compact && compact.minimumWidth > 0, "columns: compact geometry derives from font metrics")
+            check(fit.minimumWidth <= compact.minimumWidth + 1, "columns: fitting pane needs no horizontal range")
+            if cell == 28 { check(compact.minimumWidth > 420, "columns: large text retains tracks through shared horizontal overflow") }
+        }
+        let items = [UInt32(4), 4000, 4_000_000].enumerated().map { index, size in
+            SoundItem(node: FSNode(id: UInt16(index + 1), parentID: 10, name: "\(index + 1)", flags: 0xff, size: size),
+                      displayName: index == 1 ? String(repeating: "long name ", count: 12) : "sound")
+        }
+        for width: CGFloat in [420, 840] {
+            for typeSize: DynamicTypeSize in [.large, .accessibility2] {
+                let wire = ColumnWire()
+                let files = DeviceFileService(session: SysExSession(wire: wire, identityCode: 0x10))
+                let format: [String: JSONValue] = ["channels": .int(1), "samplerate": .int(46875)]
+                let record = WaveformPeakRecord(pcm: [0, 0, 0, 128], channels: 1, sampleRate: 46875)!
+                let state = AppState(listedSounds: items, files: files, listingMetadata: [1: format], waveformRecords: [1: record])
+                state.connection = .connected(deviceName: "fixture", serial: "fixture", osVersion: "test")
+                let probe = SoundColumnProbe()
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 1100),
+                                      styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                let host = NSHostingView(rootView: ContentView(state: state, suppressDeviceObservationForCheck: true,
+                                                               columnProbeForCheck: probe).environment(\.dynamicTypeSize, typeSize))
+                window.contentView = host
+                host.frame = NSRect(x: 0, y: 0, width: width, height: 1100)
+                settle(host)
+                checkColumnFrames(probe, ids: items.map(\.id))
+                let baseline = probe.frames[1]
+                targetedColumn(state: state, probe: probe, host: host)
+                let handles = descendants(host).compactMap { $0 as? RowDragHandle.Handle }.map(ObjectIdentifier.init)
+                check(state.waveformSnapshot(for: items[0]) != nil && state.waveformSnapshot(for: items[1]) == nil,
+                      "columns: actual row bars and placeholder share the same geometry")
+                state.selection = [1, 3]
+                state.beginInlineRename(items[0])
+                state.inlineRename?.draft = "unsaved renamed sound"
+                settle(host)
+                checkColumnFrames(probe, ids: items.map(\.id), baseline: baseline)
+                state.inlineRename = nil
+                state.inlineSlotEdit = InlineSlotEdit(id: 1, generation: 0)
+                state.inlineSlotEdit?.draft = "44"
+                settle(host)
+                checkColumnFrames(probe, ids: items.map(\.id), baseline: baseline)
+                state.inlineSlotEdit = nil
+                var metadata = InlineMetadataEdit(id: 1, name: "sound", generation: 0)
+                _ = metadata.loaded(request: metadata.request!, metadata: ["sound.rootnote": .int(60)], error: nil)
+                state.metadataEditing = metadata
+                state.waveformShown = WaveformShown(item: items[0], record: record, loopStart: nil, loopEnd: nil,
+                                                    metadataConfirmed: true)
+                settle(host)
+                checkColumnFrames(probe, ids: items.map(\.id), baseline: baseline)
+                check(state.metadataEditing?.form?.text["sound.rootnote"] == "60", "columns: expansion preserves actual draft")
+                check(descendants(host).compactMap { $0 as? RowDragHandle.Handle }.map(ObjectIdentifier.init) == handles,
+                      "columns: conditional controls and expansion preserve native handle identities")
+                check(state.selection == [1], "columns: editor selection binding remains authoritative")
+                let resized = width == 420 ? CGFloat(840) : CGFloat(420)
+                window.setContentSize(NSSize(width: resized, height: 1100))
+                host.frame.size = NSSize(width: resized, height: 1100)
+                settle(host)
+                checkColumnFrames(probe, ids: items.map(\.id))
+                check(state.metadataEditing?.form?.text["sound.rootnote"] == "60" && state.selection == [1],
+                      "columns: shared mode change preserves draft and selection")
+                check(descendants(host).compactMap { $0 as? RowDragHandle.Handle }.map(ObjectIdentifier.init) == handles,
+                      "columns: parent resize retains row source identities")
+                check(wire.sends == 0, "columns: mounting, resizing and inline presentation issue zero protocol commands")
+                check(!window.isVisible && !window.isKeyWindow, "columns: geometry check never activates its window")
+                window.close()
+                settle(host)
+            }
+        }
+    }
+
+    private static func targetedColumn(state: AppState, probe: SoundColumnProbe, host: NSView) {
+        guard let source = descendants(host).compactMap({ $0 as? RowDragHandle.Handle }).first(where: { $0.item?.id == 3 }),
+              let target = descendants(host).compactMap({ $0 as? NativeRowDropView }).first(where: { $0.item?.id == 1 }) else {
+            check(false, "columns: actual source and target views exist for drop feedback")
+            return
+        }
+        let before = probe.frames[1]
+        let token = RowDragToken(id: 3)
+        let delegate = RowDragProviderChecks.PromiseDelegate()
+        let writer = RowPromise(fileType: UTType.wav.identifier, delegate: delegate)
+        writer.token = token
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        check(board.writeObjects([writer]), "columns: real writer supplies targeted production row")
+        state.rowDrag.begin(token)
+        check(target.draggingEntered(DragInfo(pasteboard: board, source: source)) == .move,
+              "columns: actual native entry targets production feedback")
+        settle(host)
+        if let required = probe.frames[1]?["drop-marker-required"], let allocated = probe.frames[1]?["size"] {
+            check(required.width <= allocated.width + 1, "columns: full production drop marker fits its reserved track")
+        } else {
+            check(false, "columns: actual targeted marker exposes intrinsic and allocated frames")
+        }
+        checkColumnFrames(probe, ids: [1, 2, 3], baseline: before)
+        target.draggingExited(DragInfo(pasteboard: board, source: source))
+        state.rowDrag.end(token)
+        settle(host)
+        check(delegate.writes == 0, "columns: feedback does not fulfill an audio promise")
+    }
+
+    private static func checkColumnFrames(_ probe: SoundColumnProbe, ids: [UInt16], baseline: [String: CGRect]? = nil) {
+        let columns = ["grip", "slot", "name", "wave", "size", "actions"]
+        for column in columns {
+            let frames = ids.compactMap { probe.frames[$0]?[column] }
+            check(frames.count == ids.count, "columns: actual production \(column) frames exist")
+            if let first = frames.first {
+                check(frames.allSatisfy { abs($0.minX - first.minX) < 1 && abs($0.maxX - first.maxX) < 1 },
+                      "columns: \(column) track aligns across actual row states")
+                if let prior = baseline?[column] {
+                    check(abs(first.minX - prior.minX) < 1 && abs(first.maxX - prior.maxX) < 1,
+                          "columns: \(column) track stays fixed through editor/detail changes")
+                }
+            }
+        }
+        for id in ids {
+            let frames = columns.compactMap { probe.frames[id]?[$0] }
+            check(zip(frames, frames.dropFirst()).allSatisfy { $0.maxX <= $1.minX + 1 },
+                  "columns: actual tracks do not overlap")
+            if let header = probe.frames[id]?["header"], let last = frames.last {
+                check(last.maxX <= header.maxX + 1 && (probe.frames[id]?["name"]?.width ?? 0) > 0,
+                      "columns: fixed tracks fit actual header and leave name space")
+            }
+        }
+    }
+
+    private final class ColumnWire: MIDIWire, @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var sends: Int { lock.withLock { count } }
+        func setMessageHandler(_ handler: (@Sendable ([UInt8]) -> Void)?) {}
+        func send(_ bytes: [UInt8]) async throws {
+            lock.withLock { count += 1 }
+            throw WireError.noDevice
+        }
     }
 
     private static func containment() {

@@ -171,13 +171,17 @@ final class AppState: ObservableObject {
     #if DEBUG
     convenience init(listedSounds: [SoundItem], waveformCache: WaveformCacheStore? = nil,
                      files: DeviceFileService? = nil, cacheSession: UUID? = nil,
-                     listingMetadata: [UInt16: [String: JSONValue]] = [:]) {
+                     listingMetadata: [UInt16: [String: JSONValue]] = [:],
+                     waveformRecords: [UInt16: WaveformPeakRecord] = [:]) {
         self.init(waveformCache: waveformCache)
         self.files = files
         if let files { library = DeviceLibrary(files: files) }
         waveformCacheSession = cacheSession
         for item in listedSounds {
             waveformMetadata[item.id] = listingMetadata[item.id].flatMap { ConfirmedWaveformMetadata(item: item, values: $0) }
+            if let record = waveformRecords[item.id] {
+                waveformRows.remember(slot: item.id, size: Int(item.node.size), record: record)
+            }
         }
         sounds = listedSounds
         soundsListed = true

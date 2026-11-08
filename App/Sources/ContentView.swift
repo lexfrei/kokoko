@@ -14,10 +14,12 @@ struct ContentView: View {
     var rowDropCheckFocus: Binding<SoundFocus?> = .constant(nil)
     var suppressDeviceObservationForCheck = false
     var rangeTabProbeForCheck: SoundRangeTabProbe?
+    var columnProbeForCheck: SoundColumnProbe?
     #endif
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
     @State private var targetedRow: UInt16?
+    @State private var rowCell = CellSizeKey.defaultValue
     @FocusState private var focus: SoundFocus?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(iOS)
@@ -229,7 +231,23 @@ struct ContentView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 8)
                 Divider()
-                soundRows(proxy)
+                GeometryReader { geometry in
+                    let columns = SoundColumns(width: geometry.size.width, cell: rowCell)
+                    ScrollView(.horizontal) {
+                        soundRows(proxy, columns: columns)
+                            .frame(width: max(geometry.size.width, columns.minimumWidth), height: geometry.size.height)
+                    }
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                }
+                .background {
+                    Text(CellSizeKey.sample).hidden().fixedSize()
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(key: CellSizeKey.self,
+                                                   value: CGSize(width: geometry.size.width / CGFloat(CellSizeKey.sample.count),
+                                                                 height: geometry.size.height))
+                        })
+                }
+                .onPreferenceChange(CellSizeKey.self) { rowCell = $0 }
             }
         }
     }
@@ -323,7 +341,7 @@ struct ContentView: View {
     }
     #endif
 
-    private func soundRows(_ proxy: ScrollViewProxy) -> some View {
+    private func soundRows(_ proxy: ScrollViewProxy, columns: SoundColumns) -> some View {
         let visible = state.visibleSounds
         let items = Dictionary(visible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let sections = soundSections(all: state.sounds.map(\.id), visible: Set(visible.map(\.id)), range: state.soundRange)
@@ -338,7 +356,7 @@ struct ContentView: View {
                             .selectionDisabled()
                     } else {
                         ForEach(section.slots, id: \.self) { slot in
-                            if let item = items[slot] { soundRow(item) }
+                            if let item = items[slot] { soundRow(item, columns: columns) }
                         }
                     }
                 } header: {
@@ -383,21 +401,21 @@ struct ContentView: View {
         #endif
     }
 
-    private func soundRow(_ item: SoundItem) -> some View {
+    private func soundRow(_ item: SoundItem, columns: SoundColumns) -> some View {
         Group {
             #if os(macOS)
             #if DEBUG
             if rowDropCheck == false {
-                soundRowContent(item)
+                soundRowContent(item, columns: columns)
                     .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
             } else {
-                NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item))
+                NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item, columns: columns))
             }
             #else
-            NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item))
+            NativeRowDrop(item: item, state: state, targeted: $targetedRow, content: soundRowContent(item, columns: columns))
             #endif
             #else
-            soundRowContent(item)
+            soundRowContent(item, columns: columns)
                 .onDrop(of: [rowMoveTextType], delegate: SoundRowDrop(target: item, state: state, targeted: $targetedRow))
             #endif
         }
@@ -405,65 +423,117 @@ struct ContentView: View {
         .id(item.id)
     }
 
-    private func soundRowContent(_ item: SoundItem) -> some View {
+    private func soundRowContent(_ item: SoundItem, columns: SoundColumns) -> some View {
         let epoch = state.waveformRows.epoch
         return VStack(alignment: .leading, spacing: 2) {
-            HStack {
+            HStack(spacing: columns.spacing) {
                 RowDragHandle(item: item, state: state)
-                    .frame(width: 28, height: minHitHeight)
+                    .frame(width: columns.grip, height: minHitHeight)
                     .help("drag sound to reorder or export")
-                slotField(item)
-                if let edit = state.inlineRename, edit.id == item.id {
-                    VStack(alignment: .leading, spacing: 2) {
-                        TextField("sound name", text: renameDraft(edit))
-                            .textFieldStyle(.plain)
-                            .focused($focus, equals: .rename(item.id))
-                            .accessibilityLabel("sound name, slot \(item.id)")
-                            .disabled(edit.submitting)
-                            .onSubmit { submitRename(edit) }
-                            .onKeyPress(.escape, phases: .down) { press in
-                                guard press.modifiers.isEmpty, edit.canCancel else { return .ignored }
-                                if state.cancelInlineRename() { focus = .soundList }
-                                return .handled
+                    #if os(macOS) && DEBUG
+                    .background { columnGeometry("grip") }
+                    #endif
+                slotField(item, width: columns.slot)
+                    .frame(width: columns.slot, alignment: .leading)
+                    #if os(macOS) && DEBUG
+                    .background { columnGeometry("slot") }
+                    #endif
+                Group {
+                    if let edit = state.inlineRename, edit.id == item.id {
+                        VStack(alignment: .leading, spacing: 2) {
+                            TextField("sound name", text: renameDraft(edit))
+                                .textFieldStyle(.plain)
+                                .focused($focus, equals: .rename(item.id))
+                                .accessibilityLabel("sound name, slot \(item.id)")
+                                .disabled(edit.submitting)
+                                .onSubmit { submitRename(edit) }
+                                .onKeyPress(.escape, phases: .down) { press in
+                                    guard press.modifiers.isEmpty, edit.canCancel else { return .ignored }
+                                    if state.cancelInlineRename() { focus = .soundList }
+                                    return .handled
+                                }
+                            if let error = edit.error {
+                                Text(error).foregroundStyle(Color.errorText)
                             }
-                        if let error = edit.error {
-                            Text(error).foregroundStyle(Color.errorText)
+                        }
+                    } else {
+                        Text(item.displayName).lineLimit(1)
+                    }
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                #if os(macOS) && DEBUG
+                .background { columnGeometry("name") }
+                #endif
+                waveformButton(item, columns: columns)
+                    #if os(macOS) && DEBUG
+                    .background { columnGeometry("wave") }
+                    .background {
+                        if let probe = columnProbeForCheck {
+                            SoundViewportProbe(slot: item.id,
+                                               blocked: state.modalOpen || !state.statusDetails.isEmpty || state.view != .sounds) {
+                                probe.viewports[$0] = $1
+                            }
                         }
                     }
-                } else {
-                    Text(item.displayName)
+                    #endif
+                Group {
+                    if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
+                                                  deviceBusy: state.deviceBusy) {
+                        Text(marker)
+                            #if os(macOS) && DEBUG
+                            .background {
+                                if columnProbeForCheck != nil {
+                                    Text(marker).fixedSize().hidden().accessibilityHidden(true)
+                                        .background { columnGeometry("drop-marker-required") }
+                                }
+                            }
+                            #endif
+                    } else {
+                        Text(formatSize(item.node.size))
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Spacer()
-                waveformButton(item)
-                if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
-                                              deviceBusy: state.deviceBusy) {
-                    Text(marker)
-                } else {
-                    Text(formatSize(item.node.size))
-                        .foregroundStyle(.secondary)
-                }
+                .lineLimit(1)
+                .frame(width: columns.size, alignment: .trailing)
+                #if os(macOS) && DEBUG
+                .background { columnGeometry("size") }
+                #endif
                 let commands = soundCommands(item)
-                if collapsesRowActions {
-                    Menu {
-                        ForEach(commands, id: \.action) { command in
-                            Button(command.action.accessibilityLabel, action: command.perform)
+                Group {
+                    if columns.compact {
+                        Menu {
+                            ForEach(commands, id: \.action) { command in
+                                Button(command.action.accessibilityLabel, action: command.perform)
+                            }
+                        } label: {
+                            Text(RowAction.actions.glyph)
+                                .frame(width: columns.actions, height: minHitHeight)
+                                .contentShape(Rectangle())
                         }
-                    } label: {
-                        Text(RowAction.actions.glyph)
-                            .frame(minWidth: 28, minHeight: minHitHeight)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .focused($focus, equals: .rowMenu(item.id))
-                    .disabled(state.deviceBusy)
-                    .accessibilityLabel(RowAction.actions.accessibilityLabel)
-                } else {
-                    ForEach(commands, id: \.action) { command in
-                        rowButton(command.action, help: command.help, perform: command.perform)
-                            .focused($focus, equals: .rowAction(item.id, command.action))
+                        .buttonStyle(.plain)
+                        .focused($focus, equals: .rowMenu(item.id))
+                        .disabled(state.deviceBusy)
+                        .accessibilityLabel(RowAction.actions.accessibilityLabel)
+                    } else {
+                        HStack(spacing: columns.spacing) {
+                            ForEach(commands, id: \.action) { command in
+                                rowButton(command.action, help: command.help, perform: command.perform)
+                                    .frame(width: columns.action)
+                                    .focused($focus, equals: .rowAction(item.id, command.action))
+                            }
+                        }
                     }
                 }
+                .frame(width: columns.actions, alignment: .leading)
+                #if os(macOS) && DEBUG
+                .background { columnGeometry("actions") }
+                #endif
             }
+            #if os(macOS) && DEBUG
+            .background { columnGeometry("header") }
+            .coordinateSpace(name: "sound-column-header")
+            .onPreferenceChange(SoundColumnFramesKey.self) { columnProbeForCheck?.frames[item.id] = $0 }
+            #endif
             slotNote(item)
             metadataDetails(item)
             if let shown = state.waveformShown, shown.id == item.id {
@@ -477,7 +547,18 @@ struct ContentView: View {
         .onChange(of: state.soundsListed) { _, listed in if listed { state.prepareWaveformRow(item, epoch: epoch) } }
     }
 
-    private func waveformButton(_ item: SoundItem) -> some View {
+    #if os(macOS) && DEBUG
+    @ViewBuilder private func columnGeometry(_ column: String) -> some View {
+        if columnProbeForCheck != nil {
+            GeometryReader { geometry in
+                Color.clear.preference(key: SoundColumnFramesKey.self,
+                                       value: [column: geometry.frame(in: .named("sound-column-header"))])
+            }
+        }
+    }
+    #endif
+
+    private func waveformButton(_ item: SoundItem, columns: SoundColumns) -> some View {
         let snapshot = state.waveformSnapshot(for: item)
         return Button {
             if state.waveformShown?.id == item.id {
@@ -486,10 +567,7 @@ struct ContentView: View {
                 Task { await state.showWaveform(item) }
             }
         } label: {
-            ViewThatFits(in: .horizontal) {
-                if !collapsesRowActions { WaveformThumbnail(snapshot: snapshot, compact: false) }
-                WaveformThumbnail(snapshot: snapshot, compact: true)
-            }
+            WaveformThumbnail(snapshot: snapshot, compact: columns.compact, width: columns.wave)
         }
         .buttonStyle(.plain)
         .focused($focus, equals: .rowAction(item.id, .waveform))
@@ -506,11 +584,11 @@ struct ContentView: View {
             || focus == .waveformClose(id) || focus == .rowAction(id, .waveform) { focus = .soundList }
     }
 
-    @ViewBuilder private func slotField(_ item: SoundItem) -> some View {
+    @ViewBuilder private func slotField(_ item: SoundItem, width: CGFloat) -> some View {
         if let edit = state.inlineSlotEdit, edit.rowID == item.id {
             TextField("slot", text: slotDraft(edit))
                 .textFieldStyle(.plain)
-                .frame(width: 64, alignment: .leading)
+                .frame(width: width, alignment: .leading)
                 .frame(minHeight: minHitHeight)
                 .focused($focus, equals: .slot(edit.session))
                 .accessibilityLabel("slot number for \(item.displayName)")
@@ -524,7 +602,7 @@ struct ContentView: View {
         } else {
             Button { beginSlot(item) } label: {
                 Text(String(format: "%03d", item.id))
-                    .frame(width: 64, alignment: .leading)
+                    .frame(width: width, alignment: .leading)
                     .frame(minHeight: minHitHeight)
                     .contentShape(Rectangle())
             }
