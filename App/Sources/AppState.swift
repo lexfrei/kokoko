@@ -37,9 +37,10 @@ struct WaveformShown: Identifiable {
     let record: WaveformPeakRecord?
     let loopStart: Int?
     let loopEnd: Int?
-    let cached: Bool
     let metadataConfirmed: Bool
+    var loading = false
     var id: UInt16 { item.id }
+    var description: String { record != nil ? "Waveform" : loading ? "loading waveform…" : "waveform unavailable" }
 }
 
 struct PendingSwap {
@@ -123,12 +124,34 @@ final class AppState: ObservableObject {
         .appendingPathComponent("kokoko/waveform-peaks", isDirectory: true)
     private let waveformCache: WaveformCacheStore
     private var waveformCacheSession: UUID?
+    private var waveformContentEpoch = UUID()
     private var waveformLease: WaveformCacheLease?
+    private struct ConfirmedWaveformMetadata: Equatable {
+        let node: FSNode
+        let descriptor: WaveformDescriptor
+        let loopStart: Int?
+        let loopEnd: Int?
+        let loopMetadataAvailable: Bool
+
+        init?(item: SoundItem, values: [String: JSONValue]) {
+            guard let descriptor = WaveformDescriptor(size: Int(item.node.size), metadata: values) else { return nil }
+            node = item.node
+            self.descriptor = descriptor
+            loopStart = values["sound.loopstart"]?.intValue
+            loopEnd = values["sound.loopend"]?.intValue
+            loopMetadataAvailable = ["sound.loopstart", "sound.loopend"].allSatisfy { key in
+                guard let value = values[key], value != .null else { return true }
+                return value.intValue != nil
+            }
+        }
+    }
+    private var waveformMetadata: [UInt16: ConfirmedWaveformMetadata] = [:]
     private struct WaveformLookup {
         let item: SoundItem
         let generation: Int
         let session: UUID
         let request: WaveformRows.Request
+        let metadata: ConfirmedWaveformMetadata
     }
     private var waveformLookups: [WaveformLookup] = []
     private var waveformLookupTask: Task<Void, Never>?
@@ -146,8 +169,16 @@ final class AppState: ObservableObject {
     }
 
     #if DEBUG
-    convenience init(listedSounds: [SoundItem]) {
-        self.init()
+    convenience init(listedSounds: [SoundItem], waveformCache: WaveformCacheStore? = nil,
+                     files: DeviceFileService? = nil, cacheSession: UUID? = nil,
+                     listingMetadata: [UInt16: [String: JSONValue]] = [:]) {
+        self.init(waveformCache: waveformCache)
+        self.files = files
+        if let files { library = DeviceLibrary(files: files) }
+        waveformCacheSession = cacheSession
+        for item in listedSounds {
+            waveformMetadata[item.id] = listingMetadata[item.id].flatMap { ConfirmedWaveformMetadata(item: item, values: $0) }
+        }
         sounds = listedSounds
         soundsListed = true
         listedSoundCount = listedSounds.count
@@ -484,7 +515,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func forgetDevice() {
+    func forgetDevice() {
+        waveformContentEpoch = UUID()
         // Operations still running on the old session fail when it closes, not after their timeouts.
         if let old = session { Task { await old.close() } }
         connectedPair = nil
@@ -513,6 +545,7 @@ final class AppState: ObservableObject {
         rowDragGeneration = UUID()
         waveformShown = nil
         waveformCacheSession = nil
+        waveformMetadata.removeAll()
         waveformLookups = []
         waveformRows.invalidate(slots: nil)
     }
@@ -598,7 +631,10 @@ final class AppState: ObservableObject {
             soundStorage.invalidate()
             return false
         }
+        waveformContentEpoch = UUID()
+        let listingEpoch = waveformContentEpoch
         waveformShown = nil
+        waveformMetadata.removeAll()
         waveformRows.invalidate(slots: nil)
         let token = hotplug.currentGeneration()
         let request = soundStorage.begin(generation: token)
@@ -631,17 +667,21 @@ final class AppState: ObservableObject {
             return false
         }
         var items: [SoundItem] = []
+        var confirmed: [UInt16: ConfirmedWaveformMetadata] = [:]
         for node in nodes where node.isFile {
             let meta = try? await files.getMetadata(fileID: node.id)
             let display = meta?["name"]?.stringValue ?? node.name
-            items.append(SoundItem(node: node, displayName: display))
+            let item = SoundItem(node: node, displayName: display)
+            items.append(item)
+            confirmed[node.id] = meta.flatMap { ConfirmedWaveformMetadata(item: item, values: $0) }
         }
-        guard hotplug.isCurrent(token) else { return false }
+        guard hotplug.isCurrent(token), waveformContentEpoch == listingEpoch else { return false }
         if var edit = inlineSlotEdit, edit.submitting, edit.generation == token {
             let carried = edit.reconcile(occupied: Set(items.map(\.id)))
             inlineSlotEdit = edit
             selection = remapSelection(selection, moves: carried)
         }
+        waveformMetadata = confirmed
         sounds = items
         listedSoundCount = items.count
         soundsListed = true
@@ -719,10 +759,12 @@ final class AppState: ObservableObject {
         defer { progress.end(op) }
         guard let files else { return .failure(DownloadFailure(errorDescription: "download: no device connected")) }
         let token = hotplug.currentGeneration()
+        let observationIsCurrent = waveformObservationGuard(for: item, generation: token)
         do {
             progress.update(op, "recv \(item.displayName)")
-            // Without the format the WAV header would be a guess, so the read must succeed.
-            let meta = try await files.getMetadata(fileID: item.node.id)
+            guard let meta = try await observedSoundMetadata(item, files: files, generation: token) else {
+                return .failure(DownloadFailure(errorDescription: "download: sound changed or device disconnected"))
+            }
             let channels = meta["channels"]?.intValue ?? 1
             let rate = meta["samplerate"]?.intValue ?? deviceSampleRate
             let result = try await files.getWhole(fileID: item.node.id) { done, total in
@@ -730,13 +772,19 @@ final class AppState: ObservableObject {
                     self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                 }
             }
+            guard observationIsCurrent() else {
+                return .failure(DownloadFailure(errorDescription: "download: sound changed or device disconnected"))
+            }
             progress.update(op, nil)
             return .success((item.displayName + ".wav",
                              makeWAV(pcm: result.data, channels: channels, sampleRate: rate)))
         } catch {
             progress.update(op, nil)
             let text = "download: \(error.localizedDescription)"
-            reportOperationError(text, token: token)
+            if observationIsCurrent() {
+                updateWaveformMetadata(nil, for: item)
+                reportOperationError(text, token: token)
+            }
             return .failure(DownloadFailure(errorDescription: text))
         }
     }
@@ -970,6 +1018,7 @@ final class AppState: ObservableObject {
     }
 
     private func invalidateMetadataIntent(affecting ids: Set<UInt16>? = nil, listingMayChange: Bool = true) {
+        waveformContentEpoch = UUID()
         soundStorage.invalidate()
         if listingMayChange { soundsListed = false }
         guard let edit = metadataEditing else { return }
@@ -1084,21 +1133,23 @@ final class AppState: ObservableObject {
     }
 
     private func readMetadata(_ edit: InlineMetadataEdit, files: DeviceFileService) async {
-        guard let request = edit.request else { return }
+        guard let request = edit.request, let item = sounds.first(where: { $0.id == edit.id }) else { return }
+        let observationIsCurrent = waveformObservationGuard(for: item, generation: edit.generation)
         let op = progress.begin("read metadata")
         defer { progress.end(op) }
         do {
-            let metadata = try await files.getMetadata(fileID: edit.id)
-            guard hotplug.isCurrent(edit.generation), var current = metadataEditing,
+            guard let metadata = try await observedSoundMetadata(item, files: files, generation: edit.generation) else { return }
+            guard var current = metadataEditing,
                   current.session == edit.session, metadataIsCurrent(current),
                   current.loaded(request: request, metadata: metadata, error: nil) else { return }
             metadataEditing = current
         } catch {
-            guard hotplug.isCurrent(edit.generation), var current = metadataEditing,
+            guard observationIsCurrent() else { return }
+            reportOperationError("metadata: \(error.localizedDescription)", token: edit.generation)
+            guard var current = metadataEditing,
                   current.session == edit.session, metadataIsCurrent(current),
                   current.loaded(request: request, metadata: nil, error: error.localizedDescription) else { return }
             metadataEditing = current
-            reportOperationError("metadata: \(error.localizedDescription)", token: edit.generation)
         }
     }
 
@@ -1138,6 +1189,10 @@ final class AppState: ObservableObject {
             let op = progress.begin("save metadata")
             defer { progress.end(op) }
             soundStorage.invalidate()
+            waveformContentEpoch = UUID()
+            let observedItem = sounds.first(where: { $0.id == edit.id })
+            let observationIsCurrent = observedItem.map { waveformObservationGuard(for: $0, generation: edit.generation) }
+            if let observedItem { updateWaveformMetadata(nil, for: observedItem) }
             let result = await saveMetadataDraft(files: files, fileID: edit.id, form: form,
                                                  refreshBeforeWrite: refreshBeforeWrite,
                                                  isCurrent: { await MainActor.run {
@@ -1147,6 +1202,13 @@ final class AppState: ObservableObject {
             } })
             guard hotplug.isCurrent(edit.generation) else { return false }
             if case .failed(_, let message, _) = result { reportOperationError("metadata: \(message)", token: edit.generation) }
+            switch result {
+            case .saved(let confirmed), .failed(let confirmed, _, false):
+                if observationIsCurrent?() == true, let observedItem {
+                    updateWaveformMetadata(confirmed.confirmedMetadata, for: observedItem)
+                }
+            default: break
+            }
             guard var current = metadataEditing, current.session == session, metadataIsCurrent(current),
                   current.finished(request: request, result: result) else { return false }
             if case .saved = result {
@@ -1528,9 +1590,66 @@ final class AppState: ObservableObject {
 
     // MARK: - misc
 
-    private func invalidateWaveformContent(slots: Set<UInt16>? = nil) async {
+    private func waveformObservationGuard(for item: SoundItem, generation: Int) -> @MainActor () -> Bool {
+        let epoch = waveformContentEpoch
+        let cacheSession = waveformCacheSession
+        return {
+            self.hotplug.isCurrent(generation) && self.waveformCacheSession == cacheSession
+                && self.waveformContentEpoch == epoch && self.sounds.contains(where: { $0.node == item.node })
+        }
+    }
+
+    private func observedSoundMetadata(_ item: SoundItem, files: DeviceFileService, generation: Int) async throws -> [String: JSONValue]? {
+        let observationIsCurrent = waveformObservationGuard(for: item, generation: generation)
+        do {
+            let values = try await files.getMetadata(fileID: item.id)
+            guard observationIsCurrent() else { return nil }
+            updateWaveformMetadata(values, for: item)
+            return values
+        } catch {
+            guard observationIsCurrent() else { return nil }
+            updateWaveformMetadata(nil, for: item)
+            throw error
+        }
+    }
+
+    func waveformSnapshot(for item: SoundItem) -> WaveformRowSnapshot? {
+        guard let metadata = waveformMetadata[item.id], metadata.node == item.node,
+              let snapshot = waveformRows.snapshot(slot: item.id, size: Int(item.node.size)),
+              metadata.descriptor.matches(snapshot.record) else { return nil }
+        return snapshot
+    }
+
+    @discardableResult
+    private func updateWaveformMetadata(_ values: [String: JSONValue]?, for item: SoundItem) -> ConfirmedWaveformMetadata? {
+        let confirmed = values.flatMap { ConfirmedWaveformMetadata(item: item, values: $0) }
+        let previous = waveformMetadata[item.id]
+        waveformMetadata[item.id] = confirmed
+        if previous != confirmed { waveformRows.invalidate(slots: [item.id]) }
+        if let shown = waveformShown, shown.id == item.id {
+            waveformShown = waveformPresentation(shown.item, record: shown.record, metadata: confirmed, loading: shown.loading)
+        }
+        return confirmed
+    }
+
+    private func waveformPresentation(_ item: SoundItem, record: WaveformPeakRecord?, metadata: ConfirmedWaveformMetadata?, loading: Bool = false) -> WaveformShown {
+        let accepted = record.flatMap { metadata?.node == item.node && metadata?.descriptor.matches($0) == true ? $0 : nil }
+        let loopsKnown = metadata?.loopMetadataAvailable == true
+        return WaveformShown(item: item, record: accepted,
+                             loopStart: loopsKnown ? metadata?.loopStart : nil,
+                             loopEnd: loopsKnown ? metadata?.loopEnd : nil,
+                             metadataConfirmed: loopsKnown, loading: loading)
+    }
+
+    func invalidateWaveformContent(slots: Set<UInt16>? = nil) async {
+        waveformContentEpoch = UUID()
         waveformIntent.invalidate()
         waveformLease?.cancel()
+        if let slots {
+            for slot in slots { waveformMetadata[slot] = nil }
+        } else {
+            waveformMetadata.removeAll()
+        }
         waveformRows.invalidate(slots: slots)
         if let shown = waveformShown, slots == nil || slots!.contains(shown.id) { waveformShown = nil }
         if let session = waveformCacheSession { await waveformCache.invalidate(slots: slots, session: session) }
@@ -1538,12 +1657,13 @@ final class AppState: ObservableObject {
 
     func prepareWaveformRow(_ item: SoundItem, epoch: UUID) {
         guard epoch == waveformRows.epoch, isConnected, soundsListed, view == .sounds, let session = waveformCacheSession,
-              sounds.contains(where: { $0.node == item.node }) else { return }
+              sounds.contains(where: { $0.node == item.node }),
+              let metadata = waveformMetadata[item.id], metadata.node == item.node else { return }
         waveformLookups.removeAll { !waveformRows.isCurrent($0.request) || !hotplug.isCurrent($0.generation) }
         guard waveformLookups.count < 64,
               let request = waveformRows.beginLookup(slot: item.id, size: Int(item.node.size)) else { return }
         waveformLookups.append(WaveformLookup(item: item, generation: hotplug.currentGeneration(),
-                                              session: session, request: request))
+                                              session: session, request: request, metadata: metadata))
         guard waveformLookupTask == nil else { return }
         waveformLookupTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1554,7 +1674,7 @@ final class AppState: ObservableObject {
                     continue
                 }
                 let record = await waveformCache.load(session: lookup.session, slot: lookup.item.id,
-                                                       size: Int(lookup.item.node.size))
+                                                       descriptor: lookup.metadata.descriptor)
                 guard waveformLookupIsCurrent(lookup) else {
                     waveformRows.cancelLookup(lookup.request)
                     continue
@@ -1574,6 +1694,7 @@ final class AppState: ObservableObject {
 
     private func waveformLookupIsCurrent(_ lookup: WaveformLookup) -> Bool {
         hotplug.isCurrent(lookup.generation) && waveformCacheSession == lookup.session
+            && waveformMetadata[lookup.item.id] == lookup.metadata
             && waveformRows.isCurrent(lookup.request) && soundsListed && view == .sounds
             && visibleSounds.contains(where: { $0.node == lookup.item.node })
     }
@@ -1592,47 +1713,45 @@ final class AppState: ObservableObject {
         defer { leaveDevice() }
         guard let files, let cacheSession = waveformCacheSession else { return }
         let token = hotplug.currentGeneration()
+        let observationIsCurrent = waveformObservationGuard(for: item, generation: token)
         waveformLease?.cancel()
         let lease = WaveformCacheLease()
         waveformLease = lease
         let request = waveformIntent.begin(slot: item.id, generation: token)
         let op = progress.begin()
         defer { progress.end(op) }
-        let local = forceRefresh ? nil : waveformRows.snapshot(slot: item.id, size: Int(item.node.size))?.record
-        waveformShown = WaveformShown(item: item, record: local, loopStart: nil, loopEnd: nil,
-                                      cached: local != nil, metadataConfirmed: false)
+        let known = waveformMetadata[item.id].flatMap { $0.node == item.node ? $0 : nil }
+        var candidate = forceRefresh ? nil : waveformSnapshot(for: item)?.record
+        waveformShown = waveformPresentation(item, record: candidate, metadata: known, loading: true)
         if forceRefresh {
             waveformRows.invalidate(slots: [item.id])
             await waveformCache.invalidate(slots: [item.id], session: cacheSession)
         }
         guard waveformIsCurrent(request, lease: lease), let cacheToken = await waveformCache.token(session: cacheSession),
               waveformIsCurrent(request, lease: lease) else { return }
-        var cached = forceRefresh ? nil : await waveformCache.load(session: cacheSession, slot: item.id, size: Int(item.node.size))
-        guard waveformIsCurrent(request, lease: lease) else { return }
-        waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: cached)
-        waveformShown = WaveformShown(item: item, record: cached, loopStart: nil, loopEnd: nil,
-                                      cached: cached != nil, metadataConfirmed: false)
+        if !forceRefresh, candidate == nil, let known {
+            candidate = await waveformCache.load(session: cacheSession, slot: item.id, descriptor: known.descriptor)
+            guard waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == known else { return }
+            waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: candidate)
+            waveformShown = waveformPresentation(item, record: candidate, metadata: known, loading: true)
+        }
         do {
-            let meta = try await files.getMetadata(fileID: item.id)
-            guard waveformIsCurrent(request, lease: lease) else { return }
-            let channels = meta["channels"]?.intValue ?? cached?.channels ?? 1
-            let sampleRate = meta["samplerate"]?.intValue ?? cached?.sampleRate ?? deviceSampleRate
-            if cached != nil {
-                cached = await waveformCache.load(session: cacheSession, slot: item.id, size: Int(item.node.size),
-                                                  channels: channels, sampleRate: sampleRate)
-                guard waveformIsCurrent(request, lease: lease) else { return }
-                waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: cached)
-                if cached == nil {
-                    waveformShown = WaveformShown(item: item, record: nil, loopStart: nil, loopEnd: nil,
-                                                  cached: false, metadataConfirmed: true)
-                }
+            guard let meta = try await observedSoundMetadata(item, files: files, generation: token) else { return }
+            guard let confirmed = ConfirmedWaveformMetadata(item: item, values: meta) else {
+                throw DownloadFailure(errorDescription: "sound format metadata unavailable or unsupported")
             }
-            guard (1...2).contains(channels), (1...65535).contains(sampleRate) else {
-                throw DownloadFailure(errorDescription: "unsupported audio format")
+            guard waveformIsCurrent(request, lease: lease), observationIsCurrent() else { return }
+            candidate = candidate.flatMap { confirmed.descriptor.matches($0) ? $0 : nil }
+            waveformShown = waveformPresentation(item, record: candidate, metadata: confirmed, loading: true)
+            if !forceRefresh, candidate == nil {
+                candidate = await waveformCache.load(session: cacheSession, slot: item.id, descriptor: confirmed.descriptor)
+                guard waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == confirmed else { return }
             }
+            waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: candidate)
+            waveformShown = waveformPresentation(item, record: candidate, metadata: confirmed, loading: true)
             let record: WaveformPeakRecord
-            if let cached {
-                record = cached
+            if let candidate {
+                record = candidate
             } else {
                 progress.update(op, "recv \(item.displayName)")
                 let pcm = try await files.getWhole(fileID: item.id) { done, total in
@@ -1640,28 +1759,29 @@ final class AppState: ObservableObject {
                         self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                     }
                 }.data
-                guard waveformIsCurrent(request, lease: lease) else { return }
+                guard waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == confirmed else { return }
+                let descriptor = confirmed.descriptor
                 let computed = await Task.detached(priority: .userInitiated) {
-                    WaveformPeakRecord(pcm: pcm, channels: channels, sampleRate: sampleRate)
+                    WaveformPeakRecord(pcm: pcm, channels: descriptor.channels, sampleRate: descriptor.sampleRate)
                 }.value
-                guard waveformIsCurrent(request, lease: lease) else { return }
-                guard let computed else { throw DownloadFailure(errorDescription: "unsupported or incomplete audio format") }
+                guard waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == confirmed else { return }
+                guard let computed, descriptor.matches(computed) else {
+                    throw DownloadFailure(errorDescription: "unsupported or changed audio format")
+                }
                 record = computed
                 guard await waveformCache.store(record, slot: item.id, token: cacheToken, lease: lease),
-                      waveformIsCurrent(request, lease: lease) else { return }
+                      waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == confirmed else { return }
             }
-            guard waveformIsCurrent(request, lease: lease) else { return }
-            waveformRows.remember(slot: item.id, size: Int(item.node.size), record: record, cached: cached != nil)
-            let confirmed = SoundItem(node: item.node, displayName: meta["name"]?.stringValue ?? item.displayName)
-            waveformShown = WaveformShown(item: confirmed, record: record,
-                                          loopStart: meta["sound.loopstart"]?.intValue,
-                                          loopEnd: meta["sound.loopend"]?.intValue,
-                                          cached: cached != nil, metadataConfirmed: true)
+            guard waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == confirmed else { return }
+            waveformRows.remember(slot: item.id, size: Int(item.node.size), record: record)
+            let shownItem = SoundItem(node: item.node, displayName: meta["name"]?.stringValue ?? item.displayName)
+            waveformShown = waveformPresentation(shownItem, record: record, metadata: confirmed)
             progress.update(op, nil)
         } catch {
-            guard waveformIsCurrent(request, lease: lease) else { return }
+            guard observationIsCurrent() else { return }
+            updateWaveformMetadata(nil, for: item)
+            if waveformIsCurrent(request, lease: lease) { waveformShown = nil }
             progress.update(op, nil)
-            if waveformShown?.record == nil { waveformShown = nil }
             reportOperationError("waveform: \(error.localizedDescription)", token: token)
         }
     }

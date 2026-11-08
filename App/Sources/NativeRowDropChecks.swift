@@ -272,7 +272,7 @@ enum NativeRowDropChecks {
                 let before = containers.first?.frame.height
                 let record = WaveformPeakRecord(pcm: [0, 0, 0, 128], channels: 1, sampleRate: 46875)!
                 model.state.waveformShown = WaveformShown(item: items[0], record: record, loopStart: nil,
-                                                          loopEnd: nil, cached: false, metadataConfirmed: true)
+                                                          loopEnd: nil, metadataConfirmed: true)
                 settle(host)
                 let updatedHandles = descendants(host).compactMap { $0 as? RowDragHandle.Handle }
                 check(updatedHandles.map(ObjectIdentifier.init) == handles.map(ObjectIdentifier.init),

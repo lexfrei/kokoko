@@ -15,14 +15,11 @@ struct WaveformThumbnail: View {
     var body: some View {
         Group {
             if let snapshot, !compact {
-                VStack(spacing: 0) {
-                    WaveformBars(waveform: Waveform(record: snapshot.record, columns: WaveformMiniature.columns,
-                                                    loopStart: nil, loopEnd: nil))
-                        .frame(height: 12)
-                    Text(snapshot.cached ? "unverified" : "read").font(.caption2).lineLimit(1)
-                }
+                WaveformBars(waveform: Waveform(record: snapshot.record, columns: WaveformMiniature.columns,
+                                                loopStart: nil, loopEnd: nil))
+                    .frame(height: 12)
             } else {
-                Text(snapshot?.cached == true ? "[~]?" : WaveformMiniature.placeholder)
+                Text(WaveformMiniature.placeholder)
                     .lineLimit(1).minimumScaleFactor(0.5)
             }
         }
@@ -43,7 +40,7 @@ struct WaveformDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("waveform: \(shown.item.displayName)")
-            Text(shown.record == nil ? "audio not loaded" : shown.cached ? "cached audio · unverified" : "audio read from device")
+            Text(shown.description)
                 .foregroundStyle(.secondary)
             GeometryReader { geometry in
                 if let record = shown.record {
@@ -53,14 +50,13 @@ struct WaveformDetail: View {
                         Text(marks(waveform)).lineLimit(1)
                         WaveformBars(waveform: waveform, cellWidth: cell.width)
                             .frame(height: cell.height * Self.barLines)
-                        Text(shown.metadataConfirmed ? waveform.loopDescription : "loop metadata not read")
+                        Text(shown.metadataConfirmed ? waveform.loopDescription : "loop points unavailable")
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel((shown.cached ? "Cached, unverified. " : "")
-                                        + (shown.metadataConfirmed ? waveform.summary : "Waveform. Loop metadata not read"))
+                    .accessibilityLabel(shown.metadataConfirmed ? waveform.summary : "Waveform. Loop points unavailable")
                 } else {
-                    Text("reading waveform…").foregroundStyle(.secondary)
+                    Text(shown.description).foregroundStyle(.secondary)
                 }
             }
             .frame(height: cell.height * (Self.barLines + 2))
@@ -77,7 +73,7 @@ struct WaveformDetail: View {
                 barButton(.refresh) { Task { await state.showWaveform(shown.item, forceRefresh: true) } }
                     .focused(focus, equals: .waveformRefresh(shown.id))
                     .disabled(state.deviceBusy)
-                    .accessibilityLabel("Read this sound's audio again")
+                    .accessibilityLabel("Reload waveform")
                 Spacer()
                 barButton(.close, perform: close)
                     .focused(focus, equals: .waveformClose(shown.id))

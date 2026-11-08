@@ -98,7 +98,7 @@ enum SoundRangeTabChecks {
               "range guard: unchanged metadata closes without SET")
 
         let busy = makeState()
-        busy.waveformShown = WaveformShown(item: items[1], record: nil, loopStart: nil, loopEnd: nil, cached: false, metadataConfirmed: false)
+        busy.waveformShown = WaveformShown(item: items[1], record: nil, loopStart: nil, loopEnd: nil, metadataConfirmed: false)
         check(busy.enterDevice(), "range guard: actual device admission can be occupied without I/O")
         check(!busy.soundFilterChangeBlocked && busy.setSoundRange(SoundRange.all[0]) && busy.setFilterText("kick"),
               "range guard: busy state and read-only waveform do not block navigation")
