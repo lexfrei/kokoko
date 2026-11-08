@@ -2,15 +2,39 @@ import SwiftUI
 import KokokoLibrary
 
 /// A glyph run avoids the rounding error of measuring a single character.
-private struct CellSizeKey: PreferenceKey {
+struct CellSizeKey: PreferenceKey {
     static let sample = String(repeating: "0", count: 100)
     static let defaultValue = CGSize(width: 8, height: 16)
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }
 
+struct SoundColumns {
+    let spacing: CGFloat = 8
+    let grip: CGFloat = 28
+    let slot: CGFloat
+    let wave: CGFloat
+    let size: CGFloat
+    let action: CGFloat
+    let actions: CGFloat
+    let compact: Bool
+    let minimumWidth: CGFloat
+
+    init(width: CGFloat, cell: CGSize) {
+        slot = max(64, cell.width * 5)
+        size = cell.width * CGFloat(max(9, DropTarget.soundRow.marker.count))
+        action = max(28, cell.width * 3)
+        let expandedActions = action * 5 + spacing * 4
+        compact = width < grip + slot + 96 + size + expandedActions + spacing * 5 + cell.width * 8 + 32
+        wave = compact ? max(28, cell.width * 3) : 96
+        actions = compact ? max(28, cell.width * 5) : expandedActions
+        minimumWidth = grip + slot + wave + size + actions + spacing * 5 + cell.width * 8 + 32
+    }
+}
+
 struct WaveformThumbnail: View {
     let snapshot: WaveformRowSnapshot?
     let compact: Bool
+    var width: CGFloat? = nil
 
     var body: some View {
         Group {
@@ -23,7 +47,7 @@ struct WaveformThumbnail: View {
                     .lineLimit(1).minimumScaleFactor(0.5)
             }
         }
-        .frame(width: CGFloat(WaveformMiniature.width(compact: compact)), height: minHitHeight)
+        .frame(width: width ?? CGFloat(WaveformMiniature.width(compact: compact)), height: minHitHeight)
         .contentShape(Rectangle())
     }
 }
