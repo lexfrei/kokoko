@@ -1,9 +1,10 @@
 import Foundation
 
-/// Every query matches the name, case-insensitively. An all-digit query also
+/// Within the range, queries match the name case-insensitively. An all-digit query also
 /// matches the zero-padded slot by prefix or the exact slot: "1" finds slot 1
 /// and 100..199 but not 10..19, "01" finds 010..019, "808" finds "808 kick".
-public func soundMatches(name: String, slot: UInt16, query: String) -> Bool {
+public func soundMatches(name: String, slot: UInt16, query: String, range: SoundRange? = nil) -> Bool {
+    guard range?.contains(slot) ?? true else { return false }
     let q = query.trimmingCharacters(in: .whitespaces)
     if q.isEmpty { return true }
     if name.localizedCaseInsensitiveContains(q) { return true }
@@ -15,8 +16,8 @@ public func soundMatches(name: String, slot: UInt16, query: String) -> Bool {
 /// actions never reach rows the user cannot see.
 public func visibleSelection(_ selection: Set<UInt16>,
                              items: [(slot: UInt16, name: String)],
-                             query: String) -> Set<UInt16> {
-    let visible = items.filter { soundMatches(name: $0.name, slot: $0.slot, query: query) }
+                             query: String, range: SoundRange? = nil) -> Set<UInt16> {
+    let visible = items.filter { soundMatches(name: $0.name, slot: $0.slot, query: query, range: range) }
     return selection.intersection(visible.map(\.slot))
 }
 

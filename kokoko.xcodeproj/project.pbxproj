@@ -21,6 +21,7 @@
 		B50228115382A61988D625A5 /* RowDragProviderChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D593B607E257101755000CB1 /* RowDragProviderChecks.swift */; };
 		BC3F4128D01D779AD502B47A /* RowDragHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B716455249BDE32C3D9C37B /* RowDragHandle.swift */; };
 		C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CBF57372D137143311E4AE /* DataDocument.swift */; };
+		D576915409FB199A7F525291 /* SoundRangeTabChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */; };
 		FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76ACB2792656943F3451600 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,6 +34,7 @@
 		7B716455249BDE32C3D9C37B /* RowDragHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowDragHandle.swift; sourceTree = "<group>"; };
 		8BB5DC19A96DC8E08EC48477 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokokoApp.swift; sourceTree = "<group>"; };
+		BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundRangeTabChecks.swift; sourceTree = "<group>"; };
 		D2D88E399460FE396DD44C53 /* kokoko */ = {isa = PBXFileReference; lastKnownFileType = folder; name = kokoko; path = .; sourceTree = SOURCE_ROOT; };
 		D593B607E257101755000CB1 /* RowDragProviderChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowDragProviderChecks.swift; sourceTree = "<group>"; };
 		D76ACB2792656943F3451600 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -85,6 +87,7 @@
 				EC3EFBD405D7247C9DB492D2 /* RowDragHitChecks.swift */,
 				D593B607E257101755000CB1 /* RowDragProviderChecks.swift */,
 				D76ACB2792656943F3451600 /* SettingsView.swift */,
+				BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */,
 				17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */,
 			);
 			name = Sources;
@@ -175,6 +178,7 @@
 				61FCDA569539B55FBA87B80A /* RowDragHitChecks.swift in Sources */,
 				B50228115382A61988D625A5 /* RowDragProviderChecks.swift in Sources */,
 				FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */,
+				D576915409FB199A7F525291 /* SoundRangeTabChecks.swift in Sources */,
 				385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

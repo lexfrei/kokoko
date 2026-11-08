@@ -64,15 +64,11 @@ final class AppState: ObservableObject {
     @Published private(set) var soundsListed = false
     @Published private(set) var listedSoundCount: Int?
     @Published private(set) var soundStorage = SoundStorageState()
-    @Published var filterText = "" {
-        didSet {
-            if filterText != oldValue {
-                inlineRename = nil
-                inlineSlotEdit = nil
-                metadataEditing = nil
-            }
-            pruneSelection()
-        }
+    @Published private(set) var soundRange: SoundRange? {
+        didSet { pruneSelection() }
+    }
+    @Published private(set) var filterText = "" {
+        didSet { pruneSelection() }
     }
     @Published private(set) var progress = ProgressLine()
     var progressText: String? { progress.text }
@@ -149,14 +145,50 @@ final class AppState: ObservableObject {
         self.waveformCache = waveformCache ?? WaveformCacheStore(root: Self.waveformCacheRoot)
     }
 
+    #if DEBUG
+    convenience init(listedSounds: [SoundItem]) {
+        self.init()
+        sounds = listedSounds
+        soundsListed = true
+        listedSoundCount = listedSounds.count
+    }
+    #endif
+
     var visibleSounds: [SoundItem] {
-        sounds.filter { soundMatches(name: $0.displayName, slot: $0.id, query: filterText) }
+        sounds.filter { soundMatches(name: $0.displayName, slot: $0.id, query: filterText, range: soundRange) }
+    }
+
+    var soundFilterChangeBlocked: Bool {
+        inlineRename?.blocksFilterChange == true || inlineSlotEdit?.blocksFilterChange == true
+            || metadataEditing?.blocksFilterChange == true
+    }
+
+    @discardableResult func setSoundRange(_ range: SoundRange?) -> Bool {
+        guard range != soundRange else { return true }
+        guard prepareSoundFilterChange() else { return false }
+        soundRange = range
+        return true
+    }
+
+    @discardableResult func setFilterText(_ query: String) -> Bool {
+        guard query != filterText else { return true }
+        guard prepareSoundFilterChange() else { return false }
+        filterText = query
+        return true
+    }
+
+    private func prepareSoundFilterChange() -> Bool {
+        guard !soundFilterChangeBlocked else { return false }
+        inlineRename = nil
+        inlineSlotEdit = nil
+        metadataEditing = nil
+        return true
     }
 
     private func pruneSelection() {
         let pruned = visibleSelection(selection,
                                       items: sounds.map { (slot: $0.id, name: $0.displayName) },
-                                      query: filterText)
+                                      query: filterText, range: soundRange)
         if pruned != selection { selection = pruned }
         invalidateInlineEditors()
     }
