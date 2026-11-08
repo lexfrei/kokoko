@@ -1,10 +1,20 @@
-#if DEBUG
+#if os(macOS) || DEBUG
 import SwiftUI
+import KokokoLibrary
+import KokokoMIDI
 #if os(macOS)
 import AppKit
 #else
 import UIKit
 #endif
+
+struct SoundViewportContext: Equatable, Sendable {
+    let node: FSNode
+    let generation: Int
+    let session: UUID?
+    let content: UUID
+    let descriptor: WaveformDescriptor?
+}
 
 struct SoundViewportSample: Equatable {
     var rect: CGRect
@@ -16,9 +26,11 @@ struct SoundViewportSample: Equatable {
     var blocked: Bool
     var clipCount: Int
     var tracksScroll: Bool
+    var owner = UUID()
+    var retired = false
 
     var eligible: Bool {
-        attached && active && shown && !hidden && !blocked && tracksScroll
+        attached && active && shown && !hidden && !blocked && tracksScroll && !retired
             && !clipped.isNull && clipped.width > 0 && clipped.height > 0
     }
 }
@@ -26,11 +38,14 @@ struct SoundViewportSample: Equatable {
 struct SoundViewportProbe: View {
     let slot: UInt16
     let blocked: Bool
+    var context: SoundViewportContext? = nil
+    var registered: (@MainActor (UInt16, ViewportView) -> Void)? = nil
     let report: @MainActor (UInt16, SoundViewportSample) -> Void
 
     var body: some View {
         GeometryReader { geometry in
-            PlatformViewportProbe(slot: slot, blocked: blocked, invalidatedBy: geometry.frame(in: .global), report: report)
+            PlatformViewportProbe(slot: slot, blocked: blocked, context: context, registered: registered,
+                                  invalidatedBy: geometry.frame(in: .global), report: report)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -41,14 +56,21 @@ struct SoundViewportProbe: View {
 private struct PlatformViewportProbe: NSViewRepresentable {
     let slot: UInt16
     let blocked: Bool
+    let context: SoundViewportContext?
+    let registered: (@MainActor (UInt16, ViewportView) -> Void)?
     let invalidatedBy: CGRect
     let report: @MainActor (UInt16, SoundViewportSample) -> Void
 
     func makeNSView(context: Context) -> ViewportView { ViewportView() }
 
     func updateNSView(_ view: ViewportView, context: Context) {
-        if view.slot != slot { view.stop() }
-        view.slot = slot
+        if view.slot != slot || view.context != self.context {
+            view.stop()
+            view.slot = slot
+            view.context = self.context
+            view.owner = UUID()
+            registered?(slot, view)
+        }
         view.blocked = blocked
         view.report = report
         view.observe()
@@ -60,6 +82,8 @@ private struct PlatformViewportProbe: NSViewRepresentable {
 
 final class ViewportView: NSView {
     var slot: UInt16?
+    var context: SoundViewportContext?
+    var owner = UUID()
     var blocked = false
     var report: (@MainActor (UInt16, SoundViewportSample) -> Void)?
     private var observations: [NSObjectProtocol] = []
@@ -78,10 +102,12 @@ final class ViewportView: NSView {
         clipViews.removeAllObjects()
         if let slot {
             report?(slot, SoundViewportSample(rect: .zero, clipped: .zero, attached: false, active: false,
-                                             shown: false, hidden: true, blocked: blocked, clipCount: 0, tracksScroll: false))
+                                             shown: false, hidden: true, blocked: blocked, clipCount: 0, tracksScroll: false,
+                                             owner: owner, retired: true))
         }
         report = nil
         slot = nil
+        context = nil
     }
 
     func observe() {
@@ -119,6 +145,10 @@ final class ViewportView: NSView {
     func sample() {
         guard let slot else { return }
         samples += 1
+        report?(slot, currentSample())
+    }
+
+    func currentSample() -> SoundViewportSample {
         let clipped = bounds.intersection(visibleRect)
         var obstructed = blocked
         for clip in clips {
@@ -128,26 +158,33 @@ final class ViewportView: NSView {
                 }
             }
         }
-        let value = SoundViewportSample(rect: convert(bounds, to: nil), clipped: clipped.isEmpty ? .zero : convert(clipped, to: nil),
+        return SoundViewportSample(rect: convert(bounds, to: nil), clipped: clipped.isEmpty ? .zero : convert(clipped, to: nil),
                                         attached: window != nil,
                                         active: NSApplication.shared.isActive && window?.isKeyWindow == true,
                                         shown: window?.isVisible == true && window?.isMiniaturized == false,
                                         hidden: isHiddenOrHasHiddenAncestor, blocked: obstructed,
                                         clipCount: clips.count,
-                                        tracksScroll: !clips.isEmpty && clips.allSatisfy(\.postsBoundsChangedNotifications))
-        report?(slot, value)
+                                        tracksScroll: !clips.isEmpty && clips.allSatisfy(\.postsBoundsChangedNotifications), owner: owner)
     }
 }
 #else
 private struct PlatformViewportProbe: UIViewRepresentable {
     let slot: UInt16
     let blocked: Bool
+    let context: SoundViewportContext?
+    let registered: (@MainActor (UInt16, ViewportView) -> Void)?
     let invalidatedBy: CGRect
     let report: @MainActor (UInt16, SoundViewportSample) -> Void
 
     func makeUIView(context: Context) -> ViewportView { ViewportView() }
     func updateUIView(_ view: ViewportView, context: Context) {
-        view.slot = slot
+        if view.slot != slot || view.context != self.context {
+            view.stop()
+            view.slot = slot
+            view.context = self.context
+            view.owner = UUID()
+            registered?(slot, view)
+        }
         view.blocked = blocked
         view.report = report
         view.sample()
@@ -157,6 +194,8 @@ private struct PlatformViewportProbe: UIViewRepresentable {
 
 final class ViewportView: UIView {
     var slot: UInt16?
+    var context: SoundViewportContext?
+    var owner = UUID()
     var blocked = false
     var report: (@MainActor (UInt16, SoundViewportSample) -> Void)?
     override func layoutSubviews() { super.layoutSubviews(); sample() }
@@ -165,10 +204,12 @@ final class ViewportView: UIView {
     func stop() {
         if let slot {
             report?(slot, SoundViewportSample(rect: .zero, clipped: .zero, attached: false, active: false,
-                                             shown: false, hidden: true, blocked: blocked, clipCount: 0, tracksScroll: false))
+                                             shown: false, hidden: true, blocked: blocked, clipCount: 0, tracksScroll: false,
+                                             owner: owner, retired: true))
         }
         report = nil
         slot = nil
+        context = nil
     }
 
     func sample() {
@@ -188,7 +229,7 @@ final class ViewportView: UIView {
         let value = SoundViewportSample(rect: convert(bounds, to: window), clipped: convert(clipped, to: window),
                                         attached: window != nil, active: window?.windowScene?.activationState == .foregroundActive,
                                         shown: window?.isHidden == false, hidden: hidden, blocked: blocked,
-                                        clipCount: count, tracksScroll: false)
+                                        clipCount: count, tracksScroll: false, owner: owner)
         report?(slot, value)
     }
 }

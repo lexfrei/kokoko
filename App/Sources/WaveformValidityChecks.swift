@@ -1,9 +1,27 @@
 #if os(macOS) && DEBUG
 import AppKit
+import Combine
 import Foundation
+import SwiftUI
 import KokokoCore
 import KokokoLibrary
 @testable import KokokoMIDI
+
+private actor WaveformReductionBarrier {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var open = false
+    private(set) var waiting = false
+    func pause() async {
+        waiting = true
+        guard !open else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func resume() {
+        open = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
 
 @MainActor
 enum WaveformValidityChecks {
@@ -23,6 +41,12 @@ enum WaveformValidityChecks {
         await observationLifetimes()
         await listingLifetimes()
         await readbackLifetimes()
+        await foregroundAdmission()
+        await fileAdmissionOwnership()
+        await processedDropOwnership()
+        await folderAdmissionOwnership()
+        await changedForegroundTarget()
+        await automaticWaveforms()
         await invalidation()
         print(failures == 0 ? "waveform validity: all checks passed" : "waveform validity: \(failures) check(s) failed")
         return failures == 0 ? 0 : 1
@@ -42,14 +66,16 @@ enum WaveformValidityChecks {
         let state: AppState
         let cacheSession: UUID
 
-        init(listingMetadata: [String: JSONValue]? = nil) async {
+        init(listingMetadata: [String: JSONValue]? = nil, listed: [SoundItem]? = nil) async {
+            let listed = listed ?? [item]
             session = SysExSession(wire: wire, identityCode: 0x10)
             files = DeviceFileService(session: session)
             cache = WaveformCacheStore(root: root)
             cacheSession = await cache.configure(model: "fixture", serial: "fixture")
-            state = AppState(listedSounds: [item], waveformCache: cache,
+            let formats = Dictionary(uniqueKeysWithValues: listed.compactMap { item in listingMetadata.map { (item.id, $0) } })
+            state = AppState(listedSounds: listed, waveformCache: cache,
                              files: files, cacheSession: cacheSession,
-                             listingMetadata: listingMetadata.map { [item.id: $0] } ?? [:])
+                             listingMetadata: formats, soundRootID: 10)
             state.connection = .connected(deviceName: "fixture", serial: "fixture", osVersion: "test")
             wire.setMetadata(metadata)
             do { try await files.initialize(subscribe: false) }
@@ -364,6 +390,512 @@ enum WaveformValidityChecks {
         await f.close()
     }
 
+    private static func automaticWaveforms() async {
+        for cached in [false, true] {
+            let f = await Fixture(listingMetadata: metadata)
+            if cached { await f.seed() }
+            let owner = UUID()
+            let context = policyViewport(f.state, item: item, owner: owner)
+            check(await previewReady(f.state), "automatic policy: current eligible row receives accepted peaks without a button")
+            check(await automaticIdle(f.state), "automatic policy: one drain finishes")
+            check(f.wire.reads == (cached ? 0 : 1), "automatic policy: disk hit avoids PCM, miss performs one GET")
+            let record = await f.cache.load(session: f.cacheSession, slot: 1, size: 4)
+            check(record != nil, "automatic policy: accepted peaks integrate with persistent cache")
+            for _ in 0..<10 { _ = policyViewport(f.state, item: item, owner: owner) }
+            check(await automaticIdle(f.state) && f.wire.reads == (cached ? 0 : 1), "automatic policy: duplicate viewport delivery never repeats a completed read")
+            withdrawPolicyViewport(f.state, context: context, owner: owner)
+            await f.close()
+        }
+        await automaticCoalescing()
+        await automaticObstructionGate()
+        await automaticQueueCancellation()
+        await automaticContextReset()
+        await automaticFailureMemo()
+        await automaticAnnouncedBudget()
+        await automaticReductionHandoff()
+        await automaticLargeViewport()
+        await automaticHiddenViewport()
+    }
+
+    private static func policyViewport(_ state: AppState, item: SoundItem, owner: UUID) -> SoundViewportContext {
+        state.allowAutomaticPolicyFactsForCheck = true
+        let context = state.waveformViewportContext(for: item)
+        let rect = CGRect(x: 100, y: 10_000 - CGFloat(item.id) * 30, width: 96, height: 28)
+        state.registerWaveformViewport(context, owner: owner)
+        state.observeWaveformViewport(context, sample: SoundViewportSample(rect: rect, clipped: rect, attached: true,
+                                      active: true, shown: true, hidden: false, blocked: false, clipCount: 2,
+                                      tracksScroll: true, owner: owner))
+        return context
+    }
+
+    private static func withdrawPolicyViewport(_ state: AppState, context: SoundViewportContext, owner: UUID) {
+        state.observeWaveformViewport(context, sample: SoundViewportSample(rect: .zero, clipped: .zero, attached: false,
+                                      active: false, shown: false, hidden: true, blocked: false, clipCount: 0,
+                                      tracksScroll: false, owner: owner, retired: true))
+    }
+
+    private static func automaticIdle(_ state: AppState) async -> Bool {
+        for _ in 0..<5000 {
+            if !state.automaticWaveformInFlightForCheck && state.automaticWaveformPendingCountForCheck == 0 { return true }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return false
+    }
+
+    private static func automaticObstructionGate() async {
+        let f = await Fixture(listingMetadata: metadata)
+        f.state.showImporter = true
+        _ = policyViewport(f.state, item: item, owner: UUID())
+        check(await automaticIdle(f.state) && f.wire.reads == 0 && f.state.automaticViewportPinCountForCheck == 0,
+              "automatic policy: known app presentation blocks even an old positive viewport report")
+        f.state.showImporter = false
+        check(await previewReady(f.state) && f.wire.reads == 1, "automatic policy: closing app presentation resumes current eligible work")
+        await f.close()
+    }
+
+    private static func automaticCoalescing() async {
+        let second = SoundItem(node: FSNode(id: 2, parentID: 10, name: "2", flags: 0xff, size: 4), displayName: "second")
+        let f = await Fixture(listingMetadata: metadata, listed: [item, second])
+        await f.state.showWaveform(item)
+        check(await automaticIdle(f.state), "automatic policy: prior foreground cache preparation finishes")
+        var publications = 0
+        var delivered = false
+        let owner = UUID()
+        let subscription = f.state.objectWillChange.sink {
+            publications += 1
+            if !delivered {
+                delivered = true
+                _ = policyViewport(f.state, item: second, owner: owner)
+            }
+        }
+        _ = policyViewport(f.state, item: item, owner: UUID())
+        check(publications == 0, "automatic policy: native-style callback delivery performs no inline ObservableObject publication")
+        let idle = await automaticIdle(f.state)
+        check(idle && delivered && f.state.waveformSnapshot(for: second) != nil,
+              "automatic policy: viewport receipt delivered during publication is not dropped")
+        subscription.cancel()
+        await f.close()
+    }
+
+    private static func automaticContextReset() async {
+        let f = await Fixture(listingMetadata: metadata)
+        f.wire.holdPCM()
+        let owner = UUID()
+        let context = policyViewport(f.state, item: item, owner: owner)
+        check(await held(f.wire), "automatic policy: content reset fixture holds an actual GET")
+        await f.state.invalidateWaveformContent(slots: [1])
+        f.state.registerWaveformViewport(context, owner: UUID())
+        let rect = CGRect(x: 0, y: 0, width: 96, height: 28)
+        f.state.observeWaveformViewport(context, sample: SoundViewportSample(rect: rect, clipped: rect, attached: true,
+                                       active: true, shown: true, hidden: false, blocked: false, clipCount: 2,
+                                       tracksScroll: true, owner: owner))
+        f.wire.resume()
+        check(await automaticIdle(f.state) && f.wire.reads == 1, "automatic policy: old listing/content receipt cannot queue another read")
+        check(f.state.automaticViewportPinCountForCheck == 0 && f.state.waveformSnapshot(for: item) == nil,
+              "automatic policy: changed context clears pins and rejects late peaks")
+        check(await f.cache.load(session: f.cacheSession, slot: 1, size: 4) == nil,
+              "automatic policy: changed context rejects late cache publication")
+        await f.close()
+    }
+
+    private static func automaticAnnouncedBudget() async {
+        let f = await Fixture(listingMetadata: metadata)
+        f.wire.announceSize(UInt32(16 * 1024 * 1024 + 1))
+        _ = policyViewport(f.state, item: item, owner: UUID())
+        check(await automaticIdle(f.state) && f.wire.reads == 1, "automatic policy: unexpected oversized GET init is attempted once")
+        check(!f.wire.requests.contains([FileSub.get, 1]), "automatic policy: reader budget refuses data request after oversized init")
+        check(f.state.waveformAvailability(for: item) == "waveform unavailable", "automatic policy: announced over-budget result stays neutral")
+        await f.state.showWaveform(item, forceRefresh: true)
+        check(f.state.lastError?.contains("16 MiB") == true && !f.wire.requests.contains([FileSub.get, 1]),
+              "automatic policy: explicit refresh uses same reader budget and explains its refusal")
+        await f.close()
+    }
+
+    private static func automaticQueueCancellation() async {
+        let items = (100...139).map { slot in
+            SoundItem(node: FSNode(id: UInt16(slot), parentID: 10, name: "\(slot)", flags: 0xff, size: 4), displayName: "sound")
+        }
+        let f = await Fixture(listingMetadata: metadata, listed: items)
+        f.wire.holdPCM()
+        var receipts: [(SoundViewportContext, UUID)] = []
+        for item in items {
+            let owner = UUID()
+            receipts.append((policyViewport(f.state, item: item, owner: owner), owner))
+        }
+        check(await held(f.wire), "automatic policy: actual first GET reaches a held page")
+        check(f.wire.reads == 1 && f.state.automaticWaveformPendingCountForCheck <= 32,
+              "automatic policy: queue is bounded and one GET owns the device")
+        for (context, owner) in receipts { withdrawPolicyViewport(f.state, context: context, owner: owner) }
+        f.wire.resume()
+        check(await automaticIdle(f.state), "automatic policy: in-flight GET drains after visibility cancellation")
+        check(f.wire.reads == 1 && f.state.automaticViewportPinCountForCheck == 0,
+              "automatic policy: offscreen rows start no next GET and retain no viewport pins")
+        check(items.allSatisfy { f.state.waveformSnapshot(for: $0) == nil }, "automatic policy: cancelled old row cannot publish peaks")
+        check(await f.cache.load(session: f.cacheSession, slot: 100, size: 4) == nil,
+              "automatic policy: cancelled old row cannot store peaks")
+        if let first = receipts.first {
+            let rect = CGRect(x: 0, y: 0, width: 96, height: 28)
+            f.state.observeWaveformViewport(first.0, sample: SoundViewportSample(rect: rect, clipped: rect, attached: true,
+                                           active: true, shown: true, hidden: false, blocked: false, clipCount: 2,
+                                           tracksScroll: true, owner: first.1))
+            check(await automaticIdle(f.state) && f.wire.reads == 1, "automatic policy: retired owner cannot revive an old eligible row")
+        }
+        await f.close()
+    }
+
+    private static func automaticFailureMemo() async {
+        let f = await Fixture(listingMetadata: metadata)
+        f.state.noteError("unrelated user error")
+        f.wire.failPCM()
+        _ = policyViewport(f.state, item: item, owner: UUID())
+        check(await automaticIdle(f.state) && f.wire.reads == 1, "automatic policy: failing read is attempted once")
+        check(f.state.lastError == "unrelated user error" && f.state.waveformAvailability(for: item) == "waveform unavailable",
+              "automatic policy: failure is neutral and preserves foreground error lifecycle")
+        for _ in 0..<12 {
+            let owner = UUID()
+            let context = policyViewport(f.state, item: item, owner: owner)
+            withdrawPolicyViewport(f.state, context: context, owner: owner)
+        }
+        _ = policyViewport(f.state, item: item, owner: UUID())
+        check(await automaticIdle(f.state) && f.wire.reads == 1, "automatic policy: scroll churn does not retry a failed content context")
+        check(f.state.automaticWaveformFailureCountForCheck == 1, "automatic policy: repeated receipts retain only one per-slot failure context")
+        f.wire.failPCM(false)
+        f.state.retryAutomaticWaveform(for: item)
+        check(await previewReady(f.state) && f.wire.reads == 2, "automatic policy: explicit retry permits a new bounded attempt")
+        f.state.forgetDevice()
+        check(f.state.automaticWaveformFailureCountForCheck == 0 && f.state.automaticViewportPinCountForCheck == 0,
+              "automatic policy: device reset clears memo and pins rather than accumulating contexts")
+        await f.close()
+
+        let oversized = SoundItem(node: FSNode(id: 1, parentID: 10, name: "large", flags: 0xff,
+                                              size: UInt32(16 * 1024 * 1024 + 1)), displayName: "large")
+        let large = await Fixture(listingMetadata: metadata, listed: [oversized])
+        _ = policyViewport(large.state, item: oversized, owner: UUID())
+        check(await automaticIdle(large.state) && large.wire.reads == 0, "automatic policy: over-budget listed row starts no GET")
+        check(large.state.waveformAvailability(for: oversized) == "waveform unavailable", "automatic policy: over-budget miniature is neutrally unavailable")
+        await large.state.showWaveform(oversized, forceRefresh: true)
+        check(large.state.lastError?.contains("16 MiB") == true && large.wire.reads == 0,
+              "automatic policy: explicit over-budget opening reports the app preview restriction")
+        await large.close()
+    }
+
+    private static func automaticReductionHandoff() async {
+        let second = SoundItem(node: FSNode(id: 2, parentID: 10, name: "2", flags: 0xff, size: 4), displayName: "second")
+        let f = await Fixture(listingMetadata: metadata, listed: [item, second])
+        let barrier = WaveformReductionBarrier()
+        f.state.automaticReductionForCheck = { await barrier.pause() }
+        _ = policyViewport(f.state, item: item, owner: UUID())
+        _ = policyViewport(f.state, item: second, owner: UUID())
+        for _ in 0..<2000 {
+            if await barrier.waiting { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        check(await barrier.waiting && f.wire.reads == 1 && f.state.automaticPCMBufferCountForCheck == 1,
+              "automatic policy: off-main reduction retains exactly one PCM buffer and blocks next GET")
+        let download = Task { @MainActor in await f.state.download(item) }
+        check(await waiting(f.state), "automatic policy: explicit foreground waits for current reduction/read ownership")
+        await barrier.resume()
+        if case .failure = await download.value { check(false, "automatic policy: foreground handoff succeeds") }
+        check(await automaticIdle(f.state), "automatic policy: remaining visible work finishes after foreground")
+        check(f.wire.getOrder == [1, 1, 2], "automatic policy: foreground GET precedes the next background GET")
+        check(f.state.automaticPCMBufferCountForCheck == 0 && f.state.automaticMaximumPCMBufferCountForCheck == 1,
+              "automatic policy: next read begins only after prior background buffer is freed")
+        await f.close()
+    }
+
+    private static func automaticLargeViewport() async {
+        let items = (100...179).map { slot in
+            SoundItem(node: FSNode(id: UInt16(slot), parentID: 10, name: "\(slot)", flags: 0xff, size: 4), displayName: "sound")
+        }
+        let f = await Fixture(listingMetadata: metadata, listed: items)
+        let record = WaveformPeakRecord(pcm: pcm, channels: 1, sampleRate: 46875)!
+        let token = await f.cache.token(session: f.cacheSession)!
+        for item in items { _ = await f.cache.store(record, slot: item.id, token: token, lease: WaveformCacheLease()) }
+        var receipts: [(SoundViewportContext, UUID)] = []
+        for item in items {
+            let owner = UUID()
+            receipts.append((policyViewport(f.state, item: item, owner: owner), owner))
+        }
+        let finished = await automaticIdle(f.state)
+        check(finished && items.allSatisfy { f.state.waveformSnapshot(for: $0) != nil },
+              "automatic policy: more than 64 eligible rows keep all accepted viewport records")
+        let loads = f.state.waveformDiskLoadsForCheck
+        for (index, item) in items.enumerated() { _ = policyViewport(f.state, item: item, owner: receipts[index].1) }
+        check(await automaticIdle(f.state) && f.state.waveformDiskLoadsForCheck == loads && f.wire.reads == 0,
+              "automatic policy: large viewport does not churn disk reads or PCM")
+        for (context, owner) in receipts { withdrawPolicyViewport(f.state, context: context, owner: owner) }
+        check(await automaticIdle(f.state) && f.state.automaticViewportPinCountForCheck == 0,
+              "automatic policy: withdrawing actual receipts removes all viewport pins")
+        await f.close()
+    }
+
+    private static func automaticHiddenViewport() async {
+        let items = (100...179).map { slot in
+            SoundItem(node: FSNode(id: UInt16(slot), parentID: 10, name: "\(slot)", flags: 0xff, size: 4), displayName: "sound")
+        }
+        let f = await Fixture(listingMetadata: metadata, listed: items)
+        f.state.setSoundRange(SoundRange.all[1])
+        let probe = SoundColumnProbe()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 3600),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ContentView(state: f.state, suppressDeviceObservationForCheck: true,
+                                                       columnProbeForCheck: probe))
+        window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: 840, height: 3600)
+        for _ in 0..<30 { host.layoutSubtreeIfNeeded(); try? await Task.sleep(for: .milliseconds(1)) }
+        let intersections = probe.viewports.values.filter { $0.attached && !$0.clipped.isEmpty }
+        check(intersections.count > 64, "automatic geometry: actual tall hidden production viewport contains more than 64 waveform intersections")
+        for _ in 0..<2000 {
+            if !f.state.waveformDiskLookupInFlightForCheck { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        check(!f.state.waveformDiskLookupInFlightForCheck, "automatic geometry: actual hidden viewport disk lookups settle")
+        let loads = f.state.waveformDiskLoadsForCheck
+        for _ in 0..<10 { host.layoutSubtreeIfNeeded(); try? await Task.sleep(for: .milliseconds(1)) }
+        check(f.state.waveformDiskLoadsForCheck == loads, "automatic geometry: tall hidden viewport does not churn disk lookups")
+        check(!window.isVisible && !window.isKeyWindow && f.wire.reads == 0 && f.state.automaticViewportPinCountForCheck == 0,
+              "automatic geometry: real hidden window with complete device/cache metadata starts zero GET and pins")
+        window.close()
+        await f.close()
+    }
+
+    private static func foregroundAdmission() async {
+        for failure in [false, true] { await foregroundAdmission(metadataFails: failure) }
+    }
+
+    private static func foregroundAdmission(metadataFails: Bool) async {
+        let f = await Fixture()
+        f.state.noteError("earlier operation error")
+        guard let background = f.state.beginWaveformRead() else {
+            check(false, "foreground admission: idle accepts background reservation")
+            await f.close()
+            return
+        }
+        f.wire.holdPCM()
+        let reading = Task { @MainActor in
+            defer { f.state.endWaveformRead(background) }
+            _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+        }
+        check(await held(f.wire), "foreground admission: real bounded GET reaches held PCM")
+        check(!f.state.deviceBusy && f.state.isEnabled(.downloadSelected) == false,
+              "foreground admission: background reservation alone does not impersonate user work")
+        f.state.selection = [1]
+        check(f.state.isEnabled(.downloadSelected), "foreground admission: menu remains usable during background-only occupancy")
+        f.state.requestAudition(item)
+        f.state.beginInlineSlot(item)
+        if let edit = f.state.inlineSlotEdit {
+            f.state.inlineSlotEdit?.draft = "2"
+            check(!(await f.state.commitInlineSlot(session: edit.session)) && f.state.inlineSlotEdit?.draft == "2",
+                  "foreground admission: refused slot action retains draft without replay")
+        } else { check(false, "foreground admission: slot draft opens without consuming background ownership") }
+        f.state.inlineSlotEdit = nil
+        f.state.beginInlineRename(item)
+        if let edit = f.state.inlineRename {
+            f.state.inlineRename?.draft = "renamed"
+            check(!(await f.state.commitInlineRename(session: edit.session)) && f.state.inlineRename?.draft == "renamed",
+                  "foreground admission: refused rename retains draft without replay")
+        } else { check(false, "foreground admission: rename draft opens without consuming background ownership") }
+        f.state.inlineRename = nil
+        let pendingError = f.state.lastError
+        let download = Task { @MainActor in await f.state.download(item) }
+        check(await waiting(f.state), "foreground admission: explicit file action waits with a truthful status")
+        check(f.state.lastError == pendingError, "foreground admission: background and pending ownership do not clear earlier errors")
+        let refused = await f.state.download(item)
+        if case .failure(let failure) = refused {
+            check(failure.errorDescription?.contains("not queued") == true, "foreground admission: second action is explicitly refused, not queued")
+        } else { check(false, "foreground admission: second action cannot execute") }
+        check(f.wire.reads == 1, "foreground admission: no second GET starts during held background read")
+        if metadataFails { f.wire.failMetadata() }
+        f.wire.holdMetadata(fileID: 1)
+        f.wire.resume()
+        await reading.value
+        check(await held(f.wire), "foreground admission: promoted foreground reaches its real metadata barrier")
+        f.state.endWaveformRead(background)
+        check(f.state.beginWaveformRead() == nil, "foreground admission: foreground owns device despite stale callback and before next background admission")
+        f.wire.resume()
+        switch await download.value {
+        case .success(let result):
+            check(!metadataFails && result.wav.count > pcm.count, "foreground admission: waiting file action retains its captured sound and returns WAV bytes")
+        case .failure:
+            check(metadataFails && f.state.lastError?.contains("earlier operation error") == false,
+                  "foreground admission: stale background callback cannot finish foreground first-error lifecycle")
+        }
+        check(f.wire.reads == (metadataFails ? 1 : 2), "foreground admission: only successful foreground validation adds a second GET")
+        check(!f.wire.requests.contains(where: { $0.first == FileSub.playback || $0.first == FileSub.move || $0 == [FileSub.metadata, 1] }),
+              "foreground admission: refused preview, slot and rename never execute after read release")
+        if let next = f.state.beginWaveformRead() {
+            f.state.noteError("preserved after read")
+            let error = f.state.lastError
+            f.state.endWaveformRead(background)
+            check(f.state.beginWaveformRead() == nil, "foreground admission: stale background completion cannot steal current reservation")
+            f.state.endWaveformRead(next)
+            check(f.state.lastError == error, "foreground admission: background release never finishes user error lifecycle")
+        } else { check(false, "foreground admission: later background read may begin after foreground completion") }
+        await f.close()
+    }
+
+    private static func fileAdmissionOwnership() async {
+        for reset in [false, true] {
+            let f = await Fixture()
+            try? FileManager.default.createDirectory(at: f.root, withIntermediateDirectories: true)
+            let source = f.root.appendingPathComponent("sound.wav")
+            try? Data([1, 2, 3]).write(to: source)
+            var opened = 0
+            var closed = 0
+            f.state.beginFileScopeForCheck = { _ in opened += 1; return true }
+            f.state.endFileScopeForCheck = { _ in closed += 1 }
+            guard let background = f.state.beginWaveformRead() else { await f.close(); continue }
+            f.wire.holdPCM()
+            let reading = Task { @MainActor in
+                defer { f.state.endWaveformRead(background) }
+                _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+            }
+            check(await held(f.wire), "file ownership: real GET is held before file action")
+            let upload = Task { @MainActor in await f.state.upload(urls: [source]) }
+            check(await waiting(f.state), "file ownership: upload owns its source scope while waiting")
+            check(opened == 1 && closed == 0 && FileManager.default.fileExists(atPath: source.path),
+                  "file ownership: waiting source and acquired scope remain retained")
+            var staged: [URL] = []
+            let view = ContentView(state: f.state, suppressDeviceObservationForCheck: true)
+            let provider = NSItemProvider()
+            check(view.receiveDrop([provider], load: { _, done in done(source, nil) }, then: { urls in
+                staged = urls
+                return await f.state.upload(urls: urls)
+            }), "file ownership: real drop receiver stages conflicting file action")
+            for _ in 0..<1000 {
+                if f.state.lastError?.contains("files kept at") == true { break }
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+            check(staged.count == 1 && staged.allSatisfy { FileManager.default.fileExists(atPath: $0.path) },
+                  "file ownership: refused drop keeps actual staged bytes")
+            if let recovery = staged.first?.deletingLastPathComponent().deletingLastPathComponent() {
+                check(f.state.lastError?.contains(recovery.path) == true, "file ownership: refusal names an existing recovery directory")
+                try? FileManager.default.removeItem(at: recovery)
+            }
+            if reset { f.state.forgetDevice() } else { upload.cancel() }
+            check(await upload.value == .notStarted, "file ownership: cancel/reset before admission never processes source")
+            check(opened == closed && FileManager.default.fileExists(atPath: source.path),
+                  "file ownership: cancellation balances scope callbacks and preserves picker original")
+            f.wire.resume()
+            await reading.value
+            check(f.wire.reads == 1 && !f.state.deviceBusy, "file ownership: cancelled owner never replays after background release")
+            await f.close()
+        }
+    }
+
+    private static func processedDropOwnership() async {
+        for connected in [true, false] {
+            let f = await Fixture()
+            try? FileManager.default.createDirectory(at: f.root, withIntermediateDirectories: true)
+            let source = f.root.appendingPathComponent("invalid.wav")
+            try? Data([1, 2, 3]).write(to: source)
+            if !connected { f.state.forgetDevice() }
+            var staged: [URL] = []
+            var outcome: FileProcessing?
+            let view = ContentView(state: f.state, suppressDeviceObservationForCheck: true)
+            _ = view.receiveDrop([NSItemProvider()], load: { _, done in done(source, nil) }, then: { urls in
+                staged = urls
+                let result = await f.state.upload(urls: urls)
+                outcome = result
+                return result
+            })
+            for _ in 0..<1000 {
+                if outcome != nil { break }
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+            check(outcome == (connected ? .processed : .notStarted), "file ownership: processed outcome includes reported per-file failure, not success")
+            check(staged.count == 1 && staged.allSatisfy { FileManager.default.fileExists(atPath: $0.path) != connected },
+                  "file ownership: staging is discarded only after actual processing, never for no device")
+            check(FileManager.default.fileExists(atPath: source.path), "file ownership: original source is never consumed")
+            if !connected, let recovery = staged.first?.deletingLastPathComponent().deletingLastPathComponent() {
+                check(f.state.lastError?.contains(recovery.path) == true, "file ownership: no-device refusal retains a real recovery directory")
+                try? FileManager.default.removeItem(at: recovery)
+            }
+            await f.close()
+        }
+    }
+
+    private static func folderAdmissionOwnership() async {
+        let f = await Fixture()
+        let folder = f.root.appendingPathComponent("output")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var opened = 0
+        var closed = 0
+        f.state.beginFileScopeForCheck = { _ in opened += 1; return true }
+        f.state.endFileScopeForCheck = { _ in closed += 1 }
+        guard let background = f.state.beginWaveformRead() else { await f.close(); return }
+        f.wire.holdPCM()
+        let reading = Task { @MainActor in
+            defer { f.state.endWaveformRead(background) }
+            _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+        }
+        check(await held(f.wire), "folder ownership: real GET is held")
+        let requests = f.wire.requests
+        let backup = Task { @MainActor in await f.state.backupToFolder(folder) }
+        check(await waiting(f.state) && opened == 1 && closed == 0, "folder ownership: selected folder scope spans admission wait")
+        backup.cancel()
+        await backup.value
+        check(opened == closed && FileManager.default.fileExists(atPath: folder.path), "folder ownership: cancellation balances scope and leaves chosen folder intact")
+        f.wire.resume()
+        await reading.value
+        check(f.wire.requests == requests, "folder ownership: cancelled backup does not replay protocol work")
+        check((try? FileManager.default.contentsOfDirectory(atPath: folder.path))?.isEmpty == true,
+              "folder ownership: cancelled action writes no backup")
+        await f.close()
+    }
+
+    private static func changedForegroundTarget() async {
+        for reset in [false, true] { await changedForegroundTarget(resetAfterPromotion: reset) }
+        await changedForegroundTarget(resetAfterPromotion: false, cancelAfterPromotion: true)
+    }
+
+    private static func changedForegroundTarget(resetAfterPromotion: Bool, cancelAfterPromotion: Bool = false) async {
+        let f = await Fixture()
+        guard let background = f.state.beginWaveformRead() else { await f.close(); return }
+        f.wire.holdPCM()
+        let download = Task { @MainActor in await f.state.download(item) }
+        let reading = Task { @MainActor in
+            defer {
+                f.state.endWaveformRead(background)
+                if resetAfterPromotion { f.state.forgetDevice() }
+                if cancelAfterPromotion { download.cancel() }
+            }
+            _ = try? await f.files.getWhole(fileID: 1, maximumBytes: 4)
+        }
+        check(await held(f.wire), "foreground target: real GET is held")
+        let requests = f.wire.requests
+        check(await waiting(f.state), "foreground target: captured node waits")
+        if !resetAfterPromotion && !cancelAfterPromotion {
+            f.state.sounds = [SoundItem(node: FSNode(id: 1, parentID: 10, name: "replacement", flags: 0xff, size: 8), displayName: "replacement")]
+        }
+        f.wire.resume()
+        await reading.value
+        if case .failure(let failure) = await download.value {
+            if cancelAfterPromotion {
+                check(failure.errorDescription == "file action not started: cancelled or device changed",
+                      "foreground target: post-promotion cancellation is refused by the admission guard")
+            } else {
+                check(failure.errorDescription?.contains("changed") == true, "foreground target: changed node refuses before any foreground read")
+            }
+        } else { check(false, "foreground target: changed or cancelled target cannot execute") }
+        check(f.wire.requests == requests && f.wire.reads == 1 && !f.state.deviceBusy,
+              "foreground target: stale or cancelled action releases promoted admission without foreground MIDI")
+        if let next = f.state.beginWaveformRead() {
+            check(true, "foreground target: another owner can reserve device after the refused handoff")
+            f.state.endWaveformRead(next)
+        } else { check(false, "foreground target: refused handoff does not leak admission") }
+        await f.close()
+    }
+
+    private static func waiting(_ state: AppState) async -> Bool {
+        for _ in 0..<1000 {
+            if state.progressText?.contains("waiting for current audio read") == true { return true }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return false
+    }
+
     private static func invalidation() async {
         for (disconnect, metadataHeld) in [(false, false), (false, true), (true, false), (true, true)] {
             let f = await Fixture()
@@ -402,6 +934,14 @@ enum WaveformValidityChecks {
         private var holdFileID: UInt16?
         private var pending: [UInt8]?
         private var count = 0
+        private var commands: [[UInt8]] = []
+        private var getIDs: [UInt16] = []
+        private var pcmFailed = false
+        private var announcedSize: UInt32?
+        func announceSize(_ size: UInt32?) { lock.withLock { announcedSize = size } }
+        var getOrder: [UInt16] { lock.withLock { getIDs } }
+        func failPCM(_ value: Bool = true) { lock.withLock { pcmFailed = value } }
+        var requests: [[UInt8]] { lock.withLock { commands } }
         var reads: Int { lock.withLock { count } }
         var hasHeldResponse: Bool { lock.withLock { pending != nil } }
 
@@ -423,6 +963,7 @@ enum WaveformValidityChecks {
         func send(_ bytes: [UInt8]) async throws {
             guard let request = TEFrame.parse(bytes), request.payload.count >= 2 else { throw WireError.noDevice }
             let response = try lock.withLock { () throws -> ([UInt8]?, (@Sendable ([UInt8]) -> Void)?) in
+                commands.append(Array(request.payload.prefix(2)))
                 var payload: [UInt8] = []
                 var status: UInt8 = 0
                 var kind: Hold?
@@ -460,14 +1001,19 @@ enum WaveformValidityChecks {
                     }
                 case (FileSub.get, 0):
                     count += 1
-                    appendU16(1, to: &payload)
+                    let id = readU16(request.payload, 2)
+                    getIDs.append(id)
+                    appendU16(id, to: &payload)
                     payload.append(FileTypeFlag.file | FileCapability.read)
-                    appendU32(UInt32(pcm.count), to: &payload)
+                    appendU32(announcedSize ?? UInt32(pcm.count), to: &payload)
                     payload += Array("sound".utf8) + [0]
                 case (FileSub.get, 1):
                     kind = .pcm
-                    appendU16(0, to: &payload)
-                    payload += pcm
+                    if pcmFailed { status = 3 }
+                    else {
+                        appendU16(0, to: &payload)
+                        payload += pcm
+                    }
                 default: throw WireError.noDevice
                 }
                 let id = request.requestID

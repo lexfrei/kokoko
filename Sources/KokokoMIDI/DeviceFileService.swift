@@ -10,6 +10,9 @@ public enum FileServiceError: Error {
     case truncated(fileID: UInt16, expected: Int, got: Int)
     case unserializableMetadata
     case putIncomplete(fileID: UInt16, underlying: String)
+    case invalidReadLimit(Int)
+    case invalidReadOffset(fileID: UInt16, offset: UInt32, size: UInt32)
+    case readLimitExceeded(fileID: UInt16, maximumBytes: Int)
 }
 
 extension FileServiceError: LocalizedError {
@@ -22,6 +25,9 @@ extension FileServiceError: LocalizedError {
         case .pathNotFound(let path): "path not found on device: \(path)"
         case .truncated(let id, let expected, let got): "node \(id) read \(got) of \(expected) bytes"
         case .unserializableMetadata: "metadata has a value JSON cannot carry"
+        case .invalidReadLimit(let limit): "download limit must not be negative: \(limit)"
+        case .invalidReadOffset(let id, let offset, let size): "node \(id) offset \(offset) exceeds size \(size)"
+        case .readLimitExceeded(let id, let limit): "node \(id) exceeds download limit of \(limit) bytes"
         // The node id travels in the case; callers that name it add it themselves.
         case .putIncomplete(_, let underlying): underlying
         }
@@ -47,6 +53,7 @@ public struct FSNode: Equatable, Sendable, Identifiable {
 /// SysExFileHandler semantics from the original tool.
 public actor DeviceFileService {
     private let session: SysExSession
+    private let allocateReadBuffer: @Sendable (Int) -> [UInt8]
     private var chunkSize: Int = 0
     // The device keeps one transfer state and data pages carry only a page number,
     // so every operation runs alone; awaits inside one would otherwise let another
@@ -56,6 +63,16 @@ public actor DeviceFileService {
 
     public init(session: SysExSession) {
         self.session = session
+        allocateReadBuffer = { capacity in
+            var data: [UInt8] = []
+            data.reserveCapacity(capacity)
+            return data
+        }
+    }
+
+    package init(session: SysExSession, allocateReadBuffer: @escaping @Sendable (Int) -> [UInt8]) {
+        self.session = session
+        self.allocateReadBuffer = allocateReadBuffer
     }
 
     public func initialize(maxResponseLength: UInt32 = 4 * 1024 * 1024, subscribe: Bool = true) async throws {
@@ -187,22 +204,40 @@ public actor DeviceFileService {
 
     /// Download a whole file, verifying page order. `size` is the byte count the
     /// device announced from `offset` on; `data` falls short of it when a page
-    /// comes back empty early.
-    public func get(fileID: UInt16, offset: UInt32 = 0,
+    /// comes back empty early. A non-nil `maximumBytes` bounds the remaining
+    /// bytes before buffer allocation and page copying; nil keeps legacy reads.
+    public func get(fileID: UInt16, offset: UInt32 = 0, maximumBytes: Int? = nil,
                     progress: (@Sendable (Int, Int) -> Void)? = nil)
         async throws -> (name: String, data: [UInt8], size: Int) {
+        if let maximumBytes, maximumBytes < 0 { throw FileServiceError.invalidReadLimit(maximumBytes) }
         await acquire()
         defer { release() }
         let initPayload = try await call(GetInitRequest(fileID: fileID, offset: offset).bytes)
         guard let initResponse = GetInitResponse(payload: initPayload) else {
             throw FileServiceError.missingResponse
         }
-        var data: [UInt8] = []
-        data.reserveCapacity(Int(initResponse.fileSize))
         let total = Int(initResponse.fileSize) - Int(offset)
+        if let maximumBytes {
+            guard offset <= initResponse.fileSize else {
+                throw FileServiceError.invalidReadOffset(fileID: fileID, offset: offset, size: initResponse.fileSize)
+            }
+            guard total <= maximumBytes else {
+                throw FileServiceError.readLimitExceeded(fileID: fileID, maximumBytes: maximumBytes)
+            }
+        }
+        var data = allocateReadBuffer(maximumBytes == nil ? Int(initResponse.fileSize) : total)
         var page: UInt16 = 0
         while data.count < total {
             let payload = try await call(GetDataRequest(page: page).bytes)
+            if let maximumBytes, payload.count >= 2 {
+                let count = payload.count - 2
+                guard count <= maximumBytes - data.count else {
+                    throw FileServiceError.readLimitExceeded(fileID: fileID, maximumBytes: maximumBytes)
+                }
+                guard count <= total - data.count else {
+                    throw FileServiceError.truncated(fileID: fileID, expected: total, got: data.count + count)
+                }
+            }
             guard let response = GetDataResponse(payload: payload) else {
                 throw FileServiceError.missingResponse
             }

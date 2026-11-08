@@ -49,6 +49,10 @@ struct PendingSwap {
     let summary: SwapSummary
 }
 
+enum FileProcessing: Equatable, Sendable {
+    case processed, notStarted
+}
+
 /// Root state: MIDI scan → identify → greet → file service → /sounds listing.
 @MainActor
 final class AppState: ObservableObject {
@@ -83,34 +87,40 @@ final class AppState: ObservableObject {
     @Published private(set) var errorLine = ErrorLine()
     var lastError: String? { errorLine.text }
     @Published var showImporter = false {
-        didSet { if showImporter { panel.open(.none, generation: hotplug.currentGeneration()) } }
+        didSet {
+            if showImporter { panel.open(.none, generation: hotplug.currentGeneration()) }
+            scheduleAutomaticViewportUpdate()
+        }
     }
-    @Published var exportDocument: DataDocument?
+    @Published var exportDocument: DataDocument? { didSet { scheduleAutomaticViewportUpdate() } }
     @Published var exportName = "sound.wav"
     @Published var picker: PendingPicker = .none {
-        didSet { if picker != .none { panel.open(picker, generation: hotplug.currentGeneration()) } }
+        didSet {
+            if picker != .none { panel.open(picker, generation: hotplug.currentGeneration()) }
+            scheduleAutomaticViewportUpdate()
+        }
     }
     /// What the open panel was shown for. A device leaving resets `picker`;
     /// if that lands between the user's choice and the panel's callback,
     /// reading `picker` there sends the chosen folder to upload, and the
     /// panel's own settings would switch to upload's while it closes.
     @Published private(set) var panel = PanelRequest()
-    @Published var inlineSlotEdit: InlineSlotEdit?
-    @Published var inlineRename: InlineRename?
-    @Published var statusDetails = Set<UUID>()
-    @Published var metadataEditing: InlineMetadataEdit?
+    @Published var inlineSlotEdit: InlineSlotEdit? { didSet { scheduleAutomaticViewportUpdate() } }
+    @Published var inlineRename: InlineRename? { didSet { scheduleAutomaticViewportUpdate() } }
+    @Published var statusDetails = Set<UUID>() { didSet { scheduleAutomaticViewportUpdate() } }
+    @Published var metadataEditing: InlineMetadataEdit? { didSet { scheduleAutomaticViewportUpdate() } }
     @Published var firmwareStatus: FirmwareStatus?
     @Published var settingsTree: [SettingsGroupModel] = []
     @Published var settingsHelp: [String: String] = [:]
     @Published var settingsStatus: SettingsStatus = .notLoaded
     @Published var view: HeaderTab = .sounds {
-        didSet { invalidateInlineEditors() }
+        didSet { invalidateInlineEditors(); scheduleAutomaticViewportUpdate() }
     }
     @Published var projects: [ProjectItem] = []
     @Published var binEntries: [BinEntry] = []
-    @Published var binToRemove: BinEntry?
-    @Published var pendingRestore: PendingRestore?
-    @Published var pendingSwap: PendingSwap?
+    @Published var binToRemove: BinEntry? { didSet { scheduleAutomaticViewportUpdate() } }
+    @Published var pendingRestore: PendingRestore? { didSet { scheduleAutomaticViewportUpdate() } }
+    @Published var pendingSwap: PendingSwap? { didSet { scheduleAutomaticViewportUpdate() } }
     @Published var waveformShown: WaveformShown? {
         didSet {
             if waveformShown == nil {
@@ -124,7 +134,10 @@ final class AppState: ObservableObject {
         .appendingPathComponent("kokoko/waveform-peaks", isDirectory: true)
     private let waveformCache: WaveformCacheStore
     private var waveformCacheSession: UUID?
-    private var waveformContentEpoch = UUID()
+    private var waveformContentEpoch = UUID() {
+        didSet { resetAutomaticWaveforms() }
+    }
+    static let waveformMaximumBytes = 16 * 1024 * 1024
     private var waveformLease: WaveformCacheLease?
     private struct ConfirmedWaveformMetadata: Equatable {
         let node: FSNode
@@ -155,13 +168,50 @@ final class AppState: ObservableObject {
     }
     private var waveformLookups: [WaveformLookup] = []
     private var waveformLookupTask: Task<Void, Never>?
+    #if os(macOS)
+    private struct AutomaticViewport {
+        let context: SoundViewportContext
+        let owner: UUID
+        weak var view: ViewportView?
+        var sample: SoundViewportSample
+    }
+    private struct AutomaticWaveformJob: Equatable {
+        let context: SoundViewportContext
+        let owner: UUID
+    }
+    private var automaticViewports: [UInt16: AutomaticViewport] = [:]
+    private var automaticWaveformQueue: [AutomaticWaveformJob] = []
+    private var automaticWaveformTask: Task<Void, Never>?
+    private var automaticViewportTask: Task<Void, Never>?
+    private var automaticViewportDirty = false
+    private var automaticWaveformActive: (job: AutomaticWaveformJob, lease: WaveformCacheLease)?
+    @Published private var automaticWaveformFailures: [UInt16: SoundViewportContext] = [:]
+    private var automaticViewportPins = Set<UInt16>()
+    #if DEBUG
+    var allowAutomaticPolicyFactsForCheck = false
+    var automaticReductionForCheck: (@Sendable () async -> Void)?
+    private(set) var automaticPCMBufferCountForCheck = 0
+    private(set) var automaticMaximumPCMBufferCountForCheck = 0
+    var automaticWaveformInFlightForCheck: Bool { automaticWaveformTask != nil || automaticViewportTask != nil }
+    var automaticWaveformPendingCountForCheck: Int { automaticWaveformQueue.count }
+    var automaticViewportPinCountForCheck: Int { automaticViewportPins.count }
+    var automaticWaveformFailureCountForCheck: Int { automaticWaveformFailures.count }
+    #endif
+    #endif
+    #if DEBUG
+    private(set) var waveformDiskLoadsForCheck = 0
+    var waveformDiskLookupInFlightForCheck: Bool { waveformLookupTask != nil }
+    #endif
     private var waveformIntent = WaveformIntent()
     @Published private(set) var waveformRows = WaveformRows()
     @Published private var deviceAdmission = DeviceAdmission()
-    var deviceBusy: Bool { deviceAdmission.operation }
+    private var foregroundWaiter: (owner: UUID, continuation: CheckedContinuation<Bool, Never>)?
+    var deviceBusy: Bool { deviceAdmission.operation || deviceAdmission.foregroundWaiting }
     private var deviceOccupied: Bool { deviceAdmission.occupied }
     /// The sound a delete into the bin failed on, offered for a delete without a copy.
-    @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String, generation: Int)?
+    @Published var unbinnedDelete: (ids: Set<UInt16>, prompt: String, generation: Int)? {
+        didSet { scheduleAutomaticViewportUpdate() }
+    }
     @Published var bulkMoveStart = ""
 
     init(waveformCache: WaveformCacheStore? = nil) {
@@ -169,14 +219,18 @@ final class AppState: ObservableObject {
     }
 
     #if DEBUG
+    var beginFileScopeForCheck: ((URL) -> Bool)?
+    var endFileScopeForCheck: ((URL) -> Void)?
+
     convenience init(listedSounds: [SoundItem], waveformCache: WaveformCacheStore? = nil,
                      files: DeviceFileService? = nil, cacheSession: UUID? = nil,
                      listingMetadata: [UInt16: [String: JSONValue]] = [:],
-                     waveformRecords: [UInt16: WaveformPeakRecord] = [:]) {
+                     waveformRecords: [UInt16: WaveformPeakRecord] = [:], soundRootID: UInt16? = nil) {
         self.init(waveformCache: waveformCache)
         self.files = files
         if let files { library = DeviceLibrary(files: files) }
         waveformCacheSession = cacheSession
+        soundsRootID = soundRootID
         for item in listedSounds {
             waveformMetadata[item.id] = listingMetadata[item.id].flatMap { ConfirmedWaveformMetadata(item: item, values: $0) }
             if let record = waveformRecords[item.id] {
@@ -221,6 +275,7 @@ final class AppState: ObservableObject {
     }
 
     private func pruneSelection() {
+        scheduleAutomaticViewportUpdate()
         let pruned = visibleSelection(selection,
                                       items: sounds.map { (slot: $0.id, name: $0.displayName) },
                                       query: filterText, range: soundRange)
@@ -335,16 +390,99 @@ final class AppState: ObservableObject {
         return true
     }
 
+    private static let fileNotQueuedText = "device busy: another action is running or waiting; this action was not queued"
+
+    private func enterFileDevice(generation: Int, files: DeviceFileService) async -> Bool {
+        guard !Task.isCancelled, hotplug.isCurrent(generation), self.files === files else {
+            noteError("file action not started: cancelled or device changed")
+            return false
+        }
+        switch deviceAdmission.requestForeground() {
+        case .refused:
+            noteError(Self.fileNotQueuedText)
+            return false
+        case .started:
+            errorLine.start()
+            return true
+        case .waiting(let owner):
+            let waiting = progress.begin("waiting for current audio read")
+            defer { progress.end(waiting) }
+            let admitted: Bool = await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if Task.isCancelled {
+                        _ = deviceAdmission.cancelForeground(owner)
+                        continuation.resume(returning: false)
+                    } else {
+                        foregroundWaiter = (owner, continuation)
+                    }
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in self?.cancelFileWaiter(owner) }
+            }
+            guard admitted else { return false }
+            guard !Task.isCancelled, hotplug.isCurrent(generation), self.files === files else {
+                leaveDevice()
+                noteError("file action not started: cancelled or device changed")
+                return false
+            }
+            errorLine.start()
+            return true
+        }
+    }
+
+    private func cancelFileWaiter(_ owner: UUID) {
+        guard deviceAdmission.cancelForeground(owner), let waiting = foregroundWaiter, waiting.owner == owner else { return }
+        foregroundWaiter = nil
+        waiting.continuation.resume(returning: false)
+        noteError("file action cancelled before starting")
+    }
+
+    func beginWaveformRead() -> UUID? { deviceAdmission.beginBackground() }
+
+    func endWaveformRead(_ owner: UUID) {
+        switch deviceAdmission.endBackground(owner) {
+        case .stale: break
+        case .idle: deviceAvailable()
+        case .foreground(let token):
+            if let waiting = foregroundWaiter, waiting.owner == token {
+                foregroundWaiter = nil
+                waiting.continuation.resume(returning: true)
+            } else {
+                _ = deviceAdmission.endOperation()
+                deviceAvailable()
+            }
+        }
+    }
+
+    private func beginFileScope(_ url: URL) -> Bool {
+        #if DEBUG
+        if let beginFileScopeForCheck { return beginFileScopeForCheck(url) }
+        #endif
+        return url.startAccessingSecurityScopedResource()
+    }
+
+    private func endFileScope(_ url: URL) {
+        #if DEBUG
+        if let endFileScopeForCheck { endFileScopeForCheck(url); return }
+        #endif
+        url.stopAccessingSecurityScopedResource()
+    }
+
     private func leaveDevice() {
         if deviceAdmission.endOperation() { deviceReleased() }
     }
 
     private func deviceReleased() {
         errorLine.finish()
+        deviceAvailable()
+    }
+
+    private func deviceAvailable() {
         if let tab = tabLoad.deviceReleased(showing: view, needsLoad: tabNeedsLoad(view)) {
             Task { await loadOpenedTab(tab) }
         }
         rescanIfDue()
+        scheduleAutomaticViewportUpdate()
     }
 
     var isConnected: Bool {
@@ -416,7 +554,7 @@ final class AppState: ObservableObject {
     }
 
     func isEnabled(_ command: AppCommand) -> Bool {
-        command.isEnabled(tab: view, connected: isConnected, busy: deviceOccupied, selection: selection.count,
+        command.isEnabled(tab: view, connected: isConnected, busy: deviceAdmission.userOccupied, selection: selection.count,
                           modalOpen: modalOpen || (command == .auditionSelected && (inlineRename != nil || inlineSlotEdit != nil || metadataEditing != nil || !statusDetails.isEmpty)))
     }
 
@@ -520,6 +658,7 @@ final class AppState: ObservableObject {
     }
 
     func forgetDevice() {
+        if let owner = foregroundWaiter?.owner { cancelFileWaiter(owner) }
         waveformContentEpoch = UUID()
         // Operations still running on the old session fail when it closes, not after their timeouts.
         if let old = session { Task { await old.close() } }
@@ -700,27 +839,21 @@ final class AppState: ObservableObject {
 
     // MARK: - upload
 
-    func upload(urls: [URL]) async {
-        guard enterDevice() else { return }
+    @discardableResult
+    func upload(urls: [URL]) async -> FileProcessing {
+        let scoped = urls.filter { beginFileScope($0) }
+        defer { scoped.forEach { endFileScope($0) } }
+        let token = hotplug.currentGeneration()
+        guard let files else { noteError("upload: no device connected"); return .notStarted }
+        guard let root = soundsRootID else { noteError("upload: the sounds folder was not found"); return .notStarted }
+        guard await enterFileDevice(generation: token, files: files) else { return .notStarted }
         defer { leaveDevice() }
+        guard soundsRootID == root else { noteError("upload: the sounds folder changed; action not started"); return .notStarted }
         let op = progress.begin()
         defer { progress.end(op) }
-        // A drop, or a panel that stayed open across an unplug, reaches here
-        // with sounds the user picked; leaving without a word loses them.
-        guard let files else {
-            reportLocalError("upload: no device connected")
-            return
-        }
-        guard let root = soundsRootID else {
-            reportLocalError("upload: the sounds folder was not found")
-            return
-        }
-        let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
             do {
-                let accessing = url.startAccessingSecurityScopedResource()
-                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 let data = try Data(contentsOf: url)
                 progress.update(op, "prep \(url.lastPathComponent)")
                 let prepared = try prepareForUpload(fileData: data, fileName: url.lastPathComponent)
@@ -746,6 +879,7 @@ final class AppState: ObservableObject {
         if let text = batchFailureText("upload", failures: failures, total: urls.count) {
             reportOperationError(text, token: token)
         }
+        return .processed
     }
 
     // MARK: - download (single + batch)
@@ -757,12 +891,20 @@ final class AppState: ObservableObject {
     /// The failure carries its own text, since the error line may hold other
     /// operations' errors or drop this one for a device that has left.
     func download(_ item: SoundItem) async -> Result<(name: String, wav: [UInt8]), DownloadFailure> {
-        guard enterDevice() else { return .failure(DownloadFailure(errorDescription: Self.busyText)) }
+        let token = hotplug.currentGeneration()
+        guard let files, sounds.contains(where: { $0.node == item.node }) else {
+            return .failure(DownloadFailure(errorDescription: "download: no device connected or sound changed"))
+        }
+        guard await enterFileDevice(generation: token, files: files) else {
+            return .failure(DownloadFailure(errorDescription: lastError ?? Self.fileNotQueuedText))
+        }
         defer { leaveDevice() }
+        guard sounds.contains(where: { $0.node == item.node }) else {
+            noteError("download: sound changed; action not started")
+            return .failure(DownloadFailure(errorDescription: "download: sound changed; action not started"))
+        }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return .failure(DownloadFailure(errorDescription: "download: no device connected")) }
-        let token = hotplug.currentGeneration()
         let observationIsCurrent = waveformObservationGuard(for: item, generation: token)
         do {
             progress.update(op, "recv \(item.displayName)")
@@ -794,15 +936,20 @@ final class AppState: ObservableObject {
     }
 
     func downloadManyToFolder(_ ids: [UInt16], folder: URL) async {
-        guard enterDevice() else { return }
+        let accessing = beginFileScope(folder)
+        defer { if accessing { endFileScope(folder) } }
+        let token = hotplug.currentGeneration()
+        let nodes = ids.compactMap { id in sounds.first(where: { $0.id == id })?.node }
+        guard let files, nodes.count == ids.count else { noteError("batch download: no device connected or sounds changed"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
         defer { leaveDevice() }
+        guard let library, nodes.allSatisfy({ node in sounds.contains(where: { $0.node == node }) }) else {
+            noteError("batch download: sounds changed; action not started")
+            return
+        }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let library else { return }
-        let token = hotplug.currentGeneration()
         do {
-            let accessing = folder.startAccessingSecurityScopedResource()
-            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             let wavs = try await library.downloadMany(ids) { [weak self] done, total in
                 Task { @MainActor in self?.progress.update(op, "recv \(done)/\(total)") }
             }
@@ -831,15 +978,22 @@ final class AppState: ObservableObject {
     /// without a bin copy: a sound the device cannot read back would
     /// otherwise be impossible to delete from the app.
     private func deleteIntoBin(_ ids: Set<UInt16>, label: String) async {
-        guard let library, enterDevice() else { return }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        let nodes = sounds.filter { ids.contains($0.id) }.map(\.node)
+        guard let files, nodes.count == ids.count else { noteError("delete: no device connected or sounds changed"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
+        defer { leaveDevice() }
+        guard let library, soundsRootID == root, nodes.allSatisfy({ node in sounds.contains(where: { $0.node == node }) }) else {
+            noteError("delete: sounds or folder changed; action not started")
+            return
+        }
         await invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
-        defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
         let ordered = Array(ids)
         let started = StartedIndex()
-        let token = hotplug.currentGeneration()
         do {
             try await library.deleteMany(ordered, into: bin) { [weak self] done, total in
                 started.set(done)
@@ -867,14 +1021,20 @@ final class AppState: ObservableObject {
     /// `generation` is the device the offer was made for; a later device
     /// gets nothing deleted, since the same slot number names another sound.
     func deleteWithoutBin(_ ids: Set<UInt16>, generation: Int) async {
-        guard hotplug.isCurrent(generation) else {
-            noteError("the device changed, nothing was deleted")
+        let root = soundsRootID
+        let nodes = sounds.filter { ids.contains($0.id) }.map(\.node)
+        guard hotplug.isCurrent(generation), let files, nodes.count == ids.count else {
+            noteError("the device or sounds changed, nothing was deleted")
             return
         }
-        guard let library, enterDevice() else { return }
+        guard await enterFileDevice(generation: generation, files: files) else { return }
+        defer { leaveDevice() }
+        guard let library, soundsRootID == root, nodes.allSatisfy({ node in sounds.contains(where: { $0.node == node }) }) else {
+            noteError("the sounds or folder changed, nothing was deleted")
+            return
+        }
         await invalidateWaveformContent(slots: ids)
         invalidateMetadataIntent(affecting: ids)
-        defer { leaveDevice() }
         let op = progress.begin("delete without copy")
         defer { progress.end(op) }
         do {
@@ -897,13 +1057,19 @@ final class AppState: ObservableObject {
     }
 
     func restoreFromBin(_ entry: BinEntry) async {
-        guard let library, enterDevice() else { return }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        guard let files else { noteError("bin restore: no device connected"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
+        defer { leaveDevice() }
+        guard let library, soundsRootID == root, binEntries.contains(where: { $0.id == entry.id }) else {
+            noteError("bin restore: entry or device folder changed; action not started")
+            return
+        }
         await invalidateWaveformContent()
         invalidateMetadataIntent()
-        defer { leaveDevice() }
         let op = progress.begin("restore \(entry.name)")
         defer { progress.end(op) }
-        let token = hotplug.currentGeneration()
         do {
             _ = try await library.restore(entry, from: bin)
             await reload()
@@ -926,15 +1092,17 @@ final class AppState: ObservableObject {
     // MARK: - backup / restore
 
     func backupToFolder(_ folder: URL, scope: DeviceLibrary.Scope = .everything) async {
-        guard enterDevice() else { return }
+        let accessing = beginFileScope(folder)
+        defer { if accessing { endFileScope(folder) } }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        guard let files else { noteError("backup: no device connected"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
         defer { leaveDevice() }
+        guard let library, soundsRootID == root else { noteError("backup: device folders changed; action not started"); return }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let library else { return }
-        let token = hotplug.currentGeneration()
         do {
-            let accessing = folder.startAccessingSecurityScopedResource()
-            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             progress.update(op, "backup...")
             let backup = try await library.backup(deviceSKU: deviceMeta.sku,
                                                   osVersion: deviceMeta.osVersion,
@@ -970,12 +1138,14 @@ final class AppState: ObservableObject {
     }
 
     func restore(_ backup: DeviceBackup) async {
-        guard enterDevice() else { return }
+        let token = hotplug.currentGeneration()
+        let root = soundsRootID
+        guard let files else { noteError("restore: no device connected"); return }
+        guard await enterFileDevice(generation: token, files: files) else { return }
         defer { leaveDevice() }
+        guard let library, soundsRootID == root else { noteError("restore: device folders changed; action not started"); return }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let library else { return }
-        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "restore...")
             await invalidateWaveformContent()
@@ -1436,12 +1606,13 @@ final class AppState: ObservableObject {
 
     /// Download a project as its .tar archive (same shape the original tool uses).
     func downloadProject(_ project: ProjectItem) async -> (name: String, tar: [UInt8])? {
-        guard enterDevice() else { return nil }
+        let token = hotplug.currentGeneration()
+        guard let files, projects.contains(project) else { noteError("project download: no device connected or project changed"); return nil }
+        guard await enterFileDevice(generation: token, files: files) else { return nil }
         defer { leaveDevice() }
+        guard projects.contains(project) else { noteError("project download: project changed; action not started"); return nil }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return nil }
-        let token = hotplug.currentGeneration()
         do {
             progress.update(op, "recv P\(project.name)")
             let tar = try await files.getWhole(fileID: project.id).data
@@ -1459,13 +1630,16 @@ final class AppState: ObservableObject {
     }
 
     /// Upload .tar project archives; each name carries the target slot (P01..P09).
-    func uploadProjects(urls: [URL]) async {
-        guard enterDevice() else { return }
+    @discardableResult
+    func uploadProjects(urls: [URL]) async -> FileProcessing {
+        let scoped = urls.filter { beginFileScope($0) }
+        defer { scoped.forEach { endFileScope($0) } }
+        let token = hotplug.currentGeneration()
+        guard let files else { noteError("project upload: no device connected"); return .notStarted }
+        guard await enterFileDevice(generation: token, files: files) else { return .notStarted }
         defer { leaveDevice() }
         let op = progress.begin()
         defer { progress.end(op) }
-        guard let files else { return }
-        let token = hotplug.currentGeneration()
         var failures: [String] = []
         for url in urls {
             do {
@@ -1480,6 +1654,7 @@ final class AppState: ObservableObject {
         if let text = batchFailureText("project upload", failures: failures, total: urls.count) {
             reportOperationError(text, token: token)
         }
+        return .processed
     }
 
     private struct ProjectUploadError: LocalizedError {
@@ -1488,8 +1663,6 @@ final class AppState: ObservableObject {
 
     private func sendProject(url: URL, files: DeviceFileService,
                              op: ProgressLine.Operation) async throws {
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         guard let slot = projectSlot(droppedArchiveName: url.lastPathComponent) else {
             throw ProjectUploadError(errorDescription: "project archive must be named like P01.tar")
         }
@@ -1618,7 +1791,8 @@ final class AppState: ObservableObject {
     }
 
     func waveformSnapshot(for item: SoundItem) -> WaveformRowSnapshot? {
-        guard let metadata = waveformMetadata[item.id], metadata.node == item.node,
+        guard Int(item.node.size) <= Self.waveformMaximumBytes,
+              let metadata = waveformMetadata[item.id], metadata.node == item.node,
               let snapshot = waveformRows.snapshot(slot: item.id, size: Int(item.node.size)),
               metadata.descriptor.matches(snapshot.record) else { return nil }
         return snapshot
@@ -1629,7 +1803,13 @@ final class AppState: ObservableObject {
         let confirmed = values.flatMap { ConfirmedWaveformMetadata(item: item, values: $0) }
         let previous = waveformMetadata[item.id]
         waveformMetadata[item.id] = confirmed
-        if previous != confirmed { waveformRows.invalidate(slots: [item.id]) }
+        if previous != confirmed {
+            waveformRows.invalidate(slots: [item.id])
+            #if os(macOS)
+            automaticWaveformFailures[item.id] = nil
+            #endif
+            scheduleAutomaticViewportUpdate()
+        }
         if let shown = waveformShown, shown.id == item.id {
             waveformShown = waveformPresentation(shown.item, record: shown.record, metadata: confirmed, loading: shown.loading)
         }
@@ -1659,6 +1839,238 @@ final class AppState: ObservableObject {
         if let session = waveformCacheSession { await waveformCache.invalidate(slots: slots, session: session) }
     }
 
+    func waveformAvailability(for item: SoundItem) -> String {
+        if Int(item.node.size) > Self.waveformMaximumBytes || !item.node.isReadable
+            || (soundsListed && waveformMetadata[item.id] == nil) { return "waveform unavailable" }
+        #if os(macOS)
+        if automaticWaveformFailures[item.id] == waveformViewportContext(for: item) { return "waveform unavailable" }
+        #endif
+        return "waveform not loaded"
+    }
+
+    private func resetAutomaticWaveforms() {
+        #if os(macOS)
+        automaticWaveformActive?.lease.cancel()
+        automaticViewports.removeAll()
+        automaticWaveformQueue.removeAll()
+        automaticWaveformFailures.removeAll()
+        if !automaticViewportPins.isEmpty {
+            automaticViewportPins.removeAll()
+            waveformRows.setViewportPins([])
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    func waveformViewportContext(for item: SoundItem) -> SoundViewportContext {
+        let descriptor = waveformMetadata[item.id].flatMap { $0.node == item.node ? $0.descriptor : nil }
+        return SoundViewportContext(node: item.node, generation: hotplug.currentGeneration(), session: waveformCacheSession,
+                                    content: waveformContentEpoch, descriptor: descriptor)
+    }
+
+    private func automaticContextIsCurrent(_ context: SoundViewportContext) -> Bool {
+        guard isConnected, let item = sounds.first(where: { $0.id == context.node.id }) else { return false }
+        return context == waveformViewportContext(for: item)
+    }
+
+    func registerWaveformViewport(_ context: SoundViewportContext, owner: UUID, view: ViewportView? = nil) {
+        guard automaticContextIsCurrent(context) else { return }
+        if view == nil {
+            #if DEBUG
+            guard allowAutomaticPolicyFactsForCheck else { return }
+            #else
+            return
+            #endif
+        }
+        if let existing = automaticViewports[context.node.id], existing.context == context, existing.owner == owner { return }
+        if automaticWaveformActive?.job.context.node.id == context.node.id { automaticWaveformActive?.lease.cancel() }
+        let empty = SoundViewportSample(rect: .zero, clipped: .zero, attached: false, active: false, shown: false,
+                                        hidden: true, blocked: false, clipCount: 0, tracksScroll: false, owner: owner)
+        automaticViewports[context.node.id] = AutomaticViewport(context: context, owner: owner, view: view, sample: empty)
+        scheduleAutomaticViewportUpdate()
+    }
+
+    func observeWaveformViewport(_ context: SoundViewportContext, sample: SoundViewportSample) {
+        guard let existing = automaticViewports[context.node.id], existing.context == context,
+              existing.owner == sample.owner else { return }
+        if sample.retired { automaticViewports[context.node.id] = nil }
+        else {
+            guard existing.sample != sample else { return }
+            automaticViewports[context.node.id]?.sample = sample
+        }
+        if !sample.eligible, automaticWaveformActive?.job.owner == sample.owner { automaticWaveformActive?.lease.cancel() }
+        scheduleAutomaticViewportUpdate()
+    }
+
+    private func automaticSample(_ viewport: AutomaticViewport) -> SoundViewportSample? {
+        if let view = viewport.view {
+            guard view.context == viewport.context, view.slot == viewport.context.node.id else { return nil }
+            return view.currentSample()
+        }
+        #if DEBUG
+        if allowAutomaticPolicyFactsForCheck { return viewport.sample }
+        #endif
+        return nil
+    }
+
+    private var automaticViewportAllowed: Bool {
+        isConnected && soundsListed && view == .sounds && !modalOpen && statusDetails.isEmpty
+    }
+
+    private var automaticReadsAllowed: Bool {
+        automaticViewportAllowed && !deviceOccupied && waveformLookupTask == nil
+            && inlineRename == nil && inlineSlotEdit == nil && metadataEditing == nil
+    }
+
+    private func automaticViewportIsEligible(_ viewport: AutomaticViewport, sample: SoundViewportSample? = nil) -> Bool {
+        guard automaticViewportAllowed, automaticContextIsCurrent(viewport.context), viewport.context.session != nil,
+              viewport.context.descriptor != nil, viewport.context.node.isReadable,
+              Int(viewport.context.node.size) <= Self.waveformMaximumBytes,
+              let sample = sample ?? automaticSample(viewport), sample.owner == viewport.owner, sample.eligible,
+              let item = sounds.first(where: { $0.node == viewport.context.node }) else { return false }
+        return soundMatches(name: item.displayName, slot: item.id, query: filterText, range: soundRange)
+    }
+
+    private func automaticJobIsCurrent(_ job: AutomaticWaveformJob) -> Bool {
+        guard let viewport = automaticViewports[job.context.node.id], viewport.owner == job.owner,
+              viewport.context == job.context else { return false }
+        return automaticViewportIsEligible(viewport)
+    }
+
+    private func reconcileAutomaticViewport() {
+        automaticViewports = automaticViewports.compactMapValues { viewport in
+            guard automaticContextIsCurrent(viewport.context), let sample = automaticSample(viewport) else { return nil }
+            var current = viewport
+            current.sample = sample
+            return current
+        }
+        let eligible = automaticViewports.values.filter { automaticViewportIsEligible($0, sample: $0.sample) }
+        let pins = Set(eligible.map { $0.context.node.id })
+        if pins != automaticViewportPins {
+            automaticViewportPins = pins
+            waveformRows.setViewportPins(pins)
+        }
+        if let active = automaticWaveformActive, !automaticJobIsCurrent(active.job) { active.lease.cancel() }
+        let ordered = eligible.sorted {
+            let left = $0.sample.rect.maxY
+            let right = $1.sample.rect.maxY
+            return left == right ? $0.context.node.id < $1.context.node.id : left > right
+        }
+        automaticWaveformQueue = Array(ordered.compactMap { viewport -> AutomaticWaveformJob? in
+            let context = viewport.context
+            let job = AutomaticWaveformJob(context: context, owner: viewport.owner)
+            let accepted = waveformRows.snapshot(slot: context.node.id, size: Int(context.node.size))
+                .map { context.descriptor?.matches($0.record) == true } ?? false
+            guard automaticWaveformActive?.job != job, automaticWaveformFailures[context.node.id] != context,
+                  !accepted else { return nil }
+            return job
+        }.prefix(32))
+    }
+
+    func retryAutomaticWaveform(for item: SoundItem) {
+        automaticWaveformFailures[item.id] = nil
+        scheduleAutomaticViewportUpdate()
+    }
+
+    private func startAutomaticWaveforms() {
+        guard automaticWaveformTask == nil, automaticReadsAllowed, !automaticWaveformQueue.isEmpty else { return }
+        automaticWaveformTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                automaticWaveformTask = nil
+                scheduleAutomaticViewportUpdate()
+            }
+            while automaticReadsAllowed, !automaticWaveformQueue.isEmpty {
+                let job = automaticWaveformQueue.removeFirst()
+                guard automaticJobIsCurrent(job) else { continue }
+                await fillAutomaticWaveform(job)
+                reconcileAutomaticViewport()
+            }
+        }
+    }
+
+    private func fillAutomaticWaveform(_ job: AutomaticWaveformJob) async {
+        guard let session = job.context.session, let descriptor = job.context.descriptor, let files else { return }
+        let lease = WaveformCacheLease()
+        automaticWaveformActive = (job, lease)
+        defer { automaticWaveformActive = nil }
+        let candidate = await loadWaveformCandidate(session: session, slot: job.context.node.id, descriptor: descriptor)
+        guard lease.isCurrent, automaticJobIsCurrent(job) else { return }
+        if let candidate {
+            publishAutomaticWaveform(candidate, job: job)
+            return
+        }
+        let token = await waveformCache.token(session: session)
+        guard lease.isCurrent, automaticJobIsCurrent(job), automaticReadsAllowed else { return }
+        guard let token else { automaticWaveformFailures[job.context.node.id] = job.context; return }
+        guard let owner = beginWaveformRead() else { return }
+        defer { endWaveformRead(owner) }
+        do {
+            guard let record = try await readAutomaticWaveform(job, files: files, descriptor: descriptor, lease: lease),
+                  lease.isCurrent, automaticJobIsCurrent(job) else { return }
+            let stored = await waveformCache.store(record, slot: job.context.node.id, token: token, lease: lease)
+            guard lease.isCurrent, automaticJobIsCurrent(job) else { return }
+            guard stored else { automaticWaveformFailures[job.context.node.id] = job.context; return }
+            publishAutomaticWaveform(record, job: job)
+        } catch {
+            if automaticContextIsCurrent(job.context) { automaticWaveformFailures[job.context.node.id] = job.context }
+        }
+    }
+
+    private func readAutomaticWaveform(_ job: AutomaticWaveformJob, files: DeviceFileService,
+                                       descriptor: WaveformDescriptor, lease: WaveformCacheLease) async throws -> WaveformPeakRecord? {
+        var pcm = try await files.getWhole(fileID: job.context.node.id, maximumBytes: Self.waveformMaximumBytes).data
+        defer { pcm.removeAll(keepingCapacity: false) }
+        #if DEBUG
+        automaticPCMBufferCountForCheck += 1
+        automaticMaximumPCMBufferCountForCheck = max(automaticMaximumPCMBufferCountForCheck, automaticPCMBufferCountForCheck)
+        defer { automaticPCMBufferCountForCheck -= 1 }
+        let barrier = automaticReductionForCheck
+        #endif
+        guard lease.isCurrent, automaticJobIsCurrent(job) else { return nil }
+        guard pcm.count == descriptor.size else { throw DownloadFailure(errorDescription: "sound size changed during waveform read") }
+        let record = await Task.detached(priority: .utility) { [pcm] in
+            #if DEBUG
+            if let barrier { await barrier() }
+            #endif
+            return WaveformPeakRecord(pcm: pcm, channels: descriptor.channels, sampleRate: descriptor.sampleRate)
+        }.value
+        guard let record, descriptor.matches(record) else { throw DownloadFailure(errorDescription: "unsupported or changed audio format") }
+        return record
+    }
+
+    private func publishAutomaticWaveform(_ record: WaveformPeakRecord, job: AutomaticWaveformJob) {
+        guard automaticJobIsCurrent(job), job.context.descriptor?.matches(record) == true else { return }
+        waveformRows.remember(slot: job.context.node.id, size: Int(job.context.node.size), record: record)
+        if let shown = waveformShown, shown.item.node == job.context.node {
+            waveformShown = waveformPresentation(shown.item, record: record, metadata: waveformMetadata[shown.id], loading: shown.loading)
+        }
+    }
+    #endif
+
+    private func scheduleAutomaticViewportUpdate() {
+        #if os(macOS)
+        automaticViewportDirty = true
+        guard automaticViewportTask == nil else { return }
+        automaticViewportTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            repeat {
+                automaticViewportDirty = false
+                reconcileAutomaticViewport()
+            } while automaticViewportDirty
+            automaticViewportTask = nil
+            startAutomaticWaveforms()
+        }
+        #endif
+    }
+
+    private func loadWaveformCandidate(session: UUID, slot: UInt16, descriptor: WaveformDescriptor) async -> WaveformPeakRecord? {
+        #if DEBUG
+        waveformDiskLoadsForCheck += 1
+        #endif
+        return await waveformCache.load(session: session, slot: slot, descriptor: descriptor)
+    }
+
     func prepareWaveformRow(_ item: SoundItem, epoch: UUID) {
         guard epoch == waveformRows.epoch, isConnected, soundsListed, view == .sounds, let session = waveformCacheSession,
               sounds.contains(where: { $0.node == item.node }),
@@ -1677,7 +2089,7 @@ final class AppState: ObservableObject {
                     waveformRows.cancelLookup(lookup.request)
                     continue
                 }
-                let record = await waveformCache.load(session: lookup.session, slot: lookup.item.id,
+                let record = await loadWaveformCandidate(session: lookup.session, slot: lookup.item.id,
                                                        descriptor: lookup.metadata.descriptor)
                 guard waveformLookupIsCurrent(lookup) else {
                     waveformRows.cancelLookup(lookup.request)
@@ -1686,11 +2098,15 @@ final class AppState: ObservableObject {
                 waveformRows.finishLookup(lookup.request, record: record)
             }
             waveformLookupTask = nil
+            scheduleAutomaticViewportUpdate()
         }
     }
 
     func releaseWaveformRow(_ item: SoundItem, epoch: UUID) {
         guard epoch == waveformRows.epoch else { return }
+        #if os(macOS)
+        if let viewport = automaticViewports[item.id], automaticViewportIsEligible(viewport) { return }
+        #endif
         waveformRows.forget(slot: item.id, size: Int(item.node.size), epoch: epoch)
         waveformLookups.removeAll { $0.item.node == item.node }
         if waveformShown?.item.node == item.node { waveformShown = nil }
@@ -1713,7 +2129,16 @@ final class AppState: ObservableObject {
             return
         }
         guard isConnected, view == .sounds, !modalOpen, statusDetails.isEmpty, soundsListed,
-              visibleSounds.contains(where: { $0.node == item.node }), enterDevice() else { return }
+              visibleSounds.contains(where: { $0.node == item.node }) else { return }
+        guard Int(item.node.size) <= Self.waveformMaximumBytes else {
+            waveformShown = nil
+            noteError("waveform: audio exceeds the 16 MiB preview budget")
+            return
+        }
+        #if os(macOS)
+        retryAutomaticWaveform(for: item)
+        #endif
+        guard enterDevice() else { return }
         defer { leaveDevice() }
         guard let files, let cacheSession = waveformCacheSession else { return }
         let token = hotplug.currentGeneration()
@@ -1734,7 +2159,7 @@ final class AppState: ObservableObject {
         guard waveformIsCurrent(request, lease: lease), let cacheToken = await waveformCache.token(session: cacheSession),
               waveformIsCurrent(request, lease: lease) else { return }
         if !forceRefresh, candidate == nil, let known {
-            candidate = await waveformCache.load(session: cacheSession, slot: item.id, descriptor: known.descriptor)
+            candidate = await loadWaveformCandidate(session: cacheSession, slot: item.id, descriptor: known.descriptor)
             guard waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == known else { return }
             waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: candidate)
             waveformShown = waveformPresentation(item, record: candidate, metadata: known, loading: true)
@@ -1748,7 +2173,7 @@ final class AppState: ObservableObject {
             candidate = candidate.flatMap { confirmed.descriptor.matches($0) ? $0 : nil }
             waveformShown = waveformPresentation(item, record: candidate, metadata: confirmed, loading: true)
             if !forceRefresh, candidate == nil {
-                candidate = await waveformCache.load(session: cacheSession, slot: item.id, descriptor: confirmed.descriptor)
+                candidate = await loadWaveformCandidate(session: cacheSession, slot: item.id, descriptor: confirmed.descriptor)
                 guard waveformIsCurrent(request, lease: lease), waveformMetadata[item.id] == confirmed else { return }
             }
             waveformRows.reconcileCache(slot: item.id, size: Int(item.node.size), record: candidate)
@@ -1758,7 +2183,7 @@ final class AppState: ObservableObject {
                 record = candidate
             } else {
                 progress.update(op, "recv \(item.displayName)")
-                let pcm = try await files.getWhole(fileID: item.id) { done, total in
+                let pcm = try await files.getWhole(fileID: item.id, maximumBytes: Self.waveformMaximumBytes) { done, total in
                     Task { @MainActor in
                         self.progress.update(op, "recv \(item.displayName) \(done * 100 / max(total, 1))%")
                     }
@@ -1786,7 +2211,10 @@ final class AppState: ObservableObject {
             updateWaveformMetadata(nil, for: item)
             if waveformIsCurrent(request, lease: lease) { waveformShown = nil }
             progress.update(op, nil)
-            reportOperationError("waveform: \(error.localizedDescription)", token: token)
+            let message = if case FileServiceError.readLimitExceeded = error {
+                "audio exceeds the 16 MiB preview budget"
+            } else { error.localizedDescription }
+            reportOperationError("waveform: \(message)", token: token)
         }
     }
 

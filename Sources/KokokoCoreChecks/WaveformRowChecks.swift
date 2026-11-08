@@ -71,6 +71,27 @@ extension KokokoCoreChecks {
     static func waveformRowChecks() {
         waveformDescriptorChecks()
         let record = WaveformPeakRecord(pcm: [0, 0, 0, 128], channels: 1, sampleRate: 46875)!
+        var pinned = WaveformRows()
+        let visible = Set(UInt16(1)...80)
+        pinned.setViewportPins(visible)
+        for slot in UInt16(1)...80 { pinned.remember(slot: slot, size: 4, record: record) }
+        check(visible.allSatisfy { pinned.snapshot(slot: $0, size: 4) != nil }, "waveform rows: actual viewport pins can retain more than 64 records")
+        pinned.invalidate(slots: [1])
+        pinned.remember(slot: 1, size: 4, record: record)
+        check(visible.allSatisfy { pinned.snapshot(slot: $0, size: 4) != nil }, "waveform rows: entry invalidation does not withdraw a current viewport pin")
+        for slot in UInt16(81)...96 { pinned.remember(slot: slot, size: 4, record: record) }
+        check(visible.allSatisfy { pinned.snapshot(slot: $0, size: 4) != nil }, "waveform rows: unpinned work cannot evict viewport records")
+        check((UInt16(81)...96).allSatisfy { pinned.needsLookup(slot: $0, size: 4) }, "waveform rows: pins expand capacity only to their own count")
+        check(pinned.beginLookup(slot: 200, size: 4) == nil, "waveform rows: an unpinned lookup beyond the active bound is not admitted")
+        pinned.setViewportPins([80])
+        check((UInt16(1)...96).filter { pinned.snapshot(slot: $0, size: 4) != nil }.count == 64,
+              "waveform rows: shrinking pins trims back to the legacy bound")
+        check(pinned.snapshot(slot: 80, size: 4) != nil, "waveform rows: remaining viewport pin survives trimming")
+        pinned.setViewportPins([])
+        pinned.invalidate(slots: nil)
+        for slot in UInt16(1)...80 { pinned.remember(slot: slot, size: 4, record: record) }
+        check((UInt16(1)...80).filter { pinned.snapshot(slot: $0, size: 4) != nil }.count == 64,
+              "waveform rows: reset removes old pins and restores strict legacy capacity")
         var reopened = WaveformRows()
         reopened.remember(slot: 1, size: 4, record: record)
         let beforeReopen = reopened.snapshot(slot: 1, size: 4)?.description

@@ -467,12 +467,19 @@ struct ContentView: View {
                 waveformButton(item, columns: columns)
                     #if os(macOS) && DEBUG
                     .background { columnGeometry("wave") }
+                    #endif
+                    #if os(macOS)
                     .background {
-                        if let probe = columnProbeForCheck {
-                            SoundViewportProbe(slot: item.id,
-                                               blocked: state.modalOpen || !state.statusDetails.isEmpty || state.view != .sounds) {
-                                probe.viewports[$0] = $1
-                            }
+                        let context = state.waveformViewportContext(for: item)
+                        SoundViewportProbe(slot: item.id,
+                                           blocked: state.modalOpen || !state.statusDetails.isEmpty || state.view != .sounds,
+                                           context: context, registered: { _, viewport in
+                            state.registerWaveformViewport(context, owner: viewport.owner, view: viewport)
+                        }) { slot, sample in
+                            state.observeWaveformViewport(context, sample: sample)
+                            #if DEBUG
+                            columnProbeForCheck?.viewports[slot] = sample
+                            #endif
                         }
                     }
                     #endif
@@ -560,6 +567,7 @@ struct ContentView: View {
 
     private func waveformButton(_ item: SoundItem, columns: SoundColumns) -> some View {
         let snapshot = state.waveformSnapshot(for: item)
+        let description = snapshot?.description ?? state.waveformAvailability(for: item)
         return Button {
             if state.waveformShown?.id == item.id {
                 closeWaveform(item.id)
@@ -573,8 +581,8 @@ struct ContentView: View {
         .focused($focus, equals: .rowAction(item.id, .waveform))
         .disabled(state.deviceBusy)
         .accessibilityLabel("Show waveform, slot \(item.id)")
-        .accessibilityValue(snapshot?.description ?? "waveform not loaded")
-        .help("show waveform: " + (snapshot?.description ?? "waveform not loaded"))
+        .accessibilityValue(description)
+        .help("show waveform: " + description)
     }
 
     private func closeWaveform(_ id: UInt16) {
@@ -989,9 +997,9 @@ struct ContentView: View {
     /// Copies every dropped file inside its provider callback, then hands the
     /// copies over in drop order once all callbacks finished, one batch, so
     /// uploads run sequentially on the single device session.
-    private func receiveDrop(_ providers: [NSItemProvider],
+    func receiveDrop(_ providers: [NSItemProvider],
                              load: (NSItemProvider, @escaping @Sendable (URL?, Error?) -> Void) -> Void,
-                             then handle: @escaping @MainActor ([URL]) async -> Void) -> Bool {
+                             then handle: @escaping @MainActor ([URL]) async -> FileProcessing) -> Bool {
         let staging: DropStaging
         do {
             staging = try DropStaging(count: providers.count)
@@ -1016,8 +1024,14 @@ struct ContentView: View {
         let total = providers.count
         group.notify(queue: .main) {
             Task { @MainActor in
-                await handle(staging.urls)
-                staging.discard()
+                let outcome = await handle(staging.urls)
+                if outcome == .processed || staging.urls.isEmpty {
+                    staging.discard()
+                } else if FileManager.default.fileExists(atPath: staging.directory.path) {
+                    state.noteError("drop not started; files kept at \(staging.directory.path)")
+                } else {
+                    state.noteError("drop not started; staged files are unavailable")
+                }
                 // After the handler, whose trailing reload may clear earlier errors;
                 // appended so an error from the handler itself stays visible.
                 // Not tied to the device generation: these files could not be
