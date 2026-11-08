@@ -25,7 +25,9 @@ package func moveToFreeSlotSteps(
     isCurrent: @Sendable () async -> Bool
 ) async -> FreeSlotMoveResult {
     guard await isCurrent() else { return .stale }
-    guard to != 0 else { return .refused("slot zero is not a move destination") }
+    guard soundMoveSlots.contains(from), soundMoveSlots.contains(to) else {
+        return .refused(SoundMoveError.invalidSlot.localizedDescription)
+    }
     guard from != to else { return .unchanged }
     let occupied: Set<UInt16>
     do {

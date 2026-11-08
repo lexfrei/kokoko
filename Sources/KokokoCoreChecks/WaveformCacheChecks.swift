@@ -4,7 +4,7 @@ import KokokoLibrary
 
 extension KokokoCoreChecks {
     static func waveformCacheChecks() throws {
-        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kokoko-peak-check-" + UUID().uuidString)
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/kokoko-peak-check-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let pcm: [UInt8] = [0, 0, 0, 128, 0, 64, 0, 0]
         let peaks = WaveformPeakRecord(pcm: pcm, channels: 1, sampleRate: 46875)!

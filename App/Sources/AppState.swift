@@ -288,6 +288,7 @@ final class AppState: ObservableObject {
     /// through a swap still leaves each selected sound selected where it is.
     private func move(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                       root: UInt16) async throws {
+        guard soundMoveSlots.contains(id), soundMoveSlots.contains(target) else { throw SoundMoveError.invalidSlot }
         await invalidateWaveformContent(slots: [id, target])
         invalidateMetadataIntent(affecting: [id, target])
         try await files.move(fileID: id, toParent: root, newFileID: target)
@@ -315,6 +316,9 @@ final class AppState: ObservableObject {
     /// hence the re-read instead of a blind undo.
     private func runMoves(_ steps: [(from: UInt16, to: UInt16)], files: DeviceFileService,
                           root: UInt16, op: ProgressLine.Operation? = nil) async throws {
+        guard steps.allSatisfy({ soundMoveSlots.contains($0.from) && soundMoveSlots.contains($0.to) }) else {
+            throw SoundMoveError.invalidSlot
+        }
         var done: [(from: UInt16, to: UInt16)] = []
         do {
             for (index, step) in steps.enumerated() {
@@ -1519,6 +1523,15 @@ final class AppState: ObservableObject {
         if current.slot == nil, let message { reportOperationError("move to slot: \(message)", token: edit.generation) }
     }
 
+    func moveSelectionFromDraft() async {
+        guard !bulkMoveStart.isEmpty, bulkMoveStart.utf8.allSatisfy({ (48...57).contains($0) }),
+              let start = UInt16(bulkMoveStart), soundMoveSlots.contains(start) else {
+            noteError("bulk move: enter a slot from 1 to 999 using digits only")
+            return
+        }
+        await moveSelection(startingAt: start)
+    }
+
     /// Bulk move: selected sounds land on consecutive slots starting at
     /// `start`, in slot order; see planBulkMove. The selection stays on the
     /// moved sounds.
@@ -1530,11 +1543,15 @@ final class AppState: ObservableObject {
         defer { progress.end(op) }
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
         let token = hotplug.currentGeneration()
+        guard soundMoveSlots.contains(start), selection.allSatisfy(soundMoveSlots.contains) else {
+            reportOperationError("bulk move: \(SoundMoveError.invalidSlot.localizedDescription)", token: token)
+            return
+        }
         do {
             let nodes = try await files.list(nodeID: root)
             guard let plan = planBulkMove(selected: Array(selection),
                                           occupied: Set(nodes.map(\.id)), start: start) else {
-                reportOperationError("bulk move: not enough free slots from \(start)", token: token)
+                reportOperationError("bulk move: selected sounds unavailable or not enough free target and scratch slots from \(start)", token: token)
                 return
             }
             try await runMoves(plan, files: files, root: root, op: op)
@@ -1559,13 +1576,25 @@ final class AppState: ObservableObject {
         guard enterDevice() else { return }
         inlineSlotEdit = nil
         defer { leaveDevice() }
-        guard let files, let root = soundsRootID, id != target else { return }
+        guard let files, let root = soundsRootID else { return }
         let token = hotplug.currentGeneration()
+        guard soundMoveSlots.contains(id), soundMoveSlots.contains(target) else {
+            reportOperationError("move: \(SoundMoveError.invalidSlot.localizedDescription)", token: token)
+            return
+        }
+        guard id != target else { return }
         do {
             let nodes = try await files.list(nodeID: root)
+            guard nodes.contains(where: { $0.id == id }) else {
+                await reloadAfterFailedMove("move: sound is no longer available", token: token)
+                return
+            }
             if nodes.contains(where: { $0.id == target }) {
-                try await runMoves(planSwap(id, target, occupied: Set(nodes.map(\.id))),
-                                   files: files, root: root)
+                guard let plan = planSwap(id, target, occupied: Set(nodes.map(\.id))) else {
+                    reportOperationError("swap: no free sound slot for scratch", token: token)
+                    return
+                }
+                try await runMoves(plan, files: files, root: root)
             } else {
                 try await moveOne(files, id, to: target, root: root)
             }

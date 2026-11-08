@@ -34,6 +34,7 @@ enum WaveformValidityChecks {
 
     static func run() async -> Int32 {
         NSApplication.shared.setActivationPolicy(.prohibited)
+        await soundMoveSafety()
         await reopen()
         await rowProof()
         await validation()
@@ -52,13 +53,97 @@ enum WaveformValidityChecks {
         return failures == 0 ? 0 : 1
     }
 
+    static func runSoundMoves() async -> Int32 {
+        await soundMoveSafety()
+        print(failures == 0 ? "sound moves: all checks passed" : "sound moves: \(failures) check(s) failed")
+        return failures == 0 ? 0 : 1
+    }
+
+    private static func soundMoveSafety() async {
+        func sound(_ id: UInt16) -> SoundItem {
+            SoundItem(node: FSNode(id: id, parentID: 10, name: String(id), flags: 29, size: 4), displayName: "sound")
+        }
+        let valid = await Fixture(listed: [sound(32), sound(33)])
+        valid.wire.setListedSlots([32, 33])
+        valid.state.selection = [32]
+        await valid.state.moveOrSwap(id: 32, toSlot: 999)
+        check(valid.state.selection == [999] && Set(valid.state.sounds.map(\.id)) == [33, 999] && valid.state.lastError == nil,
+              "move app: a sound without the MOVE flag can move to valid free slot 999")
+        await valid.state.moveOrSwap(id: 999, toSlot: 33)
+        check(valid.state.selection == [33] && Set(valid.state.sounds.map(\.id)) == [33, 999] && valid.state.lastError == nil,
+              "move app: actual swap carries selection through valid scratch")
+        valid.state.selection = [33, 999]
+        await valid.state.moveSelection(startingAt: 100)
+        check(valid.state.selection == [100, 101] && Set(valid.state.sounds.map(\.id)) == [100, 101] && valid.state.lastError == nil,
+              "move app: actual bulk move returns all sounds from valid scratch")
+        await valid.close()
+        for invalid: UInt16 in [0, 1000, 1001, 65000] {
+            let f = await Fixture(listed: [sound(1), sound(invalid)])
+            f.wire.setListedSlots([1, invalid])
+            f.state.selection = [1]
+            await f.state.moveOrSwap(id: 1, toSlot: invalid)
+            check(f.state.lastError != nil, "move app: invalid destination has a visible refusal")
+            await f.state.moveOrSwap(id: invalid, toSlot: 2)
+            f.state.selection = [invalid]
+            await f.state.moveSelection(startingAt: 2)
+            f.state.selection = [1]
+            await f.state.moveSelection(startingAt: invalid)
+            f.state.beginInlineSlot(sound(1))
+            if let edit = f.state.inlineSlotEdit {
+                f.state.inlineSlotEdit?.draft = String(invalid)
+                check(!(await f.state.commitInlineSlot(session: edit.session)), "move app: invalid inline target stays unsaved")
+            } else { check(false, "move app: inline safety fixture opens its editor") }
+            check(!f.wire.requests.contains { $0.first == FileSub.move },
+                  "move app: invalid single, bulk and inline endpoints send zero MOVE requests")
+            check(f.state.sounds.contains { $0.id == invalid }, "move app: out-of-domain nodes remain visible")
+            await f.close()
+        }
+        for text in ["65536", "-1", "+2", " 2", "2x", "", "１２"] {
+            let f = await Fixture()
+            f.state.selection = [1]
+            f.state.bulkMoveStart = text
+            await f.state.moveSelectionFromDraft()
+            check(f.state.lastError?.contains("1 to 999") == true,
+                  "move app: invalid bulk text gives a range error")
+            check(!f.wire.requests.contains { $0.first == FileSub.move },
+                  "move app: invalid bulk text sends zero MOVE requests")
+            await f.close()
+        }
+        let missing = await Fixture()
+        missing.wire.setListedSlots([2])
+        missing.state.selection = [1]
+        await missing.state.moveOrSwap(id: 1, toSlot: 3)
+        check(Set(missing.state.sounds.map(\.id)) == [2] && missing.state.selection.isEmpty,
+              "move app: a missing source refreshes stale rows and selection")
+        check(!missing.wire.requests.contains { $0.first == FileSub.move } && missing.state.lastError != nil,
+              "move app: missing source refuses MOVE and reports why")
+        await missing.close()
+        for free: Set<UInt16> in [[], [999]] {
+            let ids = Set(UInt16(1)...UInt16(999)).subtracting(free)
+            let f = await Fixture(listed: ids.sorted().map(sound))
+            f.wire.setListedSlots(ids.sorted())
+            f.state.selection = [1, 2]
+            await f.state.moveSelection(startingAt: 1)
+            check(f.state.lastError != nil, "move app: insufficient bulk scratch has a visible refusal")
+            if free.isEmpty {
+                await f.state.moveOrSwap(id: 1, toSlot: 2)
+                check(f.state.lastError != nil, "move app: a full-library swap has a visible refusal")
+            }
+            check(!f.wire.requests.contains { $0.first == FileSub.move },
+                  "move app: insufficient scratch sends zero MOVE requests")
+            check(f.state.selection == [1, 2] && Set(f.state.sounds.map(\.id)) == ids,
+                  "move app: refused plan preserves selection and the complete listing")
+            await f.close()
+        }
+    }
+
     private static func check(_ condition: Bool, _ message: String) {
         print("\(condition ? "ok  " : "FAIL") \(message)")
         if !condition { failures += 1 }
     }
 
     @MainActor private final class Fixture {
-        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kokoko-waveform-check-" + UUID().uuidString)
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/waveform-check-" + UUID().uuidString)
         let wire = WaveformWire()
         let session: SysExSession
         let files: DeviceFileService
@@ -937,6 +1022,8 @@ enum WaveformValidityChecks {
         private var commands: [[UInt8]] = []
         private var getIDs: [UInt16] = []
         private var pcmFailed = false
+        private var listedSlots: [UInt16]?
+        func setListedSlots(_ slots: [UInt16]) { lock.withLock { listedSlots = slots } }
         private var announcedSize: UInt32?
         func announceSize(_ size: UInt32?) { lock.withLock { announcedSize = size } }
         var getOrder: [UInt16] { lock.withLock { getIDs } }
@@ -994,11 +1081,24 @@ enum WaveformValidityChecks {
                     let parent = readU16(request.payload, 3)
                     appendU16(page, to: &payload)
                     if page == 0, parent == 0 || parent == 10 {
-                        appendU16(parent == 0 ? 10 : 1, to: &payload)
-                        payload.append(parent == 0 ? FileTypeFlag.directory : 0xff)
-                        appendU32(parent == 0 ? 0 : UInt32(pcm.count), to: &payload)
-                        payload += Array((parent == 0 ? "sounds" : "1").utf8) + [0]
+                        for id in parent == 0 ? [UInt16(10)] : (listedSlots ?? [1]) {
+                            appendU16(id, to: &payload)
+                            payload.append(parent == 0 ? FileTypeFlag.directory : (listedSlots == nil ? 0xff : 29))
+                            appendU32(parent == 0 ? 0 : UInt32(pcm.count), to: &payload)
+                            payload += Array((parent == 0 ? "sounds" : String(id)).utf8) + [0]
+                        }
                     }
+                case (FileSub.move, _):
+                    let from = readU16(request.payload, 1), to = readU16(request.payload, 5)
+                    guard var slots = listedSlots, slots.contains(from), !slots.contains(to),
+                          readU16(request.payload, 3) == 10, (1...999).contains(from), (1...999).contains(to) else {
+                        status = 3
+                        break
+                    }
+                    slots.removeAll { $0 == from }
+                    slots.append(to)
+                    listedSlots = slots
+                    payload = Array(request.payload.dropFirst())
                 case (FileSub.get, 0):
                     count += 1
                     let id = readU16(request.payload, 2)

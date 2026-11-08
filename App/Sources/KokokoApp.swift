@@ -25,6 +25,11 @@ struct KokokoApp: App {
         if CommandLine.arguments.contains("--check-range-tabs") {
             exit(SoundRangeTabChecks.run())
         }
+        if CommandLine.arguments.contains("--check-sound-moves") {
+            Task { @MainActor in exit(await WaveformValidityChecks.runSoundMoves()) }
+            RunLoop.main.run()
+            exit(1)
+        }
         if CommandLine.arguments.contains("--check-waveform-validity") {
             NSApplication.shared.setActivationPolicy(.prohibited)
             Task { @MainActor in exit(await WaveformValidityChecks.run()) }
