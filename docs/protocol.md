@@ -57,11 +57,11 @@ Status byte:
 | 16..63 | command-specific error |
 | >= 64 | command-specific success; the request stays open for follow-up messages until a terminal status arrives |
 
-A frame with byte 5 = `33` (instead of `40`) carries a UTF-8 debug log string from the device in the unpacked payload.
+A frame with byte 5 = `33` (instead of `40`) is a device debug log. The captured EP-133 OS 2.5.1 fault broadcasts carry plain ASCII directly between byte 6 and `F7`, without seven-bit packing; for example, `[136.112 966] main[331]:    err sound 24 2_5_1` followed by a newline. The parser preserves those payload bytes, and the session delivers valid UTF-8 to its log handler. Other firmware debug encodings have not been verified.
 
 ## 7-bit packing
 
-MIDI data bytes must be < 128. Payload bytes are packed in groups of 7: each group is preceded by one byte whose bit `i` holds the high bit of group byte `i`. An empty payload has no packing bytes at all. Packed size for `n` payload bytes is `n + ceil(n/7)`.
+MIDI data bytes must be < 128. Regular protocol payload bytes are packed in groups of 7: each group is preceded by one byte whose bit `i` holds the high bit of group byte `i`. An empty payload has no packing bytes at all. Packed size for `n` payload bytes is `n + ceil(n/7)`.
 
 ## Top-level commands
 

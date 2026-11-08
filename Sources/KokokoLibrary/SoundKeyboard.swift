@@ -4,6 +4,7 @@ public enum SoundFocus: Hashable, Sendable {
     case soundList, filter, bulkMove, allRanges, rangeJump(Int)
     case slotNumber(UInt16), slot(UUID), slotRefresh(UUID), rename(UInt16), rowAction(UInt16, RowAction), rowMenu(UInt16)
     case metadataField(UUID, String), metadataSave(UUID), metadataCancel(UUID), metadataRetry(UUID)
+    case swapConfirm(UUID), swapCancel(UUID)
     case waveformPlay(UInt16), waveformRefresh(UInt16), waveformClose(UInt16)
 }
 

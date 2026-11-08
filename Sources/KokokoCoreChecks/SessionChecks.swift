@@ -55,10 +55,27 @@ func deviceResponse(to request: [UInt8], status: UInt8, payload: [UInt8]) -> [UI
     return out
 }
 
+private final class LogReceipt: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String] = []
+    func append(_ text: String) { lock.withLock { messages.append(text) } }
+    var texts: [String] { lock.withLock { messages } }
+}
+
 extension KokokoCoreChecks {
     static func sessionChecks() async {
         let wire = FakeWire()
         let session = SysExSession(wire: wire, identityCode: 0x10)
+
+        let logs = LogReceipt()
+        await session.setLogHandler { logs.append($0) }
+        wire.emulateIncoming(faultLogRaw)
+        let logStart = ContinuousClock.now
+        while logs.texts.isEmpty && ContinuousClock.now - logStart < .seconds(1) {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        eq(logs.texts, [faultLogText], "session delivers captured raw fault text to its log handler")
+        check(wire.sent.isEmpty, "receiving a debug log sends no protocol request")
 
         // greet round trip
         async let greetTask = session.greet()

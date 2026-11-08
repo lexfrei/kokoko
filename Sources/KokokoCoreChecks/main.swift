@@ -118,6 +118,14 @@ struct KokokoCoreChecks {
         eq(SevenBitCoding.packedLength(for: 8), 10, "packedLength 8")
     }
 
+    static let faultLogText = "[136.112 966] main[331]:    err sound 24 2_5_1\n"
+    static let faultLogRaw: [UInt8] = [
+        0xf0, 0x00, 0x20, 0x76, 0x33, 0x33, 0x5b, 0x31, 0x33, 0x36, 0x2e, 0x31, 0x31, 0x32,
+        0x20, 0x39, 0x36, 0x36, 0x5d, 0x20, 0x6d, 0x61, 0x69, 0x6e, 0x5b, 0x33, 0x33, 0x31,
+        0x5d, 0x3a, 0x20, 0x20, 0x20, 0x20, 0x65, 0x72, 0x72, 0x20, 0x73, 0x6f, 0x75, 0x6e,
+        0x64, 0x20, 0x32, 0x34, 0x20, 0x32, 0x5f, 0x35, 0x5f, 0x31, 0x0a, 0xf7
+    ]
+
     static func frames() {
         let greet = TEFrame(identityCode: 0x10, requestID: 0x123, command: TECommand.greet, payload: [])
         eq(greet.bytes, [0xF0, 0x00, 0x20, 0x76, 0x10, 0x40, 0x62, 0x23, 0x01, 0xF7], "greet request bytes")
@@ -137,12 +145,32 @@ struct KokokoCoreChecks {
         check(TEFrame.parse([0xF0, 0x00, 0x20, 0x77, 0x10, 0x40, 0x60, 0x00, 0x01, 0xF7]) == nil,
               "reject foreign manufacturer")
 
-        var logRaw: [UInt8] = [0xF0, 0x00, 0x20, 0x76, 0x10, 0x33]
-        logRaw.append(contentsOf: SevenBitCoding.pack(Array("hi".utf8)))
-        logRaw.append(0xF7)
-        let logFrame = TEFrame.parse(logRaw)
+        let logFrame = TEFrame.parse(faultLogRaw)
         eq(logFrame?.kind, .deviceLog, "device log kind")
-        eq(logFrame.flatMap { String(bytes: $0.payload, encoding: .utf8) }, "hi", "device log text")
+        eq(logFrame?.identityCode, 0x33, "device log identity")
+        eq(logFrame?.payload, Array(faultLogText.utf8), "captured fault log preserves raw bytes")
+        eq(logFrame.flatMap { String(bytes: $0.payload, encoding: .utf8) }, faultLogText, "captured fault log text")
+        for text in ["", "x", "hi", "another debug line\n"] {
+            let raw: [UInt8] = [0xf0, 0x00, 0x20, 0x76, 0x33, 0x33] + Array(text.utf8) + [0xf7]
+            eq(TEFrame.parse(raw)?.payload, Array(text.utf8), "raw log accepts short and ordinary text")
+        }
+        for length in 0..<7 {
+            check(TEFrame.parse(Array(faultLogRaw.prefix(length))) == nil, "truncated log is rejected")
+        }
+        for count in 7...9 {
+            let short: [UInt8] = [0xf0, 0x00, 0x20, 0x76, 0x33, 0x40] + Array(repeating: 0, count: count - 7) + [0xf7]
+            check(TEFrame.parse(short) == nil, "short regular frame is rejected without reading its command")
+        }
+        var malformed = faultLogRaw
+        malformed[1] = 1
+        check(TEFrame.parse(malformed) == nil, "foreign log manufacturer is rejected")
+        malformed = faultLogRaw
+        malformed[malformed.count - 1] = 0
+        check(TEFrame.parse(malformed) == nil, "unterminated log is rejected")
+        malformed = faultLogRaw
+        malformed[6] = 0xff
+        check(TEFrame.parse(malformed) == nil, "non-MIDI log data is rejected")
+        eq(TEFrame.parse(echoFrame)?.payload, [0x80], "regular request keeps seven-bit packing")
 
         eq(TEStatus(0), .ok, "status ok")
         eq(TEStatus(1), .error, "status error")

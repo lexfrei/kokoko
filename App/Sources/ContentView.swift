@@ -15,6 +15,7 @@ struct ContentView: View {
     var suppressDeviceObservationForCheck = false
     var rangeTabProbeForCheck: SoundRangeTabProbe?
     var columnProbeForCheck: SoundColumnProbe?
+    var swapProbeForCheck: SwapConfirmationProbe?
     #endif
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
@@ -90,20 +91,10 @@ struct ContentView: View {
         } message: { pending in
             Text(pending.summary.message)
         }
-        .confirmationDialog(SwapSummary.title, isPresented: swapBinding, presenting: state.pendingSwap) { pending in
-            Button("swap") { Task { await state.moveOrSwap(id: pending.id, toSlot: pending.target) } }
-            Button("cancel", role: .cancel) {}
-        } message: { pending in
-            Text(pending.summary.message)
-        }
     }
 
     private var restoreBinding: Binding<Bool> {
         Binding(get: { state.pendingRestore != nil }, set: { if !$0 { state.pendingRestore = nil } })
-    }
-
-    private var swapBinding: Binding<Bool> {
-        Binding(get: { state.pendingSwap != nil }, set: { if !$0 { state.pendingSwap = nil } })
     }
 
     private var unbinnedDeleteBinding: Binding<Bool> {
@@ -248,7 +239,66 @@ struct ContentView: View {
                         })
                 }
                 .onPreferenceChange(CellSizeKey.self) { rowCell = $0 }
+                if let pending = state.pendingSwap { swapConfirmation(pending) }
             }
+        }
+    }
+
+    private func swapConfirmation(_ pending: PendingSwap) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text(pending.summary.message).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button {
+                    Task {
+                        await state.confirmSwap(session: pending.session)
+                        if state.pendingSwap == nil, state.view == .sounds,
+                           focus == .swapConfirm(pending.session) || focus == .swapCancel(pending.session),
+                           state.rowDragGeneration == pending.generation,
+                           state.visibleSounds.contains(where: { $0.id == pending.target }) { focus = .soundList }
+                    }
+                } label: {
+                    Text("[ swap ]").frame(minHeight: minHitHeight).contentShape(Rectangle())
+                }
+                #if os(macOS) && DEBUG
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: SwapConfirmationFramesKey.self, value: ["swap": geometry.frame(in: .global)])
+                })
+                #endif
+                .focused($focus, equals: .swapConfirm(pending.session))
+                .disabled(!state.canConfirmSwap)
+                .accessibilityLabel("Swap \(pending.source.displayName) in slot \(pending.id) with \(pending.destination.displayName) in slot \(pending.target)")
+                Button { if state.cancelSwap(session: pending.session) { focus = .soundList } } label: {
+                    Text("[ cancel ]").frame(minHeight: minHitHeight).contentShape(Rectangle())
+                }
+                #if os(macOS) && DEBUG
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: SwapConfirmationFramesKey.self, value: ["cancel": geometry.frame(in: .global)])
+                })
+                #endif
+                .focused($focus, equals: .swapCancel(pending.session))
+                .disabled(pending.submitting)
+                .accessibilityLabel("Cancel swap")
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: minHitHeight)
+            if pending.submitting { Text("swapping…").foregroundStyle(.secondary) }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Swap confirmation")
+        #if os(macOS) && DEBUG
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: SwapConfirmationFramesKey.self, value: ["summary": geometry.frame(in: .global)])
+        })
+        .onPreferenceChange(SwapConfirmationFramesKey.self) { swapProbeForCheck?.frames = $0 }
+        #endif
+        .onAppear { focus = .swapCancel(pending.session) }
+        .onKeyPress(.escape, phases: .down) { _ in
+            guard state.cancelSwap(session: pending.session) else { return .ignored }
+            focus = .soundList
+            return .handled
         }
     }
 

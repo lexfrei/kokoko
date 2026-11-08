@@ -44,9 +44,24 @@ struct WaveformShown: Identifiable {
 }
 
 struct PendingSwap {
-    let id: UInt16
-    let target: UInt16
-    let summary: SwapSummary
+    let session = UUID()
+    let generation: UUID
+    let connection: ConnectionState
+    let files: DeviceFileService?
+    let source: SoundItem
+    let destination: SoundItem
+    var submitting = false
+    var id: UInt16 { source.id }
+    var target: UInt16 { destination.id }
+    var summary: SwapSummary {
+        SwapSummary(dragged: (id, source.displayName), target: (target, destination.displayName))
+    }
+}
+
+private struct SoundMoveFailure: LocalizedError {
+    let cause: any Error
+    let recovery: String
+    var errorDescription: String? { "\(cause.localizedDescription); \(recovery)" }
 }
 
 enum FileProcessing: Equatable, Sendable {
@@ -289,9 +304,13 @@ final class AppState: ObservableObject {
     private func move(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                       root: UInt16) async throws {
         guard soundMoveSlots.contains(id), soundMoveSlots.contains(target) else { throw SoundMoveError.invalidSlot }
+        let generation = rowDragGeneration
+        guard self.files === files else { throw SessionError.disconnected }
         await invalidateWaveformContent(slots: [id, target])
         invalidateMetadataIntent(affecting: [id, target])
+        guard self.files === files, rowDragGeneration == generation else { throw SessionError.disconnected }
         try await files.move(fileID: id, toParent: root, newFileID: target)
+        guard self.files === files, rowDragGeneration == generation else { throw SessionError.disconnected }
         selection = remapSelection(selection, moves: [(from: id, to: target)])
     }
 
@@ -300,48 +319,72 @@ final class AppState: ObservableObject {
     /// landed; the reload that follows would otherwise prune it.
     private func moveOne(_ files: DeviceFileService, _ id: UInt16, to target: UInt16,
                          root: UInt16) async throws {
+        let generation = rowDragGeneration
         do {
             try await move(files, id, to: target, root: root)
         } catch {
             let occupied = (try? await files.list(nodeID: root)).map { Set($0.map(\.id)) }
+            guard self.files === files, rowDragGeneration == generation else { throw error }
             selection = selectionAfterFailedMove(selection, move: (from: id, to: target), occupied: occupied)
             throw error
         }
     }
 
-    /// Runs `steps` in order. When one fails, re-reads the slots and undoes
-    /// as much as they allow, stopping at the first undo that is unsafe or
-    /// refused; if the re-read fails, nothing is undone. Then rethrows the
-    /// original error. A failed reply does not mean the move did not run,
-    /// hence the re-read instead of a blind undo.
     private func runMoves(_ steps: [(from: UInt16, to: UInt16)], files: DeviceFileService,
                           root: UInt16, op: ProgressLine.Operation? = nil) async throws {
         guard steps.allSatisfy({ soundMoveSlots.contains($0.from) && soundMoveSlots.contains($0.to) }) else {
             throw SoundMoveError.invalidSlot
         }
+        let generation = rowDragGeneration
         var done: [(from: UInt16, to: UInt16)] = []
         do {
             for (index, step) in steps.enumerated() {
+                guard self.files === files, rowDragGeneration == generation else { throw SessionError.disconnected }
                 if let op { progress.update(op, "move \(index + 1)/\(steps.count)") }
                 try await move(files, step.from, to: step.to, root: root)
                 done.append(step)
             }
         } catch {
-            guard let nodes = try? await files.list(nodeID: root) else { throw error }
+            guard self.files === files, rowDragGeneration == generation else { throw error }
+            guard let nodes = try? await files.list(nodeID: root) else {
+                throw SoundMoveFailure(cause: error, recovery: "rollback not started: placement unknown; refresh before another move")
+            }
+            guard self.files === files, rowDragGeneration == generation else { throw error }
             let occupied = Set(nodes.map(\.id))
             let failed = steps[done.count]
             if stepLanded(failed, occupied: occupied) {
                 selection = remapSelection(selection, moves: [failed])
                 done.append(failed)
             }
+            let failure = error
             let undo = rollbackMoves(done, occupied: occupied)
             for (index, step) in undo.enumerated() {
+                guard self.files === files, rowDragGeneration == generation else { throw error }
                 if let op { progress.update(op, "undo \(index + 1)/\(undo.count)") }
                 do {
                     try await move(files, step.from, to: step.to, root: root)
                 } catch {
-                    break
+                    guard self.files === files, rowDragGeneration == generation else { throw error }
+                    let current = try? await files.list(nodeID: root)
+                    guard self.files === files, rowDragGeneration == generation else { throw error }
+                    guard let current else {
+                        throw SoundMoveFailure(cause: failure, recovery: "rollback stopped: placement unknown; refresh before another move")
+                    }
+                    let slots = Set(current.map(\.id))
+                    let placement: String
+                    if stepLanded(step, occupied: slots) {
+                        selection = remapSelection(selection, moves: [step])
+                        placement = "reverse move reached slot \(step.to) despite its failed reply"
+                    } else if slots.contains(step.from), !slots.contains(step.to) {
+                        placement = "sound remains in slot \(step.from)"
+                    } else {
+                        placement = "placement unknown; refresh before another move"
+                    }
+                    throw SoundMoveFailure(cause: failure, recovery: "rollback stopped: \(placement)")
                 }
+            }
+            if undo.count < done.count {
+                throw SoundMoveFailure(cause: failure, recovery: "rollback incomplete: remaining moves are unsafe")
             }
             throw error
         }
@@ -550,7 +593,6 @@ final class AppState: ObservableObject {
         if shown { statusDetails.insert(id) } else { statusDetails.remove(id) }
     }
 
-    /// A file panel, alert, dialog or sheet is up over the window.
     var modalOpen: Bool {
         showImporter || picker != .none || exportDocument != nil
             || unbinnedDelete != nil || binToRemove != nil
@@ -1205,6 +1247,7 @@ final class AppState: ObservableObject {
     }
 
     private func invalidateInlineEditors() {
+        if let pending = pendingSwap, !pending.submitting, !swapIsCurrent(pending) { pendingSwap = nil }
         if let shown = waveformShown,
            view != .sounds || !visibleSounds.contains(where: { $0.node == shown.item.node }) { waveformShown = nil }
         if let edit = inlineRename, !inlineRenameIsCurrent(edit) { inlineRename = nil }
@@ -1543,6 +1586,7 @@ final class AppState: ObservableObject {
         defer { progress.end(op) }
         guard let files, let root = soundsRootID, !selection.isEmpty else { return }
         let token = hotplug.currentGeneration()
+        let generation = rowDragGeneration
         guard soundMoveSlots.contains(start), selection.allSatisfy(soundMoveSlots.contains) else {
             reportOperationError("bulk move: \(SoundMoveError.invalidSlot.localizedDescription)", token: token)
             return
@@ -1558,17 +1602,81 @@ final class AppState: ObservableObject {
             progress.update(op, nil)
             await reload()
         } catch {
+            guard self.files === files, rowDragGeneration == generation else { return }
             progress.update(op, nil)
             await reloadAfterFailedMove("bulk move: \(error.localizedDescription)", token: token)
         }
     }
 
-    /// A row is listed only for an occupied slot, so a drop onto one asks before swapping.
     func requestSwap(id: UInt16, onto target: SoundItem) {
-        guard id != target.id else { return }
-        let name = sounds.first { $0.id == id }?.displayName ?? "sound"
-        pendingSwap = PendingSwap(id: id, target: target.id,
-                                  summary: SwapSummary(dragged: (id, name), target: (target.id, target.displayName)))
+        guard pendingSwap == nil, isConnected, !deviceBusy, !modalOpen, view == .sounds,
+              soundMoveSlots.contains(id), soundMoveSlots.contains(target.id), id != target.id,
+              let source = visibleSounds.first(where: { $0.id == id }), visibleSounds.contains(target) else { return }
+        pendingSwap = PendingSwap(generation: rowDragGeneration, connection: connection, files: files,
+                                  source: source, destination: target)
+    }
+
+    private func swapIsCurrent(_ pending: PendingSwap) -> Bool {
+        isConnected && view == .sounds && pending.generation == rowDragGeneration
+            && pending.connection == connection && pending.files === files
+            && visibleSounds.contains(pending.source) && visibleSounds.contains(pending.destination)
+    }
+
+    var canConfirmSwap: Bool {
+        guard let pending = pendingSwap else { return false }
+        return !pending.submitting && !deviceBusy && swapIsCurrent(pending)
+    }
+
+    @discardableResult
+    func cancelSwap(session: UUID) -> Bool {
+        guard let pending = pendingSwap, pending.session == session, !pending.submitting else { return false }
+        let restore = swapIsCurrent(pending)
+        pendingSwap = nil
+        return restore
+    }
+
+    func confirmSwap(session: UUID) async {
+        guard let pending = pendingSwap, pending.session == session, !pending.submitting else { return }
+        guard swapIsCurrent(pending) else { pendingSwap = nil; return }
+        guard enterDevice() else { return }
+        pendingSwap?.submitting = true
+        inlineSlotEdit = nil
+        defer {
+            if pendingSwap?.session == session { pendingSwap = nil }
+            leaveDevice()
+        }
+        guard let files, let root = soundsRootID else { return }
+        let token = hotplug.currentGeneration()
+        let generation = rowDragGeneration
+        do {
+            let nodes = try await files.list(nodeID: root)
+            guard self.files === files, rowDragGeneration == pending.generation, hotplug.isCurrent(token),
+                  connection == pending.connection else { return }
+            guard swapIsCurrent(pending),
+                  nodes.contains(pending.source.node), nodes.contains(pending.destination.node) else {
+                reportOperationError("swap not started: sounds or device changed; drop again", token: token)
+                return
+            }
+            for item in [pending.source, pending.destination] {
+                let meta = try await files.getMetadata(fileID: item.id)
+                guard self.files === files, rowDragGeneration == pending.generation, hotplug.isCurrent(token),
+                      connection == pending.connection else { return }
+                guard swapIsCurrent(pending),
+                      (meta["name"]?.stringValue ?? item.node.name) == item.displayName else {
+                    reportOperationError("swap not started: sounds or device changed; drop again", token: token)
+                    return
+                }
+            }
+            guard let plan = planSwap(pending.id, pending.target, occupied: Set(nodes.map(\.id))) else {
+                reportOperationError("swap: no free sound slot for scratch", token: token)
+                return
+            }
+            try await runMoves(plan, files: files, root: root)
+            await reload()
+        } catch {
+            guard self.files === files, rowDragGeneration == generation else { return }
+            await reloadAfterFailedMove("swap: \(error.localizedDescription)", token: token)
+        }
     }
 
     /// Drag reorder: move to the target slot; swap with the occupant if taken.
@@ -1578,6 +1686,7 @@ final class AppState: ObservableObject {
         defer { leaveDevice() }
         guard let files, let root = soundsRootID else { return }
         let token = hotplug.currentGeneration()
+        let generation = rowDragGeneration
         guard soundMoveSlots.contains(id), soundMoveSlots.contains(target) else {
             reportOperationError("move: \(SoundMoveError.invalidSlot.localizedDescription)", token: token)
             return
@@ -1600,6 +1709,7 @@ final class AppState: ObservableObject {
             }
             await reload()
         } catch {
+            guard self.files === files, rowDragGeneration == generation else { return }
             await reloadAfterFailedMove("move: \(error.localizedDescription)", token: token)
         }
     }
