@@ -19,6 +19,71 @@ struct E2E {
         if !cond { failures += 1 }
     }
 
+    static func boundedReadAdmission(pair: MIDIEndpointPair, identityCode: UInt8, nodes: [FSNode]) async throws {
+        guard pair.name == "kokoko-vep-\(getpid())", nodes.count >= 2 else {
+            check(false, "bounded VEP: fixture uses only its own virtual endpoints")
+            return
+        }
+        let first = nodes[0], second = nodes[1]
+        let wire = FaultyWire(inner: try CoreMIDIWire(pair: pair))
+        let session = SysExSession(wire: wire, identityCode: identityCode)
+        let reader = DeviceFileService(session: session)
+        try await reader.initialize(subscribe: false)
+        let inits = GetLog()
+        let pages = GetLog()
+        let barrier = GetPageBarrier()
+        wire.beforeSend = { frame in
+            if frame.payload.starts(with: [FileSub.get, 0]), frame.payload.count >= 4 { inits.record(readU16(frame.payload, 2)) }
+            if frame.payload.starts(with: [FileSub.get, 1]), frame.payload.count >= 4 {
+                pages.record(readU16(frame.payload, 2))
+                await barrier.intercept()
+            }
+        }
+        do {
+            _ = try await reader.getWhole(fileID: first.id, maximumBytes: Int(first.size) - 1)
+            check(false, "bounded VEP: oversized init is refused")
+        } catch FileServiceError.readLimitExceeded(let id, let maximum) {
+            check(id == first.id && maximum == Int(first.size) - 1 && pages.ids.isEmpty,
+                  "bounded VEP: over-cap init requests no data page")
+        }
+        var gate = DeviceAdmission()
+        guard let backgroundOwner = gate.beginBackground() else {
+            check(false, "bounded VEP: idle admission accepts a background owner")
+            await session.close()
+            return
+        }
+        await barrier.arm()
+        let background = Task { try await reader.getWhole(fileID: first.id, maximumBytes: Int(first.size)) }
+        for _ in 0..<2000 {
+            if await barrier.holding { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        check(await barrier.holding, "bounded VEP: real CoreMIDI GET pauses at a data page")
+        guard case .waiting(let foregroundOwner) = gate.requestForeground() else {
+            check(false, "bounded VEP: one explicit action reserves foreground handoff")
+            await barrier.release()
+            _ = try? await background.value
+            await session.close()
+            return
+        }
+        check(gate.requestForeground() == .refused && gate.beginBackground() == nil,
+              "bounded VEP: conflicting action cannot queue or start another read")
+        await barrier.release()
+        let backgroundResult = try await background.value
+        check(backgroundResult.data.count == Int(first.size), "bounded VEP: exact-budget GET completes after earlier refusal")
+        check(gate.endBackground(backgroundOwner) == .foreground(foregroundOwner) && gate.beginBackground() == nil,
+              "bounded VEP: foreground owns admission before another GET")
+        let foregroundResult = try await reader.getWhole(fileID: first.id, maximumBytes: Int(first.size))
+        check(foregroundResult.data == backgroundResult.data, "bounded VEP: foreground preserves actual bytes")
+        _ = gate.endOperation()
+        if let next = gate.beginBackground() {
+            _ = try await reader.getWhole(fileID: second.id, maximumBytes: Int(second.size))
+            check(gate.endBackground(next) == .idle, "bounded VEP: next background read releases normally")
+        } else { check(false, "bounded VEP: next read can start after foreground") }
+        check(Array(inits.ids.suffix(3)) == [first.id, first.id, second.id], "bounded VEP: actual GET counters show background then foreground then next background")
+        await session.close()
+    }
+
     static func main() async throws {
         let vep = VirtualEPDevice()
         try vep.start()
@@ -63,6 +128,8 @@ struct E2E {
         let initialList = try await files.list(nodeID: soundsID)
         check(initialList.map(\.name).sorted() == ["kick", "snare"],
               "seeded sounds — got \(initialList.map(\.name).sorted())")
+
+        try await boundedReadAdmission(pair: pair, identityCode: identity.deviceID, nodes: initialList)
 
         // --- lock release after a failed transfer, isolated and first ---
         // Runs before any other fault injection on a connection of its own, so a lock
@@ -851,6 +918,25 @@ struct E2E {
     }
 }
 
+actor GetPageBarrier {
+    private var armed = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var holding = false
+    func arm() { armed = true }
+    func intercept() async {
+        guard armed else { return }
+        armed = false
+        holding = true
+        await withCheckedContinuation { continuation = $0 }
+        holding = false
+    }
+    func release() {
+        armed = false
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 /// Wire wrapper that injects faults: an outbound frame can be delivered and then
 /// reported as failed (the device acted, the client saw an error), and GET data
 /// replies from a given page on can be cut to an empty page.
@@ -861,6 +947,12 @@ final class FaultyWire: MIDIWire, @unchecked Sendable {
     private var _failBeforeSend: (@Sendable (TEFrame) -> Bool)?
     private var _truncateGetsFromPage: Int?
     private var _beforeFailure: (@Sendable () async -> Void)?
+    private var _beforeSend: (@Sendable (TEFrame) async -> Void)?
+
+    var beforeSend: (@Sendable (TEFrame) async -> Void)? {
+        get { lock.withLock { _beforeSend } }
+        set { lock.withLock { _beforeSend = newValue } }
+    }
     private var getDataRequests: Set<UInt16> = []
 
     init(inner: MIDIWire) {
@@ -892,6 +984,7 @@ final class FaultyWire: MIDIWire, @unchecked Sendable {
 
     func send(_ bytes: [UInt8]) async throws {
         let frame = TEFrame.parse(bytes)
+        if let frame { await beforeSend?(frame) }
         if let frame, frame.payload.count >= 4, frame.payload.starts(with: [FileSub.get, 1]) {
             let page = Int(frame.payload[2]) << 8 | Int(frame.payload[3])
             lock.withLock {

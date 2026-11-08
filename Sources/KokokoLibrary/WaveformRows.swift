@@ -28,8 +28,22 @@ public struct WaveformRows: Sendable {
     public private(set) var epoch = UUID()
     private var entries: [UInt16: Entry] = [:]
     private var order: [UInt16] = []
+    private var viewportPins = Set<UInt16>()
 
     public init() {}
+
+    public mutating func setViewportPins(_ slots: Set<UInt16>) {
+        guard viewportPins != slots else { return }
+        viewportPins = slots
+        trim()
+    }
+
+    private mutating func trim() {
+        while order.count > max(64, viewportPins.count) {
+            guard let index = order.firstIndex(where: { !viewportPins.contains($0) }) else { break }
+            entries[order.remove(at: index)] = nil
+        }
+    }
 
     public func needsLookup(slot: UInt16, size: Int) -> Bool {
         entries[slot]?.size != size
@@ -44,6 +58,7 @@ public struct WaveformRows: Sendable {
         guard needsLookup(slot: slot, size: size) else { return nil }
         let request = Request(slot: slot, size: size, epoch: epoch, id: UUID())
         remember(slot: slot, size: size, record: nil)
+        guard entries[slot] != nil else { return nil }
         entries[slot]?.request = request
         return request
     }
@@ -72,7 +87,7 @@ public struct WaveformRows: Sendable {
         entries[slot] = Entry(size: size, snapshot: snapshot)
         order.removeAll { $0 == slot }
         order.append(slot)
-        while order.count > 64 { entries[order.removeFirst()] = nil }
+        trim()
     }
 
     public mutating func cancelLookup(_ request: Request) {
@@ -84,12 +99,16 @@ public struct WaveformRows: Sendable {
         guard epoch == self.epoch, entries[slot]?.size == size else { return }
         entries[slot] = nil
         order.removeAll { $0 == slot }
+        viewportPins.remove(slot)
+        trim()
     }
 
     public mutating func invalidate(slots: Set<UInt16>?) {
         let removed = order.filter { slots == nil || slots!.contains($0) || entries[$0]?.request != nil }
         for slot in removed { entries[slot] = nil }
         order.removeAll { removed.contains($0) }
+        if slots == nil { viewportPins.removeAll() }
+        trim()
         epoch = UUID()
     }
 }
