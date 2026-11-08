@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SoundFocus: Hashable, Sendable {
-    case soundList, filter, bulkMove, rangeJump(Int)
+    case soundList, filter, bulkMove, allRanges, rangeJump(Int)
     case slotNumber(UInt16), slot(UUID), slotRefresh(UUID), rename(UInt16), rowAction(UInt16, RowAction), rowMenu(UInt16)
     case metadataField(UUID, String), metadataSave(UUID), metadataCancel(UUID), metadataRetry(UUID)
     case waveformPlay(UInt16), waveformRefresh(UInt16), waveformClose(UInt16)
@@ -54,6 +54,11 @@ public struct InlineRename: Equatable, Sendable {
     }
 
     public var canCancel: Bool { !submitting }
+    public var blocksFilterChange: Bool { submitting || hasChanges }
+
+    private var hasChanges: Bool {
+        draft != original && draft.trimmingCharacters(in: .whitespacesAndNewlines) != original
+    }
 
     public mutating func prepare() -> RenameSubmission {
         guard !submitting else { return .waiting }
@@ -63,7 +68,7 @@ public struct InlineRename: Equatable, Sendable {
             return .invalid
         }
         error = nil
-        guard draft != original, name != original else { return .unchanged }
+        guard hasChanges else { return .unchanged }
         submitting = true
         return .write(name)
     }

@@ -7,8 +7,10 @@ public struct SoundRange: Identifiable, Hashable, Sendable {
     public let lower: UInt16
     public let upper: UInt16
 
-    /// Navigation marks, not a device-advertised slot limit.
-    public static let all = (0..<10).map { SoundRange(index: $0) }
+    private static let names = ["KICK", "SNARE", "CYMB", "PERC", "BASS", "MELOD", "LOOP", "USER1", "USER2", "SFX"]
+
+    /// Positional groups, not audio classification or a device-advertised slot limit.
+    public static let all = names.indices.map { SoundRange(index: $0) }
 
     private init(index: Int) {
         id = index
@@ -16,6 +18,7 @@ public struct SoundRange: Identifiable, Hashable, Sendable {
         upper = UInt16(index * 100 + 99)
     }
 
+    public var name: String { Self.names[id] }
     public var label: String { String(format: "%03d-%03d", lower, upper) }
     public func contains(_ slot: UInt16) -> Bool { (lower...upper).contains(slot) }
 }
@@ -38,16 +41,16 @@ public struct SoundSection: Identifiable, Equatable, Sendable {
     }
 }
 
-public func soundSections(all: [UInt16], visible: Set<UInt16>) -> [SoundSection] {
+public func soundSections(all: [UInt16], visible: Set<UInt16>, range: SoundRange? = nil) -> [SoundSection] {
     let ordered = all.sorted()
-    var sections = SoundRange.all.map { range in
+    var sections = (range.map { [$0] } ?? SoundRange.all).map { range in
         let slots = ordered.filter(range.contains)
         return SoundSection(
-            id: .range(range.id), title: range.label, total: slots.count,
+            id: .range(range.id), title: "\(range.name) \(range.label)", total: slots.count,
             slots: slots.filter(visible.contains))
     }
     let other = ordered.filter { slot in !SoundRange.all.contains(where: { $0.contains(slot) }) }
-    if !other.isEmpty {
+    if range == nil, !other.isEmpty {
         sections.append(
             SoundSection(
                 id: .other, title: "other slots", total: other.count,

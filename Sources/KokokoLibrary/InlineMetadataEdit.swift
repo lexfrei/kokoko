@@ -35,6 +35,10 @@ public struct InlineMetadataEdit: Sendable {
 
     public var canCancel: Bool { phase != .saving }
     public var canSubmit: Bool { phase == .ready && form?.changes != nil }
+    public var blocksFilterChange: Bool {
+        phase == .loading || phase == .saving || needsReadback
+            || (form != nil && form?.changes?.isEmpty != true)
+    }
 
     public func isCurrent(selection: Set<UInt16>, visible: Set<UInt16>, tab: HeaderTab, generation: Int) -> Bool {
         self.generation == generation && tab == .sounds && selection == [id] && visible.contains(id)

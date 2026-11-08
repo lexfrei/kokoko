@@ -7,12 +7,15 @@ import VirtualEP
 extension KokokoCoreChecks {
     static func soundOverviewChecks() async {
         soundRangeChecks()
+        soundScopeChecks()
         soundStorageChecks()
         await soundDirectoryReadChecks()
         await soundOverviewVirtualChecks()
     }
 
     private static func soundRangeChecks() {
+        eq(SoundRange.all.map(\.name), ["KICK", "SNARE", "CYMB", "PERC", "BASS", "MELOD", "LOOP", "USER1", "USER2", "SFX"],
+           "overview: named ranges retain their reference order")
         eq(
             SoundRange.all.map(\.label),
             [
@@ -44,6 +47,30 @@ extension KokokoCoreChecks {
         eq(soundCountsText(total: nil, shown: 0, fresh: false), "sounds ? / shown ?", "overview: unknown listing is not an empty device")
         eq(soundCountsText(total: 0, shown: 0, fresh: true), "sounds 0 / shown 0", "overview: a known empty listing is explicit")
         eq(soundCountsText(total: 9, shown: 3, fresh: false), "sounds 9 / shown 3 (stale)", "overview: old counts are never presented as fresh")
+    }
+
+    private static func soundScopeChecks() {
+        let kick = SoundRange.all[0], snare = SoundRange.all[1]
+        let slots: [UInt16] = [0, 1, 99, 100, 199, 999, 65000]
+        let scoped = soundSections(all: slots, visible: Set(slots), range: snare)
+        eq(scoped.count, 1, "sound scope: a range tab shows only its own section")
+        eq(scoped.first?.id, .range(1), "sound scope: section identity follows the chosen range")
+        eq(scoped.first?.title, "SNARE 100-199", "sound scope: heading names the positional range")
+        eq(scoped.first?.slots, [100, 199], "sound scope: a range never includes another range or outliers")
+        let empty = soundSections(all: slots, visible: [], range: SoundRange.all[4])
+        eq(empty.count, 1, "sound scope: an empty selected range remains reachable")
+        eq(empty.first?.emptyText(hasSnapshot: true, fresh: true), "empty", "sound scope: a confirmed empty range is explicit")
+        let noMatch = soundSections(all: slots, visible: [], range: snare)
+        eq(noMatch.first?.emptyText(hasSnapshot: true, fresh: true), "no matches", "sound scope: search does not mislabel a populated range empty")
+        check(soundMatches(name: "snare", slot: 1, query: "SNARE", range: kick), "sound scope: range names do not classify audio")
+        check(!soundMatches(name: "snare", slot: 1, query: "snare", range: snare), "sound scope: text search intersects the selected range")
+        check(soundMatches(name: "kick", slot: 100, query: "1", range: snare), "sound scope: numeric search keeps its existing slot matching")
+        check(soundMatches(name: "other", slot: 65000, query: "", range: nil), "sound scope: all has no firmware-cap assumption")
+        let items = slots.map { (slot: $0, name: "sample") }
+        let selected = visibleSelection(Set(slots), items: items, query: "", range: snare)
+        eq(selected, [100, 199], "sound scope: hidden rows cannot remain selected for bulk actions")
+        eq(visibleSelection(selected, items: items, query: "", range: nil), selected, "sound scope: all does not resurrect hidden selections")
+        eq(visibleSelection(selected, items: items, query: "missing", range: snare), [], "sound scope: search also prunes range selection")
     }
 
     private static func soundStorageChecks() {

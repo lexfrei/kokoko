@@ -24,6 +24,13 @@ public struct InlineSlotEdit: Sendable {
 
     public var canCancel: Bool { !submitting }
     public var needsRefresh: Bool { slot == nil || slot != rowID }
+    public var blocksFilterChange: Bool { submitting || needsRefresh || destination != slot }
+
+    private var destination: UInt16? {
+        guard !draft.isEmpty, draft.utf8.allSatisfy({ (48...57).contains($0) }),
+              let target = UInt16(draft), target != 0 else { return nil }
+        return target
+    }
 
     public func isCurrent(selection: Set<UInt16>, visible: Set<UInt16>, tab: HeaderTab, generation: Int) -> Bool {
         guard self.generation == generation, tab == .sounds else { return false }
@@ -34,9 +41,7 @@ public struct InlineSlotEdit: Sendable {
     public mutating func prepare() -> SlotEditSubmission {
         guard !submitting else { return .waiting }
         guard let slot else { return .invalid }
-        guard !draft.isEmpty, draft.utf8.allSatisfy({ (48...57).contains($0) }),
-            let target = UInt16(draft), target != 0
-        else {
+        guard let target = destination else {
             error = "enter a slot from 1 to 65535 using digits only"
             return .invalid
         }

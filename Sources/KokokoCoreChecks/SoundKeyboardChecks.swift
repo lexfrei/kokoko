@@ -9,7 +9,7 @@ extension KokokoCoreChecks {
         input.selection = [12]
         input.visible = [12, 13]
         eq(input.target(phase: .down, modified: false), 12, "sound keys: a plain key-down targets the selected visible row")
-        for focus: SoundFocus? in [nil, .filter, .bulkMove, .rangeJump(0), .slot(UUID()), .slotRefresh(UUID()), .slotNumber(12), .rename(12), .rowAction(12, .play), .rowMenu(12)] {
+        for focus: SoundFocus? in [nil, .filter, .bulkMove, .allRanges, .rangeJump(0), .slot(UUID()), .slotRefresh(UUID()), .slotNumber(12), .rename(12), .rowAction(12, .play), .rowMenu(12)] {
             var other = input
             other.focus = focus
             eq(other.target(phase: .down, modified: false), nil, "sound keys: fields and native controls keep their keys")
@@ -49,6 +49,11 @@ extension KokokoCoreChecks {
         var draftOnly = initial
         draftOnly.draft = "kick two"
         check(!draftOnly.submitting && draftOnly.canCancel, "inline rename: changing a draft does not submit it")
+        check(!initial.blocksFilterChange, "inline rename: an unchanged editor can close for navigation without writing")
+        check(draftOnly.blocksFilterChange, "inline rename: unsaved text protects range and search changes")
+        var equivalent = initial
+        equivalent.draft = " kick "
+        check(!equivalent.blocksFilterChange, "inline rename: a no-write equivalent draft does not trap navigation")
         check(initial.isCurrent(selection: [12], visible: [12], tab: .sounds, generation: 4), "inline rename: current row context")
         check(!initial.isCurrent(selection: [13], visible: [12, 13], tab: .sounds, generation: 4), "inline rename: selection change invalidates")
         check(!initial.isCurrent(selection: [12], visible: [], tab: .sounds, generation: 4), "inline rename: filtered or removed row invalidates")
@@ -61,9 +66,13 @@ extension KokokoCoreChecks {
         edit.draft = " \t\n "
         eq(edit.prepare(), .invalid, "inline rename: whitespace-only name needs no write")
         check(edit.error != nil && !edit.submitting, "inline rename: invalid name stays editable with an error")
+        check(edit.blocksFilterChange, "inline rename: invalid unsaved text is not silently discarded")
         edit.draft = " snare "
         eq(edit.prepare(), .write("snare"), "inline rename: Return submits a trimmed name")
         check(!edit.canCancel, "inline rename: Escape cannot cancel an in-flight device write")
+        var inFlight = edit
+        inFlight.draft = initial.draft
+        check(inFlight.blocksFilterChange, "inline rename: in-flight writes protect navigation independently of draft text")
         eq(edit.prepare(), .waiting, "inline rename: duplicate Return does not write twice")
         check(!edit.finish(error: "device refused name"), "inline rename: failed request does not close the editor")
         eq(edit.draft, " snare ", "inline rename: failure preserves the exact draft")

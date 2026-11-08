@@ -34,6 +34,7 @@ extension KokokoCoreChecks {
             return
         }
         check(edit.canCancel && !edit.canSubmit, "metadata editor: an initial GET is cancellable, not saveable")
+        check(edit.blocksFilterChange, "metadata editor: an in-flight inline load protects range and search changes")
         check(!edit.loaded(request: UUID(), metadata: [:], error: nil), "metadata editor: unrelated load cannot replace the editor")
         check(edit.loaded(request: loading, metadata: ["sound.bpm": .int(120)], error: nil), "metadata editor: current load installs a form")
         check(!edit.loaded(request: loading, metadata: [:], error: nil), "metadata editor: duplicate load completion is ignored")
@@ -47,8 +48,10 @@ extension KokokoCoreChecks {
                 "metadata editor: selection, visibility, tab and device invalidate intent")
         }
         eq(edit.prepareSave(), .unchanged, "metadata editor: unchanged form needs no SET")
+        check(!edit.blocksFilterChange, "metadata editor: unchanged ready fields can close without a write")
         edit.form?.text["sound.bpm"] = "invalid"
         check(!edit.canSubmit, "metadata editor: invalid fields cannot submit")
+        check(edit.blocksFilterChange, "metadata editor: invalid dirty fields are not discarded by filtering")
         eq(edit.prepareSave(), .invalid, "metadata editor: invalid form remains editable")
         edit.form?.text["sound.bpm"] = "133"
         guard case .write(let request, let form, let refresh) = edit.prepareSave() else {
@@ -56,12 +59,16 @@ extension KokokoCoreChecks {
             return
         }
         check(!refresh && !edit.canCancel && !edit.canSubmit, "metadata editor: an issued save cannot be cancelled by hiding it")
+        check(edit.blocksFilterChange, "metadata editor: saving fields protects range and search changes")
         eq(edit.prepareSave(), .waiting, "metadata editor: duplicate Save is suppressed")
         let failure = MetadataDraftSaveResult.failed(form: form, message: "readback failed", needsReadback: true)
         check(edit.finished(request: request, result: failure), "metadata editor: current failure is accepted once")
         eq(edit.form?.text["sound.bpm"], "133", "metadata editor: failure keeps the user draft")
         eq(edit.note, "readback failed", "metadata editor: failure remains readable")
         check(edit.needsReadback && edit.canCancel, "metadata editor: failed readback requires GET before retry")
+        var unresolved = edit
+        unresolved.form = MetadataEditForm(metadata: ["sound.bpm": .int(133)])
+        check(unresolved.blocksFilterChange, "metadata editor: unresolved write protects navigation even when fields appear unchanged")
         guard case .write(let retry, _, let needsReadback) = edit.prepareSave() else {
             check(false, "metadata editor: retry prepares a fresh operation")
             return
@@ -85,6 +92,7 @@ extension KokokoCoreChecks {
             return
         }
         check(loadFailure.loaded(request: failedRequest, metadata: nil, error: "GET failed"), "metadata editor: load failure stays attached")
+        check(!loadFailure.blocksFilterChange, "metadata editor: a failed read with no draft can close without writing")
         check(
             loadFailure.form == nil && loadFailure.note == "GET failed" && loadFailure.canCancel,
             "metadata editor: load failure is visible and cancellable without a write")

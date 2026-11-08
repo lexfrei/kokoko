@@ -9,6 +9,7 @@ extension KokokoCoreChecks {
             "inline slot: reopening cannot receive an old completion")
         eq(initial.draft, "12", "inline slot: starts at the current slot")
         check(initial.canCancel, "inline slot: an unsent draft can be cancelled")
+        check(!initial.blocksFilterChange, "inline slot: unchanged source can close for range or search navigation")
         check(initial.isCurrent(selection: [12], visible: [12], tab: .sounds, generation: 4), "inline slot: current row context")
         let contexts: [(Set<UInt16>, Set<UInt16>, HeaderTab, Int)] = [
             ([13], [12, 13], .sounds, 4), ([12], [], .sounds, 4), ([12], [12], .projects, 4), ([12], [12], .sounds, 5)
@@ -23,11 +24,13 @@ extension KokokoCoreChecks {
             edit.draft = text
             eq(edit.prepare(), .invalid, "inline slot: only ASCII digits in a nonzero UInt16 slot are accepted")
             check(edit.error != nil && !edit.submitting && edit.canCancel, "inline slot: invalid draft stays editable")
+            check(edit.blocksFilterChange, "inline slot: invalid target text protects range and search changes")
         }
         var unchanged = initial
         eq(unchanged.prepare(), .unchanged, "inline slot: same slot sends no MOVE")
         unchanged.draft = "0012"
         eq(unchanged.prepare(), .unchanged, "inline slot: leading zeros do not force a move")
+        check(!unchanged.blocksFilterChange, "inline slot: equivalent padded input can close without a write")
         var upper = initial
         upper.draft = "65535"
         eq(upper.prepare(), .write(from: 12, to: 65535), "inline slot: maximum UInt16 slot does not wrap")
@@ -35,6 +38,9 @@ extension KokokoCoreChecks {
         edit.draft = "0020"
         eq(edit.prepare(), .write(from: 12, to: 20), "inline slot: Return prepares a free-slot request")
         check(edit.submitting && !edit.canCancel, "inline slot: Escape cannot undo an in-flight MOVE")
+        var inFlight = edit
+        inFlight.draft = initial.draft
+        check(inFlight.blocksFilterChange, "inline slot: an in-flight move protects navigation even with original input")
         eq(edit.prepare(), .waiting, "inline slot: duplicate Return is suppressed")
         check(!edit.finish(at: 12, error: "slot 20 is occupied", listed: [12, 20]), "inline slot: refusal keeps the editor open")
         eq(edit.draft, "0020", "inline slot: refusal preserves the exact draft")
@@ -83,6 +89,7 @@ extension KokokoCoreChecks {
         check(!refreshFailed.finish(at: 20, error: "moved, but refresh failed", listed: nil), "inline slot: failed refresh is explicit")
         eq(refreshFailed.rowID, 12, "inline slot: stale displayed row still shows the failed draft")
         eq(refreshFailed.slot, 20, "inline slot: known move never reuses the old source")
+        check(refreshFailed.blocksFilterChange, "inline slot: unresolved listing protects navigation despite matching landed input")
         check(refreshFailed.beginRefresh(), "inline slot: explicit refresh claims the editor without sending MOVE")
         check(!refreshFailed.beginRefresh(), "inline slot: duplicate refresh is suppressed")
         check(refreshFailed.reconcile(occupied: [20]).isEmpty, "inline slot: known placement does not remap selection twice")
