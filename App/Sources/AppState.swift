@@ -259,7 +259,7 @@ final class AppState: ObservableObject {
     /// Claims the device for one user action; false while another runs.
     /// A refusal is reported, since a drag to Finder or a drop that slipped
     /// past the disabled controls would otherwise fail without a word.
-    private func enterDevice() -> Bool {
+    func enterDevice() -> Bool {
         guard deviceAdmission.beginOperation() else {
             noteError(Self.busyText)
             return false
