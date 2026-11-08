@@ -96,7 +96,7 @@ public struct TEFrame: Equatable, Sendable {
 
     /// Parse a frame from the device. Returns nil for foreign or malformed frames.
     public static func parse(_ raw: [UInt8]) -> TEFrame? {
-        guard raw.count >= 9,
+        guard raw.count >= 7,
               raw[0] == TE.sysexStart,
               raw[1] == TE.manufacturerID[0],
               raw[2] == TE.manufacturerID[1],
@@ -105,12 +105,13 @@ public struct TEFrame: Equatable, Sendable {
         else { return nil }
 
         if raw[5] == TE.logMarker {
-            let payload = SevenBitCoding.unpack(Array(raw[6..<(raw.count - 1)]))
+            guard raw[1..<(raw.count - 1)].allSatisfy({ $0 < 0x80 }) else { return nil }
+            let payload = Array(raw[6..<(raw.count - 1)])
             return TEFrame(kind: .deviceLog, identityCode: raw[4], requestID: 0,
                            hasRequestID: false, command: 0, status: nil, payload: payload)
         }
 
-        guard raw[5] == TE.protocolMarker else { return nil }
+        guard raw.count >= 10, raw[5] == TE.protocolMarker else { return nil }
 
         let isRequest = (raw[6] & TE.bitIsRequest) != 0
         var frame = TEFrame(kind: isRequest ? .request : .response,
