@@ -22,6 +22,9 @@ struct KokokoApp: App {
         if CommandLine.arguments.contains("--check-native-row-drop") {
             exit(NativeRowDropChecks.run())
         }
+        if CommandLine.arguments.contains("--check-range-tabs") {
+            exit(SoundRangeTabChecks.run())
+        }
         #endif
         #if os(macOS)
         // SPM smoke runs have no app bundle; without this the window stays backgrounded.

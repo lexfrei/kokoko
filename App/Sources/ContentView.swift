@@ -13,6 +13,7 @@ struct ContentView: View {
     var rowDropCheck: Bool?
     var rowDropCheckFocus: Binding<SoundFocus?> = .constant(nil)
     var suppressDeviceObservationForCheck = false
+    var rangeTabProbeForCheck: SoundRangeTabProbe?
     #endif
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
@@ -220,10 +221,11 @@ struct ContentView: View {
     private var soundList: some View {
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
-                libraryOverview(proxy)
-                TextField("filter: name or slot", text: $state.filterText)
+                libraryOverview
+                TextField("filter: name or slot", text: Binding(get: { state.filterText }, set: { state.setFilterText($0) }))
                     .focused($focus, equals: .filter)
                     .textFieldStyle(.plain)
+                    .disabled(state.soundFilterChangeBlocked)
                     .padding(.horizontal)
                     .padding(.vertical, 8)
                 Divider()
@@ -232,7 +234,7 @@ struct ContentView: View {
         }
     }
 
-    private func libraryOverview(_ proxy: ScrollViewProxy) -> some View {
+    private var libraryOverview: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(soundCountsText(total: state.listedSoundCount, shown: state.visibleSounds.count, fresh: state.soundsListed))
             Text(state.soundStorage.text).foregroundStyle(.secondary)
@@ -242,41 +244,89 @@ struct ContentView: View {
                     .accessibilityLabel("Storage unavailable: \(message)")
                     .help(message)
             }
-            if dynamicTypeSize.isAccessibilitySize {
-                ScrollView(.horizontal) { HStack { rangeBookmarks(proxy) } }
-            } else {
-                FlowLayout { rangeBookmarks(proxy) }
+            FlowLayout { rangeBookmarks }
+            if state.soundFilterChangeBlocked {
+                Text("save or cancel the edit to change range/search")
+                    .foregroundStyle(.secondary)
+                    #if os(macOS) && DEBUG
+                    .background { rangeGeometry("sound-filter-editor-hint") }
+                    #endif
             }
-            if state.soundsListed, !state.deviceBusy,
+            if state.soundRange == nil, state.soundsListed, !state.deviceBusy,
                let empty = soundListEmpty(total: state.sounds.count, visible: state.visibleSounds.count,
                                           query: state.filterText) {
                 Text(empty.text).foregroundStyle(.secondary)
                 if empty == .noSounds { barButton(.addSounds) { state.showImporter = true } }
             }
         }
+        #if os(macOS) && DEBUG
+        .coordinateSpace(name: SoundRangeTabFramesKey.coordinateSpace)
+        .onPreferenceChange(SoundRangeTabFramesKey.self) { rangeTabProbeForCheck?.frames = $0 }
+        #endif
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal)
         .padding(.vertical, 8)
     }
 
-    private func rangeBookmarks(_ proxy: ScrollViewProxy) -> some View {
-        ForEach(SoundRange.all) { range in
-            Button { proxy.scrollTo(SoundSectionID.range(range.id), anchor: .top) } label: {
-                Text("[ \(range.label) ]")
-                    .frame(minWidth: 28, minHeight: minHitHeight)
-                    .contentShape(Rectangle())
+    @ViewBuilder private var rangeBookmarks: some View {
+        rangeTab(nil)
+        ForEach(SoundRange.all) { rangeTab($0) }
+    }
+
+    private func rangeTab(_ range: SoundRange?) -> some View {
+        let selected = state.soundRange == range
+        let target: SoundFocus = range.map { SoundFocus.rangeJump($0.id) } ?? .allRanges
+        let identifier = "sound-range-" + (range?.name.lowercased() ?? "all")
+        let action: @MainActor () -> Void = { state.setSoundRange(range) }
+        return Button(action: action) {
+            VStack(spacing: 1) {
+                Text(range?.name ?? "ALL").fontWeight(selected ? .semibold : .regular)
+                Text(range?.label ?? "all slots").font(.caption2).foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .focused($focus, equals: .rangeJump(range.id))
-            .accessibilityLabel("Jump to slots \(range.label)")
-            .help("jump to slots \(range.label)")
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .frame(minWidth: 28, minHeight: minHitHeight)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if selected {
+                    Rectangle().foregroundStyle(.primary).frame(height: 2)
+                        .accessibilityHidden(true)
+                        #if os(macOS) && DEBUG
+                        .background { rangeGeometry("sound-range-underline-" + (range?.name.lowercased() ?? "all")) }
+                        #endif
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(selected ? .primary : .secondary)
+        .focused($focus, equals: target)
+        .disabled(state.soundFilterChangeBlocked)
+        .accessibilityLabel(range.map { "\($0.name), slots \($0.label)" } ?? "All sounds")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(identifier)
+        .help(range.map { "show \($0.name) slots \($0.label)" } ?? "show all slots")
+        #if os(macOS) && DEBUG
+        .background { rangeGeometry(identifier) }
+        .onAppear { rangeTabProbeForCheck?.actions[target] = action }
+        #endif
+    }
+
+    #if os(macOS) && DEBUG
+    @ViewBuilder private func rangeGeometry(_ identifier: String) -> some View {
+        if rangeTabProbeForCheck != nil {
+            GeometryReader { geometry in
+                Color.clear.preference(key: SoundRangeTabFramesKey.self,
+                                       value: [identifier: geometry.frame(in: .named(SoundRangeTabFramesKey.coordinateSpace))])
+            }
         }
     }
+    #endif
 
     private func soundRows(_ proxy: ScrollViewProxy) -> some View {
         let visible = state.visibleSounds
         let items = Dictionary(visible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let sections = soundSections(all: state.sounds.map(\.id), visible: Set(visible.map(\.id)))
+        let sections = soundSections(all: state.sounds.map(\.id), visible: Set(visible.map(\.id)), range: state.soundRange)
         return List(selection: $state.selection) {
             ForEach(sections) { section in
                 Section {
@@ -297,9 +347,12 @@ struct ContentView: View {
             }
         }
         .focused($focus, equals: .soundList)
+        .onChange(of: state.soundRange) { _, range in
+            proxy.scrollTo(SoundSectionID.range(range?.id ?? 0), anchor: .top)
+        }
         .onChange(of: state.filterText) { _, query in
             guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-            let groups = soundSections(all: state.sounds.map(\.id), visible: Set(state.visibleSounds.map(\.id)))
+            let groups = soundSections(all: state.sounds.map(\.id), visible: Set(state.visibleSounds.map(\.id)), range: state.soundRange)
             if let first = groups.lazy.flatMap(\.slots).first { proxy.scrollTo(first, anchor: .top) }
         }
         .onKeyPress(.space, phases: .down) { press in

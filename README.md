@@ -5,7 +5,7 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 ## What it does
 
 - Finds a connected device on its own and shows its name, serial and OS version. If teenage engineering's release list is reachable, it also shows whether a newer firmware exists.
-- Lists the sounds with slot number, name and size, and filters by name or slot. Ten numeric range marks, from 001-099 through 900-999, keep the list continuous and give empty ranges a jump target. Jumping does not filter or select sounds; slots outside those ranges remain visible under other slots.
+- Lists sounds with slot number, name and size. Named range tabs and name/slot search share one filter; ALL includes slots outside the named ranges. Hidden rows leave the selection. [Range and search rules](docs/sound-ranges.md) describe the labels and draft protection.
 - Shows total and filtered sound counts, plus the device's reported used/free/total storage in B, KiB or MiB. Missing values stay unknown rather than using a fixed capacity or PCM-size estimate. Writes mark storage stale; list refreshes read it again. Metadata saves, failed renames and project imports can leave storage stale until Refresh.
 - Adds sounds from audio files, picked or dropped onto the list. WAV files already in the device format (16-bit, 46875 Hz, mono or stereo) are sent as they are. Other audio is converted to 16-bit at 46875 Hz first, and audio that needs converting is refused if it is longer than 40 seconds. Audio with more than two channels is refused rather than mixed down.
 - Plays a one-second preview of a sound on the device.
@@ -19,7 +19,7 @@ kokoko is a sample manager for the teenage engineering EP-133 K.O. II, EP-1320 a
 - Lists the projects, downloads one as a `.tar` archive, and uploads archives named like `P01.tar` by dropping them onto the project list, into a slot that already exists on the device.
 - Shows the device settings where the firmware exposes them.
 - Keeps every tab visible, with or without a device, and says on each device tab whether it is scanning, connecting or not connected. The projects and settings tabs, opened while the device is busy, say they will load once it is free. The full text of an error opens from the footer, or from the header for a failed connection.
-- Gives every bracketed button a spoken name for VoiceOver, such as "Delete selected" for `[ x ]`, and marks the selected tab with `*` as well as with color.
+- Gives bracketed buttons spoken labels, such as "Delete selected" for `[ x ]`. Main tabs mark selection with `*`; sound range tabs use an underline and a selected accessibility trait.
 - Puts these actions in the menu bar as well: File has Add Sounds (⌘O), downloading the selected sounds, and the three backups and the restore, which work from any tab; View switches tabs (⌘1 to ⌘4), refreshes the open tab (⌘R) and scans for devices again.
 - Runs in a single window on a Mac; closing it quits the app.
 
