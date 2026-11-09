@@ -14,6 +14,7 @@
 		19BFDA0C28927BFFE900BAD8 /* NativeRowDropChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC1C935F8F5CA08915FB24B /* NativeRowDropChecks.swift */; };
 		2E04CB6B6A110226A7AEE16D /* WaveformValidityChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA05119AD7B975FBC4F63CD0 /* WaveformValidityChecks.swift */; };
 		385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */; };
+		4AC47E4472940C796316F1F4 /* ASCIIUI in Frameworks */ = {isa = PBXBuildFile; productRef = 7BCE769DA1DCFB592C71AA31 /* ASCIIUI */; };
 		5F4D85AE1B73DFF076BF7773 /* KokokoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */; };
 		61FCDA569539B55FBA87B80A /* RowDragHitChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3EFBD405D7247C9DB492D2 /* RowDragHitChecks.swift */; };
 		73A3D7C49D04DEFD3E5DD73B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB5DC19A96DC8E08EC48477 /* AppState.swift */; };
@@ -24,6 +25,7 @@
 		BC3F4128D01D779AD502B47A /* RowDragHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B716455249BDE32C3D9C37B /* RowDragHandle.swift */; };
 		C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CBF57372D137143311E4AE /* DataDocument.swift */; };
 		D576915409FB199A7F525291 /* SoundRangeTabChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */; };
+		D69124CA868511CFEF5E81B0 /* SoundRowMenuChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE81D2B03C26C48152E1610B /* SoundRowMenuChecks.swift */; };
 		FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76ACB2792656943F3451600 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
@@ -38,6 +40,7 @@
 		8BB5DC19A96DC8E08EC48477 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokokoApp.swift; sourceTree = "<group>"; };
 		BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundRangeTabChecks.swift; sourceTree = "<group>"; };
+		CE81D2B03C26C48152E1610B /* SoundRowMenuChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundRowMenuChecks.swift; sourceTree = "<group>"; };
 		D2D88E399460FE396DD44C53 /* kokoko */ = {isa = PBXFileReference; lastKnownFileType = folder; name = kokoko; path = .; sourceTree = SOURCE_ROOT; };
 		D593B607E257101755000CB1 /* RowDragProviderChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowDragProviderChecks.swift; sourceTree = "<group>"; };
 		D76ACB2792656943F3451600 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -55,6 +58,7 @@
 				0E2A9F1BD0D2BBABD872BB78 /* KokokoMIDI in Frameworks */,
 				17CCD6726062B0BDAA867022 /* KokokoAudio in Frameworks */,
 				9CE8EB30A0EBB8CC82B3B115 /* KokokoLibrary in Frameworks */,
+				4AC47E4472940C796316F1F4 /* ASCIIUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,6 +96,7 @@
 				D593B607E257101755000CB1 /* RowDragProviderChecks.swift */,
 				D76ACB2792656943F3451600 /* SettingsView.swift */,
 				BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */,
+				CE81D2B03C26C48152E1610B /* SoundRowMenuChecks.swift */,
 				06D6DC4FF7BCBA6D9E5F5CDA /* SoundViewportProbe.swift */,
 				DA05119AD7B975FBC4F63CD0 /* WaveformValidityChecks.swift */,
 				17B58ED3DDFECD7BC7FCF793 /* WaveformView.swift */,
@@ -128,6 +133,7 @@
 				07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */,
 				C579E177800EB81009DB221C /* KokokoAudio */,
 				4EB44EC50E31825BF6D2011A /* KokokoLibrary */,
+				7BCE769DA1DCFB592C71AA31 /* ASCIIUI */,
 			);
 			productName = kokoko;
 			productReference = 638425A4245089BE1DF3479C /* kokoko.app */;
@@ -157,6 +163,7 @@
 			mainGroup = 6CF81C2B2C10B6DE391ACE68;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				AD7696EA8CB0CBC9500B89A0 /* XCRemoteSwiftPackageReference "ascii-ui" */,
 				13559107F81F1A65BB102500 /* XCLocalSwiftPackageReference "." */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -185,6 +192,7 @@
 				B50228115382A61988D625A5 /* RowDragProviderChecks.swift in Sources */,
 				FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */,
 				D576915409FB199A7F525291 /* SoundRangeTabChecks.swift in Sources */,
+				D69124CA868511CFEF5E81B0 /* SoundRowMenuChecks.swift in Sources */,
 				1878F0EE4AD340A536EE84E2 /* SoundViewportProbe.swift in Sources */,
 				2E04CB6B6A110226A7AEE16D /* WaveformValidityChecks.swift in Sources */,
 				385713C13C047A8A6F418DF9 /* WaveformView.swift in Sources */,
@@ -393,6 +401,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		AD7696EA8CB0CBC9500B89A0 /* XCRemoteSwiftPackageReference "ascii-ui" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/lexfrei/ascii-ui.git";
+			requirement = {
+				kind = revision;
+				revision = 85c5eef4e8bcb539892329842f6f8ef00c168851;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		07D9B2B1F59AD6F469B6AEC8 /* KokokoMIDI */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -401,6 +420,11 @@
 		4EB44EC50E31825BF6D2011A /* KokokoLibrary */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KokokoLibrary;
+		};
+		7BCE769DA1DCFB592C71AA31 /* ASCIIUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD7696EA8CB0CBC9500B89A0 /* XCRemoteSwiftPackageReference "ascii-ui" */;
+			productName = ASCIIUI;
 		};
 		89C9A501F569AFA0A05B79F4 /* KokokoCore */ = {
 			isa = XCSwiftPackageProductDependency;

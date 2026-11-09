@@ -8,6 +8,9 @@ options:
 packages:
   Kokoko:
     path: .
+  ASCIIUI:
+    url: https://github.com/lexfrei/ascii-ui.git
+    revision: 85c5eef4e8bcb539892329842f6f8ef00c168851
 
 targets:
   kokoko:
@@ -45,3 +48,5 @@ targets:
         product: KokokoAudio
       - package: Kokoko
         product: KokokoLibrary
+      - package: ASCIIUI
+        product: ASCIIUI
