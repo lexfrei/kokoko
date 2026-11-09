@@ -11,17 +11,19 @@ public enum RowAction: CaseIterable, Hashable, Sendable {
     /// Opens a row's other actions as a menu where a row is too narrow to show them.
     case actions
 
-    public var glyph: String {
+    public var glyph: String { "[\(title)]" }
+
+    public var title: String {
         switch self {
-        case .play: "[>]"
-        case .download: "[v]"
-        case .rename: "[r]"
-        case .metadata: "[m]"
-        case .delete, .removeFromBin: "[x]"
-        case .restore: "[restore]"
-        case .downloadArchive: "[v tar]"
-        case .waveform: "[~]"
-        case .actions: "[...]"
+        case .play: ">"
+        case .download: "v"
+        case .rename: "r"
+        case .metadata: "m"
+        case .delete, .removeFromBin: "x"
+        case .restore: "restore"
+        case .downloadArchive: "v tar"
+        case .waveform: "~"
+        case .actions: "..."
         }
     }
 
@@ -53,21 +55,23 @@ public enum BarAction: CaseIterable, Sendable {
     case addSounds, backupSounds, backupProjects, backupAll, restoreBackup, refresh, close
     case saveMetadata, cancelMetadata
 
-    public var text: String {
+    public var text: String { "[ \(title) ]" }
+
+    public var title: String {
         switch self {
-        case .retry: "[ retry ]"
-        case .moveSelection: "[ move ]"
-        case .downloadSelection: "[ v to folder ]"
-        case .deleteSelection: "[ x ]"
-        case .addSounds: "[ + add sounds ]"
-        case .backupSounds: "[ back up sounds ]"
-        case .backupProjects: "[ back up projects ]"
-        case .backupAll: "[ back up all ]"
-        case .restoreBackup: "[ restore backup ]"
-        case .refresh: "[ refresh ]"
-        case .close: "[ close ]"
-        case .saveMetadata: "[ save ]"
-        case .cancelMetadata: "[ cancel ]"
+        case .retry: "retry"
+        case .moveSelection: "move"
+        case .downloadSelection: "v to folder"
+        case .deleteSelection: "x"
+        case .addSounds: "+ add sounds"
+        case .backupSounds: "back up sounds"
+        case .backupProjects: "back up projects"
+        case .backupAll: "back up all"
+        case .restoreBackup: "restore backup"
+        case .refresh: "refresh"
+        case .close: "close"
+        case .saveMetadata: "save"
+        case .cancelMetadata: "cancel"
         }
     }
 

@@ -21,6 +21,12 @@ struct KokokoApp: App {
         }
         if CommandLine.arguments.contains("--check-native-row-drop") {
             exit(NativeRowDropChecks.run())
+            }
+            if CommandLine.arguments.contains("--check-shared-controls") {
+                exit(SharedControlChecks.run())
+            }
+            if CommandLine.arguments.contains("--check-row-menu") {
+                exit(SoundRowMenuChecks.run())
         }
         if CommandLine.arguments.contains("--check-range-tabs") {
             exit(SoundRangeTabChecks.run())

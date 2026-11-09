@@ -1,3 +1,4 @@
+import ASCIIUI
 import SwiftUI
 import KokokoLibrary
 
@@ -22,11 +23,14 @@ struct SoundColumns {
     init(width: CGFloat, cell: CGSize) {
         slot = max(64, cell.width * 5)
         size = cell.width * CGFloat(max(9, DropTarget.soundRow.marker.count))
-        action = max(28, cell.width * 3)
+        action = max(28, (cell.width * CGFloat(ASCIICaption.button(RowAction.play.title).count)).rounded(.up))
         let expandedActions = action * 5 + spacing * 4
         compact = width < grip + slot + 96 + size + expandedActions + spacing * 5 + cell.width * 8 + 32
         wave = compact ? max(28, cell.width * 3) : 96
-        actions = compact ? max(28, cell.width * 5) : expandedActions
+        actions =
+            compact
+            ? max(28, (cell.width * CGFloat(ASCIICaption.button(RowAction.actions.title).count)).rounded(.up))
+            : expandedActions
         minimumWidth = grip + slot + wave + size + actions + spacing * 5 + cell.width * 8 + 32
     }
 }
@@ -71,7 +75,7 @@ struct WaveformDetail: View {
                     let waveform = Waveform(record: record, columns: max(Int(geometry.size.width / cell.width), 1),
                                             loopStart: shown.loopStart, loopEnd: shown.loopEnd)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(marks(waveform)).lineLimit(1)
+                        Text(verbatim: marks(waveform)).lineLimit(1)
                         WaveformBars(waveform: waveform, cellWidth: cell.width)
                             .frame(height: cell.height * Self.barLines)
                         Text(shown.metadataConfirmed ? waveform.loopDescription : "loop points unavailable")
@@ -85,15 +89,11 @@ struct WaveformDetail: View {
             }
             .frame(height: cell.height * (Self.barLines + 2))
             HStack {
-                Button { state.requestAudition(shown.item) } label: {
-                    Text(RowAction.play.glyph)
-                        .frame(minWidth: 28, minHeight: minHitHeight)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                ASCIIButton(
+                    RowAction.play.title, accessibilityLabel: RowAction.play.accessibilityLabel,
+                    enabled: !state.deviceBusy
+                ) { state.requestAudition(shown.item) }
                 .focused(focus, equals: .waveformPlay(shown.id))
-                .disabled(state.deviceBusy)
-                .accessibilityLabel(RowAction.play.accessibilityLabel)
                 barButton(.refresh) { Task { await state.showWaveform(shown.item, forceRefresh: true) } }
                     .focused(focus, equals: .waveformRefresh(shown.id))
                     .disabled(state.deviceBusy)

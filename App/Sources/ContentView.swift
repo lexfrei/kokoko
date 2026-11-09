@@ -1,3 +1,4 @@
+import ASCIIUI
 import SwiftUI
 import UniformTypeIdentifiers
 import KokokoAudio
@@ -16,18 +17,28 @@ struct ContentView: View {
     var rangeTabProbeForCheck: SoundRangeTabProbe?
     var columnProbeForCheck: SoundColumnProbe?
     var swapProbeForCheck: SwapConfirmationProbe?
+        var rowMenuProbeForCheck: SoundRowMenuProbe?
     #endif
+    private struct RowMenu {
+        let item: SoundItem
+        let generation: UUID
+        let actions: [RowAction]
+        var popup: PopupMenuState
+    }
+    @State private var rowMenu: RowMenu?
+    @State private var rowMenuAnchors: [String: CGRect] = [:]
     @State private var soundListTargeted = false
     @State private var projectListTargeted = false
     @State private var targetedRow: UInt16?
     @State private var rowCell = CellSizeKey.defaultValue
     @FocusState private var focus: SoundFocus?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var rowMenuTextScale = 1.0
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
 
-    var body: some View {
+    private var workspace: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
@@ -39,58 +50,116 @@ struct ContentView: View {
         // On macOS the rows of a List kept the proportional font with only the line
         // above; the design has to be set on its own as well.
         .fontDesign(.monospaced)
-        #if os(macOS)
-        .frame(minWidth: 420, minHeight: 480)
-        #endif
-        .fileImporter(isPresented: anyPickerBinding,
-                      allowedContentTypes: state.panel.picker == .none ? [.audio] : [.folder],
-                      allowsMultipleSelection: state.panel.picker == .none) { result in
-            guard case .success(let urls) = result, !urls.isEmpty else { return }
-            state.handleImport(urls)
-        }
-        .fileExporter(isPresented: exporterBinding,
-                      document: state.exportDocument,
-                      contentType: .wav,
-                      defaultFilename: state.exportName) { _ in
-            state.exportDocument = nil
-        }
-        #if os(macOS) && DEBUG
-        .onChange(of: rowDropCheckFocus.wrappedValue) { _, value in
-            if rowDropCheck != nil || suppressDeviceObservationForCheck { focus = value }
-        }
-        .onChange(of: focus) { _, value in
-            if rowDropCheck != nil || suppressDeviceObservationForCheck { rowDropCheckFocus.wrappedValue = value }
-        }
-        #endif
-        .task {
+    }
+
+    private var menuWorkspace: some View {
+        workspace
+            .overlay {
+                GeometryReader { geometry in
+                    if let rowMenu {
+                        PopupMenuPanel(
+                            menu: rowMenu.popup, bounds: geometry.size, metrics: rowMenuMetrics,
+                            activate: activateRowMenu,
+                            highlight: { index in
+                                if rowMenu.popup.items.indices.contains(index), rowMenu.popup.items[index]?.enabled == true {
+                                    self.rowMenu?.popup.highlighted = index
+                                }
+                            },
+                            move: { self.rowMenu?.popup.move($0) },
+                            search: { self.rowMenu?.popup.search($0, now: ProcessInfo.processInfo.systemUptime) },
+                            dismiss: { dismissRowMenu() }
+                        ).id(rowMenu.popup.id)
+                    }
+                }
+            }
+            .coordinateSpace(name: "workspace")
+            .onPreferenceChange(PopupAnchors.self) { frames in
+                rowMenuAnchors = frames
+                #if os(macOS) && DEBUG
+                    rowMenuProbeForCheck?.frames = frames
+                #endif
+            }
+            .onChange(of: state.deviceBusy) { _, _ in reconcileRowMenu() }
+            .onChange(of: state.connection) { _, _ in reconcileRowMenu() }
+            .onChange(of: state.visibleSounds) { _, _ in reconcileRowMenu() }
+            .onChange(of: state.view) { _, _ in reconcileRowMenu() }
+            .onChange(of: state.modalOpen) { _, _ in reconcileRowMenu() }
+            .onChange(of: state.statusDetails) { _, _ in reconcileRowMenu() }
             #if os(macOS) && DEBUG
-            guard rowDropCheck == nil && !suppressDeviceObservationForCheck else { return }
+                .onAppear {
+                    rowMenuProbeForCheck?.open = { id in
+                        if let item = state.visibleSounds.first(where: { $0.id == id }) { showRowMenu(item) }
+                    }
+                    rowMenuProbeForCheck?.activate = activateRowMenu
+                    rowMenuProbeForCheck?.dismiss = { dismissRowMenu() }
+                }
+                .onChange(of: rowMenu?.popup.id) { _, _ in rowMenuProbeForCheck?.menu = rowMenu?.popup }
+                .onChange(of: focus) { _, value in rowMenuProbeForCheck?.focus = value }
             #endif
-            state.watchDevices()
-            if case .idle = state.connection {
-                await state.scan()
+    }
+
+    var body: some View {
+        menuWorkspace
+            #if os(macOS)
+                .frame(minWidth: 420, minHeight: 480)
+            #endif
+            .fileImporter(
+                isPresented: anyPickerBinding,
+                allowedContentTypes: state.panel.picker == .none ? [.audio] : [.folder],
+                allowsMultipleSelection: state.panel.picker == .none
+            ) { result in
+                guard case .success(let urls) = result, !urls.isEmpty else { return }
+                state.handleImport(urls)
             }
-        }
-        .confirmationDialog("delete failed", isPresented: unbinnedDeleteBinding,
-                            presenting: state.unbinnedDelete) { pending in
-            Button("delete without keeping a copy", role: .destructive) {
-                Task { await state.deleteWithoutBin(pending.ids, generation: pending.generation) }
+            .fileExporter(
+                isPresented: exporterBinding,
+                document: state.exportDocument,
+                contentType: .wav,
+                defaultFilename: state.exportName
+            ) { _ in
+                state.exportDocument = nil
             }
-            Button("cancel", role: .cancel) {}
-        } message: { pending in
-            Text(pending.prompt)
-        }
-        .confirmationDialog("remove from bin for good?", isPresented: binRemoveBinding,
-                            presenting: state.binToRemove) { entry in
-            Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
-            Button("cancel", role: .cancel) {}
-        }
-        .confirmationDialog(RestoreSummary.title, isPresented: restoreBinding, presenting: state.pendingRestore) { pending in
-            Button("restore", role: .destructive) { Task { await state.restore(pending.backup) } }
-            Button("cancel", role: .cancel) {}
-        } message: { pending in
-            Text(pending.summary.message)
-        }
+            #if os(macOS) && DEBUG
+                .onChange(of: rowDropCheckFocus.wrappedValue) { _, value in
+                    if rowDropCheck != nil || suppressDeviceObservationForCheck { focus = value }
+                }
+                .onChange(of: focus) { _, value in
+                    if rowDropCheck != nil || suppressDeviceObservationForCheck { rowDropCheckFocus.wrappedValue = value }
+                }
+            #endif
+            .task {
+                #if os(macOS) && DEBUG
+                    guard rowDropCheck == nil && !suppressDeviceObservationForCheck else { return }
+                #endif
+                state.watchDevices()
+                if case .idle = state.connection {
+                    await state.scan()
+                }
+            }
+            .confirmationDialog(
+                "delete failed", isPresented: unbinnedDeleteBinding,
+                presenting: state.unbinnedDelete
+            ) { pending in
+                Button("delete without keeping a copy", role: .destructive) {
+                    Task { await state.deleteWithoutBin(pending.ids, generation: pending.generation) }
+                }
+                Button("cancel", role: .cancel) {}
+            } message: { pending in
+                Text(pending.prompt)
+            }
+            .confirmationDialog(
+                "remove from bin for good?", isPresented: binRemoveBinding,
+                presenting: state.binToRemove
+            ) { entry in
+                Button("remove \(entry.name)", role: .destructive) { state.removeFromBin(entry) }
+                Button("cancel", role: .cancel) {}
+            }
+            .confirmationDialog(RestoreSummary.title, isPresented: restoreBinding, presenting: state.pendingRestore) { pending in
+                Button("restore", role: .destructive) { Task { await state.restore(pending.backup) } }
+                Button("cancel", role: .cancel) {}
+            } message: { pending in
+                Text(pending.summary.message)
+            }
     }
 
     private var restoreBinding: Binding<Bool> {
@@ -142,14 +211,14 @@ struct ContentView: View {
     @ViewBuilder private var connectionStatus: some View {
         switch state.connection {
         case .idle:
-            Text("[ idle ]")
+            Text(verbatim: "[ idle ]")
         case .scanning:
-            Text("[ scan... ]")
+            Text(verbatim: "[ scan... ]")
         case .connecting(let name):
-            Text("[ conn \(name) ]").lineLimit(1)
+            Text(verbatim: "[ conn \(name) ]").lineLimit(1)
         case .connected(let name, let serial, let os):
             let line = StatusLine.connected(name: name, serial: serial, os: os, firmware: state.firmwareStatus)
-            Text(line.text).lineLimit(1)
+            Text(verbatim: line.text).lineLimit(1)
                 .accessibilityLabel(line.accessibilityLabel)
         case .failed(let why):
             FullTextButton(line: .connectionFailed(why), text: why, lineLimit: 1, presentationChanged: state.setStatusDetail)
@@ -168,8 +237,7 @@ struct ContentView: View {
     }
 
     private func tabButton(_ tab: HeaderTab) -> some View {
-        Button(tabTitle(tab.title, selected: state.view == tab)) { state.open(tab) }
-        .buttonStyle(.plain)
+        ASCIITab(tab.title, selected: state.view == tab) { state.open(tab) }
         .foregroundStyle(state.view == tab ? .primary : .secondary)
         .accessibilityLabel(tab.title.capitalized)
         .accessibilityAddTraits(state.view == tab ? .isSelected : [])
@@ -249,7 +317,11 @@ struct ContentView: View {
             Divider()
             Text(pending.summary.message).fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button {
+                ASCIIButton(
+                    "swap",
+                    accessibilityLabel:
+                        "Swap \(pending.source.displayName) in slot \(pending.id) with \(pending.destination.displayName) in slot \(pending.target)"
+                ) {
                     Task {
                         await state.confirmSwap(session: pending.session)
                         if state.pendingSwap == nil, state.view == .sounds,
@@ -257,8 +329,6 @@ struct ContentView: View {
                            state.rowDragGeneration == pending.generation,
                            state.visibleSounds.contains(where: { $0.id == pending.target }) { focus = .soundList }
                     }
-                } label: {
-                    Text("[ swap ]").frame(minHeight: minHitHeight).contentShape(Rectangle())
                 }
                 #if os(macOS) && DEBUG
                 .background(GeometryReader { geometry in
@@ -268,8 +338,8 @@ struct ContentView: View {
                 .focused($focus, equals: .swapConfirm(pending.session))
                 .disabled(!state.canConfirmSwap)
                 .accessibilityLabel("Swap \(pending.source.displayName) in slot \(pending.id) with \(pending.destination.displayName) in slot \(pending.target)")
-                Button { if state.cancelSwap(session: pending.session) { focus = .soundList } } label: {
-                    Text("[ cancel ]").frame(minHeight: minHitHeight).contentShape(Rectangle())
+                ASCIIButton("cancel", accessibilityLabel: "Cancel swap") {
+                    if state.cancelSwap(session: pending.session) { focus = .soundList }
                 }
                 #if os(macOS) && DEBUG
                 .background(GeometryReader { geometry in
@@ -348,8 +418,8 @@ struct ContentView: View {
         let action: @MainActor () -> Void = { state.setSoundRange(range) }
         return Button(action: action) {
             VStack(spacing: 1) {
-                Text(range?.name ?? "ALL").fontWeight(selected ? .semibold : .regular)
-                Text(range?.label ?? "all slots").font(.caption2).foregroundStyle(.secondary)
+                Text(verbatim: ASCIICaption.tab(range?.name ?? "ALL", selected: selected))
+                Text(verbatim: range?.label ?? "all slots").font(.caption2).foregroundStyle(.secondary)
             }
             .lineLimit(1)
             .padding(.horizontal, 6)
@@ -366,7 +436,7 @@ struct ContentView: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
         .foregroundStyle(selected ? .primary : .secondary)
         .focused($focus, equals: target)
         .disabled(state.soundFilterChangeBlocked)
@@ -536,11 +606,11 @@ struct ContentView: View {
                 Group {
                     if let marker = rowDropMarker(row: item.id, targeted: targetedRow, dragged: state.rowDrag.active?.id,
                                                   deviceBusy: state.deviceBusy) {
-                        Text(marker)
+                        Text(verbatim: marker)
                             #if os(macOS) && DEBUG
                             .background {
                                 if columnProbeForCheck != nil {
-                                    Text(marker).fixedSize().hidden().accessibilityHidden(true)
+                                        Text(verbatim: marker).fixedSize().hidden().accessibilityHidden(true)
                                         .background { columnGeometry("drop-marker-required") }
                                 }
                             }
@@ -558,19 +628,15 @@ struct ContentView: View {
                 let commands = soundCommands(item)
                 Group {
                     if columns.compact {
-                        Menu {
-                            ForEach(commands, id: \.action) { command in
-                                Button(command.action.accessibilityLabel, action: command.perform)
-                            }
-                        } label: {
-                            Text(RowAction.actions.glyph)
-                                .frame(width: columns.actions, height: minHitHeight)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
+                        ASCIIButton(
+                            RowAction.actions.title, accessibilityLabel: RowAction.actions.accessibilityLabel
+                        ) { showRowMenu(item) }
+                        .frame(width: columns.actions, height: minHitHeight)
+                        .focusable()
                         .focused($focus, equals: .rowMenu(item.id))
                         .disabled(state.deviceBusy)
                         .accessibilityLabel(RowAction.actions.accessibilityLabel)
+                        .asciiPopupAnchor("row-menu-\(item.id)")
                     } else {
                         HStack(spacing: columns.spacing) {
                             ForEach(commands, id: \.action) { command in
@@ -787,10 +853,11 @@ struct ContentView: View {
                 })
     }
 
-    private func beginMetadata(_ item: SoundItem) {
+    private func beginMetadata(_ item: SoundItem, focusFallback: (() -> Void)? = nil) {
         let previous = focus
         Task { @MainActor in
-            if let session = await state.editMetadata(item) { focusMetadataIfReady(session: session, previous: previous) }
+            if let session = await state.editMetadata(item), focusMetadataIfReady(session: session, previous: previous) { return }
+            focusFallback?()
         }
     }
 
@@ -802,10 +869,13 @@ struct ContentView: View {
         }
     }
 
-    private func focusMetadataIfReady(session: UUID, previous: SoundFocus?) {
+    @discardableResult
+    private func focusMetadataIfReady(session: UUID, previous: SoundFocus?) -> Bool {
         guard state.metadataEditing?.session == session, state.metadataEditing?.phase == .ready,
-              focus == nil || focus == previous, let key = MetadataEditForm.keys.first else { return }
+            focus == nil || focus == previous, let key = MetadataEditForm.keys.first
+        else { return false }
         focus = .metadataField(session, key)
+        return true
     }
 
     private func metadataOwnsFocus(_ value: SoundFocus?, session: UUID) -> Bool {
@@ -881,6 +951,70 @@ struct ContentView: View {
         #else
         false
         #endif
+    }
+
+    private var rowMenuMetrics: PopupMetrics {
+        var metrics = PopupMetrics.platform
+        metrics.textScale = rowMenuTextScale
+        return metrics
+    }
+
+    private func rowMenuAvailable(_ menu: RowMenu) -> Bool {
+        state.isConnected && !state.deviceBusy && state.view == .sounds && !state.modalOpen
+            && state.statusDetails.isEmpty && state.rowDragGeneration == menu.generation
+            && state.visibleSounds.contains(menu.item)
+    }
+
+    private func showRowMenu(_ item: SoundItem) {
+        if rowMenu?.item.id == item.id {
+            dismissRowMenu()
+            return
+        }
+        let source = "row-menu-\(item.id)"
+        guard let anchor = rowMenuAnchors[source] else { return }
+        let commands = soundCommands(item)
+        let invocation = RowMenu(
+            item: item, generation: state.rowDragGeneration, actions: commands.map(\.action),
+            popup: PopupMenuState(
+                source: source, label: RowAction.actions.accessibilityLabel, anchor: anchor,
+                items: commands.map { PopupItem(title: $0.action.accessibilityLabel, action: $0.perform) }))
+        guard rowMenuAvailable(invocation) else { return }
+        rowMenu = invocation
+    }
+
+    private func dismissRowMenu(returnFocus: Bool = true) {
+        guard let menu = rowMenu else { return }
+        rowMenu = nil
+        if returnFocus {
+            focus = rowMenuAvailable(menu) ? .rowMenu(menu.item.id) : .soundList
+        }
+    }
+
+    private func reconcileRowMenu() {
+        if let menu = rowMenu, !rowMenuAvailable(menu) { dismissRowMenu() }
+    }
+
+    private func activateRowMenu(_ index: Int?) {
+        guard let menu = rowMenu else { return }
+        guard rowMenuAvailable(menu) else {
+            dismissRowMenu()
+            return
+        }
+        guard let index = index ?? menu.popup.highlighted, menu.popup.items.indices.contains(index),
+            let item = menu.popup.items[index], item.enabled
+        else { return }
+        let action = menu.actions[index]
+        dismissRowMenu(returnFocus: action != .rename && action != .metadata)
+        let restoreFocus = {
+            guard focus == nil, rowMenu == nil else { return }
+            focus = rowMenuAvailable(menu) ? .rowMenu(menu.item.id) : .soundList
+        }
+        if action == .metadata {
+            beginMetadata(menu.item, focusFallback: restoreFocus)
+        } else {
+            item.action()
+            if action == .rename, state.inlineRename?.id != menu.item.id { restoreFocus() }
+        }
     }
 
     private struct RowCommand {
@@ -1035,7 +1169,7 @@ struct ContentView: View {
     /// At the bottom edge rather than the top, so the rows near the pointer do not move.
     @ViewBuilder private func dropBanner(_ target: DropTarget, targeted: Bool) -> some View {
         if let marker = dropMarker(target, targeted: targeted, deviceBusy: state.deviceBusy) {
-            Text(marker)
+            Text(verbatim: marker)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .background(.bar)
@@ -1092,22 +1226,13 @@ struct ContentView: View {
         return true
     }
 
-    /// A row action: its glyph on screen, its name for VoiceOver, and a hit area at
-    /// least 28 pt wide (the HIG minimum; wider would crowd a row's name out on iPhone)
-    /// and as tall as the HIG default for the platform. The frame and shape sit inside
-    /// the label: placed outside the Button, a plain-style button on macOS was measured
-    /// still taking clicks only on the glyph.
     private func rowButton(_ action: RowAction, help: String, needsDevice: Bool = false,
                            perform: @escaping () -> Void) -> some View {
-        Button(action: perform) {
-            Text(action.glyph)
-                .frame(minWidth: 28, minHeight: minHitHeight)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(state.deviceBusy || (needsDevice && !isConnected))
+        ASCIIButton(
+            action.title, accessibilityLabel: action.accessibilityLabel,
+            enabled: !state.deviceBusy && (!needsDevice || isConnected), action: perform
+        )
         .help(help)
-        .accessibilityLabel(action.accessibilityLabel)
     }
 
     private func formatSize(_ size: UInt32) -> String {
@@ -1253,7 +1378,7 @@ private struct FullTextButton: View {
             shown = true
             presentationChanged(presentationID, true)
         } label: {
-            Text(line.text).lineLimit(lineLimit)
+            Text(verbatim: line.text).lineLimit(lineLimit)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(line.accessibilityLabel)
@@ -1276,14 +1401,8 @@ private struct FullTextButton: View {
 }
 
 @MainActor
-func barButton(_ action: BarAction, perform: @escaping () -> Void) -> some View {
-    Button(action: perform) {
-        Text(action.text)
-            .frame(minWidth: 28, minHeight: minHitHeight)
-            .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel(action.accessibilityLabel)
+func barButton(_ action: BarAction, perform: @escaping () -> Void) -> ASCIIButton {
+    ASCIIButton(action.title, accessibilityLabel: action.accessibilityLabel, action: perform)
 }
 
 /// Lays its children out left to right and wraps them onto new lines where the

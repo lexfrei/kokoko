@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "KokokoAudio", targets: ["KokokoAudio"]),
         .library(name: "KokokoLibrary", targets: ["KokokoLibrary"]),
     ],
+    dependencies: [.package(url: "https://github.com/lexfrei/ascii-ui.git", exact: "0.1.0-rc.1")],
     targets: [
         .target(name: "KokokoCore"),
         .target(name: "KokokoMIDI", dependencies: ["KokokoCore"]),
@@ -25,7 +26,7 @@ let package = Package(
                           dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio", "KokokoLibrary", "VirtualEP"]),
         // macOS smoke-run of the real UI without Xcode: swift run kokoko-mac
         .executableTarget(name: "kokoko-mac",
-                          dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio", "KokokoLibrary"],
+            dependencies: ["KokokoCore", "KokokoMIDI", "KokokoAudio", "KokokoLibrary", .product(name: "ASCIIUI", package: "ascii-ui")],
                           path: "App/Sources"),
     ]
 )
