@@ -23,6 +23,7 @@
 		A003DCF83A0B85B00068E3D1 /* NativeRowDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 555E99CC14B684C0B0F1C733 /* NativeRowDrop.swift */; };
 		B50228115382A61988D625A5 /* RowDragProviderChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D593B607E257101755000CB1 /* RowDragProviderChecks.swift */; };
 		BC3F4128D01D779AD502B47A /* RowDragHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B716455249BDE32C3D9C37B /* RowDragHandle.swift */; };
+		BFA472579F534F852E70ECF2 /* SharedControlChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EB02A3A07E762DAC479EE96 /* SharedControlChecks.swift */; };
 		C0416EF2BEC69B5C2AB99550 /* DataDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CBF57372D137143311E4AE /* DataDocument.swift */; };
 		D576915409FB199A7F525291 /* SoundRangeTabChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */; };
 		D69124CA868511CFEF5E81B0 /* SoundRowMenuChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE81D2B03C26C48152E1610B /* SoundRowMenuChecks.swift */; };
@@ -38,6 +39,7 @@
 		638425A4245089BE1DF3479C /* kokoko.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = kokoko.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B716455249BDE32C3D9C37B /* RowDragHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowDragHandle.swift; sourceTree = "<group>"; };
 		8BB5DC19A96DC8E08EC48477 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		9EB02A3A07E762DAC479EE96 /* SharedControlChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedControlChecks.swift; sourceTree = "<group>"; };
 		ABB876B9E0EB7BC505EDCB6B /* KokokoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokokoApp.swift; sourceTree = "<group>"; };
 		BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundRangeTabChecks.swift; sourceTree = "<group>"; };
 		CE81D2B03C26C48152E1610B /* SoundRowMenuChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundRowMenuChecks.swift; sourceTree = "<group>"; };
@@ -95,6 +97,7 @@
 				EC3EFBD405D7247C9DB492D2 /* RowDragHitChecks.swift */,
 				D593B607E257101755000CB1 /* RowDragProviderChecks.swift */,
 				D76ACB2792656943F3451600 /* SettingsView.swift */,
+				9EB02A3A07E762DAC479EE96 /* SharedControlChecks.swift */,
 				BB5B829AB3FA5D4762051AAF /* SoundRangeTabChecks.swift */,
 				CE81D2B03C26C48152E1610B /* SoundRowMenuChecks.swift */,
 				06D6DC4FF7BCBA6D9E5F5CDA /* SoundViewportProbe.swift */,
@@ -191,6 +194,7 @@
 				61FCDA569539B55FBA87B80A /* RowDragHitChecks.swift in Sources */,
 				B50228115382A61988D625A5 /* RowDragProviderChecks.swift in Sources */,
 				FC996933B68C6CCA44893DEB /* SettingsView.swift in Sources */,
+				BFA472579F534F852E70ECF2 /* SharedControlChecks.swift in Sources */,
 				D576915409FB199A7F525291 /* SoundRangeTabChecks.swift in Sources */,
 				D69124CA868511CFEF5E81B0 /* SoundRowMenuChecks.swift in Sources */,
 				1878F0EE4AD340A536EE84E2 /* SoundViewportProbe.swift in Sources */,
@@ -406,8 +410,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/lexfrei/ascii-ui.git";
 			requirement = {
-				kind = revision;
-				revision = 85c5eef4e8bcb539892329842f6f8ef00c168851;
+				kind = exactVersion;
+				version = "0.1.0-rc.1";
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

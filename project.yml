@@ -10,7 +10,7 @@ packages:
     path: .
   ASCIIUI:
     url: https://github.com/lexfrei/ascii-ui.git
-    revision: 85c5eef4e8bcb539892329842f6f8ef00c168851
+    exactVersion: 0.1.0-rc.1
 
 targets:
   kokoko:
