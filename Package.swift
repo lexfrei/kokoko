@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "KokokoAudio", targets: ["KokokoAudio"]),
         .library(name: "KokokoLibrary", targets: ["KokokoLibrary"]),
     ],
-    dependencies: [.package(url: "https://github.com/lexfrei/ascii-ui.git", exact: "0.1.0-rc.1")],
+    dependencies: [.package(url: "https://github.com/lexfrei/ascii-ui.git", exact: "0.1.0")],
     targets: [
         .target(name: "KokokoCore"),
         .target(name: "KokokoMIDI", dependencies: ["KokokoCore"]),
