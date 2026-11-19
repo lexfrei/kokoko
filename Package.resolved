@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/lexfrei/ascii-ui.git",
       "state" : {
-        "revision" : "85c5eef4e8bcb539892329842f6f8ef00c168851",
-        "version" : "0.1.0-rc.1"
+        "revision" : "06e5c671d242b1e8dc731a7d4cd5e18ca397a91e",
+        "version" : "0.1.0"
       }
     }
   ],
